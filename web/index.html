@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7f4">
+  <title>BioGlow · Field station</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <script src="/dashboard.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <aside class="sidebar" id="sidebar">
+    <button class="sidebar-close" id="close-menu" aria-label="Close navigation">�</button>
+    <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">✳</span><span>BioGlow<small>FIELD STATION</small></span></a>
+    <div class="nav-heading">WORKSPACE</div>
+    <nav aria-label="Main navigation">
+      <a href="#overview" data-view="overview"><span aria-hidden="true">◫</span> Overview</a>
+      <a href="#radar" data-view="radar"><span aria-hidden="true">◎</span> Radar</a>
+      <a href="#light" data-view="light"><span aria-hidden="true">☼</span> Light</a>
+      <a href="#birdcast" data-view="birdcast"><span aria-hidden="true">↗</span> BirdCast</a>
+      <a href="#recordings" data-view="recordings"><span aria-hidden="true">≋</span> Recordings</a>
+    </nav>
+    <div class="sidebar-footer"><span class="network-dot" aria-hidden="true"></span> Local network<small>One station. A shared view.</small></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><button class="menu-button" id="menu" aria-controls="sidebar" aria-expanded="false" aria-label="Toggle navigation">☰</button><span>BioGlow / <strong id="breadcrumb">Overview</strong></span><span class="station-label">SENSOR STATION <span aria-hidden="true">·</span> MANUAL REFRESH</span></header>
+    <main id="main" tabindex="-1">
+      <div class="page-heading"><div><div class="eyebrow">OBSERVE YOUR ENVIRONMENT</div><h1 id="page-title">Station overview</h1><p id="page-description">Your sensors, migration data, and sound — in one place.</p></div><button class="button secondary" id="refresh-cache">↻ Refresh view</button></div>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <div id="content"></div>
+      <footer class="main-footer"><span>BioGlow field station</span><span>Readings update when requested. Radar receives frames continuously.</span></footer>
+    </main>
+  </div>
+</body>
+</html>

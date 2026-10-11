@@ -64,30 +64,35 @@ class Tests(unittest.TestCase):
         s.received_at = time.monotonic(); s.connected = False
         self.assertEqual(s.response()[0], 503)
 
-    def test_both_handlers_with_light_disabled(self):
+    def test_both_handlers_with_unavailable_radar(self):
         import birdcast_service
+        import tempfile
         spec = importlib.util.spec_from_file_location('combined_radar', '/home/nir/bioglow-birdcast.py')
         combined = importlib.util.module_from_spec(spec); spec.loader.exec_module(combined)
         class Light:
             def response(self, health=False):
                 return (503, {'sensor_connected': False, 'status': 'error'}) if health else (200, {'lux': 42})
-        class Service:
-            presence_sensor = PresenceSensor()
-        for module in (birdcast_service, combined):
-            handler = module.make_handler(Service())
-            for endpoint, expected in [('/presence',503),('/health',503),('/reading',404)]:
-                h = object.__new__(handler)
-                h.path = endpoint; h.command = 'GET'; h.wfile = io.BytesIO()
-                h.connection = unittest.mock.Mock()
-                responses = []
-                h.send_response = lambda status: responses.append(status)
-                h.send_header = lambda *args: None
-                h.end_headers = lambda: None
-                h.do_GET()
-                self.assertEqual(responses, [expected])
-                payload = json.loads(h.wfile.getvalue())
-                if endpoint == '/health': self.assertIn('presence_sensor', payload)
-                if endpoint == '/reading': self.assertEqual(payload['error']['code'], 'not_found')
+        with tempfile.TemporaryDirectory() as directory:
+            local = birdcast_service.Service(Path(directory), Path(directory) / 'config.json')
+            local.light_sensor = Light()
+            for module, service in ((birdcast_service, local), (combined, combined.Service())):
+                handler = module.make_handler(service)
+                expected_reading = 200 if module is birdcast_service else 404
+                for endpoint, expected in [('/presence',503),('/health',503),('/reading',expected_reading)]:
+                    h = object.__new__(handler)
+                    h.path = endpoint; h.command = 'GET'; h.wfile = io.BytesIO()
+                    h.connection = unittest.mock.Mock()
+                    responses = []
+                    h.send_response = lambda status: responses.append(status)
+                    h.send_header = lambda *args: None
+                    h.end_headers = lambda: None
+                    h.do_GET()
+                    self.assertEqual(responses, [expected])
+                    payload = json.loads(h.wfile.getvalue())
+                    if endpoint == '/health': self.assertIn('presence_sensor', payload)
+                    if endpoint == '/reading':
+                        if module is combined: self.assertEqual(payload['error']['code'], 'not_found')
+                        else: self.assertEqual(payload['lux'], 42)
 
     def test_worker_never_writes_and_stops(self):
         import types

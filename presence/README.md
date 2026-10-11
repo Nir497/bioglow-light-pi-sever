@@ -2,6 +2,9 @@
 
 Implemented in /home/nir/bioglow-birdcast/presence/__init__.py and integrated into
 both existing entry points. Default bind is 0.0.0.0:8000. Run one entry point only.
+The repository entry point now also serves the LAN dashboard at `/`, with permanent
+microphone recordings and manual sensor/BirdCast actions. See [DASHBOARD.md](../DASHBOARD.md).
+Use `birdcast_service.py` for the dashboard; the external combined server has no dashboard.
 The repository entry point birdcast_service.py enables the VEML7700 sensor:
 /reading returns lux readings and /health includes light sensor health alongside
 presence_sensor, serial_connected, and fresh. Health returns 503 when either
@@ -72,11 +75,11 @@ cd /home/nir/bioglow-birdcast
 .venv/bin/python -m pip check
 presence/.venv/bin/python -m pip install -r presence/requirements.txt
 .venv/bin/python -m unittest discover -s presence -v
-.venv/bin/python /home/nir/bioglow-birdcast.py --port 8000
+.venv/bin/python birdcast_service.py --port 8000
 ```
 
 Stop with Ctrl+C. Worker shuts down and closes UART. No autostart service was
-added. Alternative existing entry point: .venv/bin/python birdcast_service.py
+added. Legacy entry point (without dashboard): .venv/bin/python /home/nir/bioglow-birdcast.py
 --port 8000. Port 8000 availability is unverified; if already occupied, identify
 its owner first. Do not start a duplicate BioGlow service. --port accepts an
 alternative port, but none has been chosen here.

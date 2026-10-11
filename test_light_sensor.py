@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import threading
+import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -60,8 +61,10 @@ class SensorTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('combined', Path(__file__).parent.parent / 'bioglow-birdcast.py')
         combined = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(combined)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
         services = [
-            (birdcast_service, birdcast_service.Service(Path(__file__).parent, Path('config.json')), '_send'),
+            (birdcast_service, birdcast_service.Service(Path(directory.name), Path(directory.name) / "config.json"), '_send'),
             (combined, combined.Service(), 'json_response'),
         ]
         with patch('light_sensor.Path.exists', return_value=False):
