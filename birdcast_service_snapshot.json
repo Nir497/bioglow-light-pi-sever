@@ -1,0 +1,24 @@
+{
+  "status": "ok",
+  "region": {
+    "code": "US-CA",
+    "name": "California"
+  },
+  "source": {
+    "url": "https://dashboard.birdcast.org/region/US-CA"
+  },
+  "retrieved_at": "2026-10-11T18:22:15.965922Z",
+  "selected_night": "Oct 10",
+  "metrics": {
+    "birds_in_flight": 5387000,
+    "total_birds_crossed": 1785000,
+    "direction": "S",
+    "speed_mph": 23,
+    "altitude_ft": 2600,
+    "recorded_at": "Sun, Oct 11, 2026, 12:30 AM PDT",
+    "updated_at": null
+  },
+  "warnings": [
+    "Birds in flight may exceed total birds crossed because not all birds finish crossing."
+  ]
+}

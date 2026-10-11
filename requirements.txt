@@ -1,0 +1,4 @@
+Adafruit-Blinka
+adafruit-circuitpython-veml7700
+adafruit-extended-bus
+pyserial==3.5

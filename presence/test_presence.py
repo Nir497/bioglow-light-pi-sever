@@ -1,0 +1,109 @@
+import importlib.util
+import io
+import json
+import sys
+import time
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from presence import Parser, PresenceSensor, health_response, HEADER, TAIL
+
+# Manufacturer's published normal report example. Not a captured hardware frame.
+EXAMPLE = bytes.fromhex('f4 f3 f2 f1 0d 00 02 aa 02 51 00 00 00 00 3b 00 00 55 00 f8 f7 f6 f5')
+def frame(state=3):
+    return HEADER + bytes.fromhex('0d 00 02 aa') + bytes([state]) + bytes.fromhex('2c 01 3c 96 00 39 00 00 55 00') + TAIL
+
+class Tests(unittest.TestCase):
+    def test_every_split(self):
+        for n in range(1, len(EXAMPLE)):
+            p = Parser()
+            self.assertEqual(p.feed(EXAMPLE[:n]), [])
+            r = p.feed(EXAMPLE[n:])[0]
+            self.assertEqual(r['presence'], 'stationary')
+            self.assertIsNone(r['moving_distance_cm'])
+            self.assertEqual(r['stationary_energy_score'], 59)
+
+    def test_states_and_endian(self):
+        for state in range(4):
+            r = Parser().feed(frame(state))[0]
+            self.assertEqual(r['moving_distance_cm'], 300 if state & 1 else None)
+            self.assertEqual(r['stationary_distance_cm'], 150 if state & 2 else None)
+
+    def test_noise_bad_frames_and_concatenation(self):
+        corrupt = bytearray(frame()); corrupt[-1] = 0
+        bad_state = frame(4)
+        p = Parser()
+        r = p.feed(b'noise' + HEADER + b'\xff\xff' + corrupt + bad_state + frame() + EXAMPLE)
+        self.assertEqual(len(r), 2)
+        self.assertGreaterEqual(p.malformed, 3)
+
+    def test_truncated_frame_recovery(self):
+        p = Parser()
+        self.assertEqual(len(p.feed(frame()[:10] + EXAMPLE)), 1)
+        p.feed(b'x' * 100000)
+        self.assertLessEqual(len(p.buffer), 3)
+
+    def test_bad_markers_energy_and_type(self):
+        for offset, value in [(6,1),(7,0),(11,101),(14,101),(17,0),(18,1)]:
+            bad = bytearray(frame()); bad[offset] = value
+            self.assertEqual(len(Parser().feed(bad+EXAMPLE)), 1)
+
+    def test_fresh_stale_disconnected(self):
+        s = PresenceSensor()
+        self.assertEqual(s.response()[0], 503)
+        s.connected = True
+        s.latest = {**Parser().feed(frame())[0], 'timestamp': '2026-10-11T00:00:00Z'}
+        s.received_at = time.monotonic()
+        self.assertEqual(s.response()[0], 200)
+        s.received_at -= 3
+        status, r = s.response()
+        self.assertEqual(status, 503)
+        self.assertNotIn('presence', r)
+        self.assertFalse(r['fresh'])
+        s.received_at = time.monotonic(); s.connected = False
+        self.assertEqual(s.response()[0], 503)
+
+    def test_both_handlers_with_light_disabled(self):
+        import birdcast_service
+        spec = importlib.util.spec_from_file_location('combined_radar', '/home/nir/bioglow-birdcast.py')
+        combined = importlib.util.module_from_spec(spec); spec.loader.exec_module(combined)
+        class Light:
+            def response(self, health=False):
+                return (503, {'sensor_connected': False, 'status': 'error'}) if health else (200, {'lux': 42})
+        class Service:
+            presence_sensor = PresenceSensor()
+        for module in (birdcast_service, combined):
+            handler = module.make_handler(Service())
+            for endpoint, expected in [('/presence',503),('/health',503),('/reading',404)]:
+                h = object.__new__(handler)
+                h.path = endpoint; h.command = 'GET'; h.wfile = io.BytesIO()
+                h.connection = unittest.mock.Mock()
+                responses = []
+                h.send_response = lambda status: responses.append(status)
+                h.send_header = lambda *args: None
+                h.end_headers = lambda: None
+                h.do_GET()
+                self.assertEqual(responses, [expected])
+                payload = json.loads(h.wfile.getvalue())
+                if endpoint == '/health': self.assertIn('presence_sensor', payload)
+                if endpoint == '/reading': self.assertEqual(payload['error']['code'], 'not_found')
+
+    def test_worker_never_writes_and_stops(self):
+        import types
+        s = PresenceSensor()
+        class Port:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, n):
+                s.stop_event.set()
+                return EXAMPLE
+        fake = types.SimpleNamespace(Serial=unittest.mock.Mock(return_value=Port()),
+                                     EIGHTBITS=8, PARITY_NONE='N', STOPBITS_ONE=1)
+        with patch.dict(sys.modules, {'serial':fake}), patch.object(Path, 'resolve', return_value=Path('/dev/ttyAMA0')), patch.object(Path, 'read_text', return_value='console=tty1'):
+            s._run()
+        self.assertEqual(s.valid_frames, 1)
+        self.assertEqual(fake.Serial.call_args.kwargs['exclusive'], True)
+        self.assertFalse(s.connected)
+
+if __name__ == '__main__': unittest.main()
