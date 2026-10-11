@@ -18,6 +18,7 @@ const fs = require('node:fs');
 let clock = 0, delayLatest = 0, replacement = '', requests = [], timers = [];
 const cancelledTimers = new Set();
 let analysisState = {state:'queued'};
+let radarUnavailable = false;
 const windowEvents = {}, contentEvents = {}, nodes = new Map();
 function element() {
   const classes = new Set();
@@ -44,6 +45,10 @@ const context=vm.createContext({document,console,URL,Object,Date,location:{hash:
     requests.push({path,options});
     let body;
     if(path==='/v1/latest'){clock+=delayLatest;body=data;}
+    else if(path==='/presence') {
+      body=radarUnavailable ? {fresh:false,status:'unavailable',error:{message:'Radar disconnected'}} : data.sources.radar.result;
+      return {ok:!radarUnavailable,json:async()=>JSON.parse(JSON.stringify(body))};
+    }
     else if(path==='/v1/recordings' && !options.method)body={recordings};
     else if(path.endsWith('/analysis')) {
       body={status:'ok',analysis:options.method==='POST' ? {state:'queued'} : analysisState};
@@ -64,15 +69,28 @@ async function main(){
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(requests.map(r=>r.path),['/v1/latest','/v1/recordings']);
   assert.match(document.querySelector('#content').innerHTML,/Fresh frame/);
-  assert.equal(timers.length,1);
-  assert.ok(timers[0].delay>=1900 && timers[0].delay<=2000);
-  clock=3000;timers[0].fn();
+  const expiry=timers.find(timer=>timer.delay>=1900 && timer.delay<=2000);
+  assert.ok(expiry);
+  clock=3000;expiry.fn();
   assert.match(replacement,/Unavailable/);
   assert.ok(!replacement.includes('>moving</div>'));
   assert.match(vm.runInContext("sourceCard('radar',true)",context),/This radar frame is stale/);
+  await timers.findLast(timer=>timer.delay===1000).fn();
+  assert.match(replacement,/Fresh frame/);
+  assert.match(replacement,/>moving<\/div>/);
+  radarUnavailable=true;
+  await timers.findLast(timer=>timer.delay===1000).fn();
+  assert.match(replacement,/Radar disconnected/);
+  assert.ok(!replacement.includes('>moving</div>'));
+  radarUnavailable=false;
+  await timers.findLast(timer=>timer.delay===1000).fn();
+  assert.match(replacement,/Fresh frame/);
+  const pendingRadarPoll=timers.findLast(timer=>timer.delay===1000);
+  const beforeNavigation=requests.length;
   context.location.hash='#birdcast';windowEvents.hashchange();
+  await pendingRadarPoll.fn();
   assert.equal(document.querySelector('#page-title').textContent,'Migration outlook');
-  assert.equal(requests.length,2,'Navigation must not request sensor data');
+  assert.equal(requests.length,beforeNavigation,'Navigation cancels radar polling on other pages');
   document.querySelector('#content').listeners.change({target:{id:'region',value:'US-NY'}});
   await vm.runInContext("run('birdcast')",context);
   const snapshotRequest=requests.find(r=>r.path==='/v1/snapshots');

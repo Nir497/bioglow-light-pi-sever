@@ -4,6 +4,7 @@ const titles = {overview:'Station overview',radar:'Presence & movement',light:'A
 const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'The newest radar frame, with distances, energy scores, and connection status.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Every recording stays here.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
 let radarLoadedAt = performance.now(), radarExpiryTimer;
+let radarPollTimer, radarPollGeneration = 0;
 let analysisTimer, analysisPollGeneration = 0;
 const analysisRequests = new Set();
 const pending = new Set();
@@ -48,6 +49,33 @@ function scheduleRadarExpiry() {
     wrapper.innerHTML = sourceCard('radar',view()==='radar');
     card.replaceWith(wrapper.firstElementChild);
   },Math.max(0,remaining)*1000+25);
+}
+function scheduleRadarPoll() {
+  clearTimeout(radarPollTimer);
+  const generation = ++radarPollGeneration;
+  if (!['overview','radar'].includes(view())) return;
+  radarPollTimer = setTimeout(async()=>{
+    if (generation !== radarPollGeneration) return;
+    const started = performance.now();
+    let entry;
+    try {
+      entry = {http_status:200,result:await api('/presence')};
+    } catch (error) {
+      entry = {http_status:503,result:error.data || {fresh:false,status:'unavailable',
+        error:{code:'presence_unavailable',message:error.message}}};
+    }
+    if (generation !== radarPollGeneration) return;
+    sources.radar = entry;
+    radarLoadedAt = started;
+    const card = content.querySelector('[data-source="radar"]');
+    if (card) {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = sourceCard('radar',view()==='radar');
+      card.replaceWith(wrapper.firstElementChild);
+    }
+    scheduleRadarExpiry();
+    scheduleRadarPoll();
+  },1000);
 }
 function badge(source) {
   const entry = currentEntry(source);
@@ -185,6 +213,7 @@ function render() {
     content.innerHTML = `${selector}${sourceCard(current,true)}`;
   }
   scheduleAnalysisPoll();
+  scheduleRadarPoll();
 }
 async function loadCache() {
   const requestedAt = performance.now();

@@ -40,8 +40,9 @@ recording. Older recordings can be analyzed with **Identify animals**. See
 [ANIMAL_IDENTIFICATION.md](ANIMAL_IDENTIFICATION.md) for setup, API, measured Pi
 performance and limitations. Suggestions do not count individual animals.
 
-The page also marks a displayed radar frame stale when its freshness window expires,
-without fetching another frame.
+Overview and Radar refresh the passive radar reading every second while visible.
+Refreshes update only the radar card, preserving audio playback. The page still
+marks expired frames unavailable if the sensor stops reporting or requests fail.
 
 Latest successful light/BirdCast results, microphone outcomes, and last request
 errors are cached in `.runtime/latest.json`. Radar state is kept by the existing
