@@ -16,6 +16,8 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 let clock = 0, delayLatest = 0, replacement = '', requests = [], timers = [];
+const cancelledTimers = new Set();
+let analysisState = {state:'queued'};
 const windowEvents = {}, contentEvents = {}, nodes = new Map();
 function element() {
   const classes = new Set();
@@ -37,19 +39,22 @@ const data = {status:'ok',sources:{radar:{http_status:200,result:{fresh:true,pre
 let recordings=[];
 const context=vm.createContext({document,console,URL,Object,Date,location:{hash:''},performance:{now:()=>clock},
   window:{matchMedia:()=>({matches:false,addEventListener(){}}),addEventListener:(name,fn)=>{windowEvents[name]=fn;}},
-  setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout(){},
+  setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout:id=>cancelledTimers.add(id),
   fetch:async(path,options)=>{
     requests.push({path,options});
     let body;
     if(path==='/v1/latest'){clock+=delayLatest;body=data;}
     else if(path==='/v1/recordings' && !options.method)body={recordings};
+    else if(path.endsWith('/analysis')) {
+      body={status:'ok',analysis:options.method==='POST' ? {state:'queued'} : analysisState};
+    }
     else if(path==='/v1/snapshots'){
       const region=JSON.parse(options.body).region;
       body={status:'ok',region:{code:region},metrics:{birds_in_flight:123}};
       data.sources.birdcast={http_status:200,result:body};
     }else if(path==='/v1/recordings' && options.method==='POST'){
       body={recording_id:'a'.repeat(32),created_at:'2026-10-11T12:00:00Z',byte_length:960044,
-        download_path:'/v1/recordings/'+'a'.repeat(32)};recordings=[body];
+        download_path:'/v1/recordings/'+'a'.repeat(32),analysis:{state:'queued'}};recordings=[body];
     }else throw new Error('Unexpected request '+path);
     return {ok:true,json:async()=>JSON.parse(JSON.stringify(body))};
   },
@@ -79,6 +84,36 @@ async function main(){
   assert.match(document.querySelector('#content').innerHTML,/download="a{32}\.wav"/);
   assert.equal(requests.filter(r=>r.path==='/v1/recordings' && r.options.method==='POST').length,1);
   assert.equal(vm.runInContext("escapeHtml('<script>')",context),'&lt;script&gt;');
+  // Analysis updates touch only their panel, leaving audio and focused controls in place.
+  const panel = {innerHTML:'',querySelector:()=>null};
+  const page = document.querySelector('#content');
+  page.querySelector=selector=>selector.startsWith('[data-analysis=') ? panel : null;
+  const audio = {currentTime:4.5,paused:false};
+  document.activeElement = audio;
+  const beforePoll = page.innerHTML;
+  analysisState={state:'completed',candidates:[{scientific_name:'<img onerror=bad>',score:8}],
+    windows:[{start_seconds:0,end_seconds:5,candidates:[]}]};
+  const poll = timers.findLast(timer=>timer.delay===3000);
+  assert.ok(poll,'A queued recording schedules a status poll');
+  await poll.fn();
+  assert.equal(page.innerHTML,beforePoll,'Polling must not replace the recording/audio subtree');
+  assert.equal(document.activeElement,audio);
+  assert.equal(audio.currentTime,4.5);
+  assert.match(panel.innerHTML,/&lt;img onerror=bad&gt;/);
+  assert.match(panel.innerHTML,/Scores are not confidence percentages or animal counts/);
+  assert.match(panel.innerHTML,/Five-second window scores/);
+  assert.ok(!panel.innerHTML.includes('<img onerror'));
+  assert.equal(vm.runInContext("recordings[0].analysis.state",context),'completed');
+  vm.runInContext("recordings[0].analysis={state:'failed',error:'Try again'}",context);
+  await vm.runInContext("identifyAnimals('a'.repeat(32))",context);
+  assert.equal(requests.filter(r=>r.path.endsWith('/analysis') && r.options.method==='POST').length,1);
+  assert.equal(vm.runInContext("recordings[0].analysis.state",context),'queued');
+  const pendingPoll = timers.findLast(timer=>timer.delay===3000);
+  const countBeforeNavigation = requests.length;
+  context.location.hash='#birdcast';windowEvents.hashchange();
+  await pendingPoll.fn();
+  assert.equal(requests.length,countBeforeNavigation,'Navigation cancels polling for hidden recordings');
+  assert.ok(cancelledTimers.has(timers.indexOf(pendingPoll)+1));
   delayLatest=2500;
   await vm.runInContext('loadCache()',context);
   assert.equal(vm.runInContext("currentEntry('radar').http_status",context),503,'Network delay must count toward radar freshness');

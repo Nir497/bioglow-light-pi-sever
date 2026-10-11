@@ -4,6 +4,8 @@ const titles = {overview:'Station overview',radar:'Presence & movement',light:'A
 const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'The newest radar frame, with distances, energy scores, and connection status.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Every recording stays here.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
 let radarLoadedAt = performance.now(), radarExpiryTimer;
+let analysisTimer, analysisPollGeneration = 0;
+const analysisRequests = new Set();
 const pending = new Set();
 const content = document.querySelector('#content');
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -15,7 +17,11 @@ async function api(path, options = {}) {
   const response = await fetch(path, {...options, cache:'no-store'});
   let data;
   try { data = await response.json(); } catch { throw new Error('The station returned an unreadable response.'); }
-  if (!response.ok) throw new Error(data.error?.message || `Request failed (${response.status}).`);
+  if (!response.ok) {
+    const error = new Error(data.error?.message || data.analysis?.error || `Request failed (${response.status}).`);
+    error.data = data;
+    throw error;
+  }
   return data;
 }
 function details(data, label = 'View complete data') { return `<details class="details"><summary>${escapeHtml(label)}</summary><pre>${escapeHtml(JSON.stringify(data,null,2))}</pre></details>`; }
@@ -81,8 +87,81 @@ function sourceCard(source, expanded = false) {
   return `<article class="card" data-source="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</article>`;
 }
 function facts(items) { return `<dl class="facts">${items.map(([label,value])=>`<div class="fact"><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>`; }
+function animalResults(item) {
+  const analysis = item.analysis || {state:'not_analyzed'};
+  const busy = ['queued','running'].includes(analysis.state) || analysisRequests.has(item.recording_id);
+  const states = {not_analyzed:'Not analyzed',queued:'Waiting for identification…',running:'Identifying animals…',completed:'Species candidates',failed:'Identification failed',unavailable:'Identification unavailable'};
+  let body = `<h3>${states[analysis.state] || 'Not analyzed'}</h3>`;
+  if (analysis.error) body += `<p class="error-message">${escapeHtml(analysis.error)}</p>`;
+  if (analysis.outdated) body += '<p>The recording or model changed. Identify again for current suggestions.</p>';
+  if (analysis.state === 'completed') {
+    body += `<ul class="animal-candidates">${(analysis.candidates || []).map(candidate=>`<li><span>${escapeHtml(candidate.scientific_name === 'Bubo virginianus' ? 'Great horned owl · Bubo virginianus' : candidate.scientific_name)}</span><span>Model score ${number(candidate.score)}</span></li>`).join('')}</ul>`;
+    body += '<p class="timestamp">Unverified suggestions. Scores are not confidence percentages or animal counts. Background noise can also produce candidates.</p>';
+    if (analysis.windows) body += details(analysis.windows,'Five-second window scores');
+    else body += `<button class="button secondary" data-analysis-details="${escapeHtml(item.recording_id)}">View window scores</button>`;
+  } else if (analysis.state !== 'unavailable') {
+    body += `<button class="button secondary" data-identify="${escapeHtml(item.recording_id)}" ${busy ? 'disabled aria-busy="true"' : ''}>${busy ? 'Identification pending' : analysis.state === 'failed' ? 'Retry identification' : 'Identify animals'}</button>`;
+  }
+  return body;
+}
+function visibleRecordings() {
+  return view() === 'recordings' ? recordings : view() === 'overview' ? recordings.slice(0,3) : [];
+}
+function updateAnimalResults(item) {
+  const panel = content.querySelector(`[data-analysis="${item.recording_id}"]`);
+  if (!panel) return;
+  const focused = document.activeElement;
+  const restoreIdentify = focused?.dataset?.identify === item.recording_id;
+  const restoreDetails = focused?.dataset?.analysisDetails === item.recording_id;
+  const wasOpen = panel.querySelector('details')?.open;
+  panel.innerHTML = animalResults(item);
+  const detail = panel.querySelector('details');
+  if (detail && wasOpen) detail.open = true;
+  if (restoreIdentify) panel.querySelector('[data-identify]')?.focus();
+  if (restoreDetails) (panel.querySelector('summary') || panel.querySelector('[data-analysis-details]'))?.focus();
+}
+function scheduleAnalysisPoll() {
+  clearTimeout(analysisTimer);
+  const generation = ++analysisPollGeneration;
+  const items = visibleRecordings().filter(item=>['queued','running'].includes(item.analysis?.state));
+  if (!items.length) return;
+  analysisTimer = setTimeout(async()=>{
+    for (const item of items) {
+      if (generation !== analysisPollGeneration) return;
+      try {
+        const result = await api(`/v1/recordings/${item.recording_id}/analysis`);
+        item.analysis = result.analysis;
+      } catch (error) {
+        if (error.data?.analysis) item.analysis = error.data.analysis;
+        else notice(error.message,true);
+      }
+      if (generation !== analysisPollGeneration) return;
+      updateAnimalResults(item);
+    }
+    scheduleAnalysisPoll();
+  },3000);
+}
+async function identifyAnimals(identifier, detailsOnly = false) {
+  if (analysisRequests.has(identifier)) return;
+  const item = recordings.find(recording=>recording.recording_id === identifier);
+  if (!item) return;
+  analysisRequests.add(identifier);
+  updateAnimalResults(item);
+  try {
+    const result = await api(`/v1/recordings/${identifier}/analysis`,detailsOnly ? {} : {method:'POST'});
+    item.analysis = result.analysis;
+    notice(detailsOnly ? '' : 'Animal identification requested.');
+  } catch (error) {
+    if (error.data?.analysis) item.analysis = error.data.analysis;
+    notice(error.message,true);
+  } finally {
+    analysisRequests.delete(identifier);
+    updateAnimalResults(item);
+    scheduleAnalysisPoll();
+  }
+}
 function recordingCard(item) {
-  return `<article class="card record-row"><div><h3>${time(item.created_at)}</h3><p>10 seconds · Mono · 48 kHz · 16-bit PCM</p><p>${number(item.byte_length / 1024)} KB</p></div><audio controls preload="none" aria-label="Recording from ${time(item.created_at)}" src="${escapeHtml(item.download_path)}"></audio><a class="button secondary" href="${escapeHtml(item.download_path)}" download="${escapeHtml(item.recording_id)}.wav">↓ Download</a>${details(item,'Recording details & integrity')}</article>`;
+  return `<article class="card record-row"><div><h3>${time(item.created_at)}</h3><p>10 seconds · Mono · 48 kHz · 16-bit PCM</p><p>${number(item.byte_length / 1024)} KB</p></div><audio controls preload="none" aria-label="Recording from ${time(item.created_at)}" src="${escapeHtml(item.download_path)}"></audio><a class="button secondary" href="${escapeHtml(item.download_path)}" download="${escapeHtml(item.recording_id)}.wav">↓ Download</a><section class="animal-analysis" data-analysis="${escapeHtml(item.recording_id)}" aria-label="Animal identification">${animalResults(item)}</section>${details(item,'Recording details & integrity')}</article>`;
 }
 function library(limit = null) {
   if (loadingLibrary) return '<div class="card empty-state"><p>Loading recordings…</p></div>';
@@ -105,6 +184,7 @@ function render() {
     const selector = current === 'birdcast' ? `<div class="selector"><label for="region">US region</label><select id="region">${regions.map(item=>`<option value="${escapeHtml(item.code)}" ${item.code === region ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></div>` : '';
     content.innerHTML = `${selector}${sourceCard(current,true)}`;
   }
+  scheduleAnalysisPoll();
 }
 async function loadCache() {
   const requestedAt = performance.now();
@@ -134,7 +214,13 @@ async function run(source) {
     notice(error.message,true);
   } finally { pending.delete(source); render(); }
 }
-content.addEventListener('click',event=>{ const button = event.target.closest('[data-action]'); if (button) run(button.dataset.action); });
+content.addEventListener('click',event=>{
+  const identify = event.target.closest('[data-identify]');
+  if (identify) { identifyAnimals(identify.dataset.identify); return; }
+  const detail = event.target.closest('[data-analysis-details]');
+  if (detail) { identifyAnimals(detail.dataset.analysisDetails,true); return; }
+  const button = event.target.closest('[data-action]'); if (button) run(button.dataset.action);
+});
 content.addEventListener('change',event=>{ if(event.target.id === 'region') region = event.target.value; });
 const mobileNavigation = window.matchMedia('(max-width:700px)');
 function setMenu(open) {

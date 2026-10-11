@@ -101,7 +101,8 @@ class ServiceTests(unittest.TestCase):
             service.delete_recording(metadata["recording_id"])
             retained, again = service.recording(metadata["recording_id"])
             self.assertEqual(again, data)
-            self.assertEqual(retained, metadata)
+            self.assertEqual(retained, {key: value for key, value in metadata.items() if key != "analysis"})
+            self.assertIn("analysis", metadata)
 
     def test_recording_rejects_failures_and_untrusted_paths(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import birdcast_scraper
+from animal_analysis import AnalysisCoordinator, AnalysisUnavailable
 from light_sensor import LightSensor
 from presence import PresenceSensor
 from recording_store import RecordingError, RecordingNotFound, RecordingStore
@@ -42,7 +43,8 @@ class BusyError(Exception):
 
 
 class Service:
-    def __init__(self, root: Path, config: Path, runner=None, recorder: str = DEFAULT_RECORDER):
+    def __init__(self, root: Path, config: Path, runner=None, recorder: str = DEFAULT_RECORDER,
+                 animal_analysis: bool = True):
         self.root = root.resolve()
         self.light_sensor = LightSensor()
         self.presence_sensor = PresenceSensor()
@@ -52,6 +54,7 @@ class Service:
         self.recorder = recorder
         self.recording_dir = self.root / "recordings"
         self.recording_store = RecordingStore(self.recording_dir)
+        self.animal_analysis = AnalysisCoordinator(self.root, self.recording_store, enabled=animal_analysis)
         self._recording_lock = threading.Lock()
         self._latest_lock = threading.Lock()
         self._cache_file = self.root / ".runtime" / "latest.json"
@@ -143,12 +146,13 @@ class Service:
             recording_id = uuid.uuid4().hex
             expected = self.recording_store.path(recording_id)
             try:
-                completed = subprocess.run(
-                    [sys.executable, self.recorder, "--output", str(expected)],
-                    cwd=self.root, capture_output=True, text=True,
-                    timeout=RECORDING_SECONDS + 30,
-                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-                )
+                with self.animal_analysis.capture():
+                    completed = subprocess.run(
+                        [sys.executable, self.recorder, "--output", str(expected)],
+                        cwd=self.root, capture_output=True, text=True,
+                        timeout=RECORDING_SECONDS + 30,
+                        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                    )
             except subprocess.TimeoutExpired as exc:
                 raise RecordingError("recorder_timeout", "Microphone recorder timed out.") from exc
             if completed.returncode != 0:
@@ -158,6 +162,7 @@ class Service:
                 raise RecordingError("missing_output", "Recorder did not publish the expected output file.")
             metadata, _ = self.recording_store.read(recording_id)
             self.recording_store.publish_metadata(metadata)
+            metadata["analysis"] = self.animal_analysis.automatic(metadata)
             self.remember("microphone", 200, metadata)
             return metadata
         except RecordingError as exc:
@@ -172,6 +177,21 @@ class Service:
 
     def recording(self, recording_id: str) -> tuple[dict[str, Any], bytes]:
         return self.recording_store.read(recording_id)
+
+    def recordings(self) -> list[dict[str, Any]]:
+        recordings = self.recording_store.list_recordings()
+        for metadata in recordings:
+            result = self.animal_analysis.status(metadata)
+            metadata["analysis"] = {key: result[key] for key in
+                                    ("state", "error", "outdated", "candidates", "processing_seconds")
+                                    if key in result}
+        return recordings
+
+    def analyze_recording(self, recording_id: str, request: bool = False) -> dict[str, Any]:
+        metadata, _ = self.recording_store.read(recording_id)
+        analysis = (self.animal_analysis.request(metadata) if request
+                    else self.animal_analysis.status(metadata))
+        return {"status": "ok", "recording_id": recording_id, "analysis": analysis}
 
     def finish_transfer(self) -> None:
         # Retained for callers using the original transfer lifecycle.
@@ -223,6 +243,22 @@ def make_handler(service: Service):
             return body
 
         def do_POST(self):
+            if self.path.startswith("/v1/recordings/") and self.path.endswith("/analysis"):
+                try:
+                    if self._body(optional=True):
+                        raise ValueError("Analysis request must be empty or {}.")
+                    identifier = self.path[len("/v1/recordings/"):-len("/analysis")]
+                    result = service.analyze_recording(identifier, request=True)
+                    self._send(200 if result["analysis"]["state"] == "completed" else 202, result)
+                except ValueError as exc:
+                    self._send(400, error_payload("malformed_request", str(exc)))
+                except RecordingNotFound as exc:
+                    self._send(404, error_payload(exc.code, str(exc)))
+                except RecordingError as exc:
+                    self._send(502, error_payload(exc.code, str(exc)))
+                except (AnalysisUnavailable, OSError) as exc:
+                    self._send(503, error_payload("analysis_unavailable", str(exc)))
+                return
             if self.path == "/v1/recordings":
                 try:
                     if self._body(optional=True):
@@ -292,10 +328,23 @@ def make_handler(service: Service):
                     status = max(status, radar_status)
                 self._send(status, payload)
                 return
+            if path.startswith("/v1/recordings/") and path.endswith("/analysis"):
+                try:
+                    identifier = path[len("/v1/recordings/"):-len("/analysis")]
+                    result = service.analyze_recording(identifier)
+                    unavailable = result["analysis"]["state"] == "unavailable"
+                    if unavailable:
+                        result.update(error_payload("analysis_unavailable", result["analysis"]["error"]))
+                    self._send(503 if unavailable else 200, result)
+                except RecordingNotFound as exc:
+                    self._send(404, error_payload(exc.code, str(exc)))
+                except RecordingError as exc:
+                    self._send(502, error_payload(exc.code, str(exc)))
+                return
             if path == "/v1/recordings" or path.startswith("/v1/recordings/"):
                 try:
                     if path == "/v1/recordings":
-                        self._send(200, {"status": "ok", "recordings": service.recording_store.list_recordings()})
+                        self._send(200, {"status": "ok", "recordings": service.recordings()})
                     else:
                         metadata, data = service.recording(path[len("/v1/recordings/"):])
                         self._send_bytes(data, metadata["content_type"], metadata)
@@ -333,16 +382,24 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Run the BioGlow BirdCast LAN service.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--root", default=str(Path(__file__).resolve().parent))
+    parser.add_argument("--no-animal-analysis", action="store_true",
+                        help="Disable Perch identification; preserve playback and saved results.")
     args = parser.parse_args(argv)
-    service = Service(Path(args.root).resolve(), Path(args.root).resolve() / "config.json")
+    service = Service(Path(args.root).resolve(), Path(args.root).resolve() / "config.json",
+                      animal_analysis=not args.no_animal_analysis)
     server = build_server(service, port=args.port)
     service.presence_sensor.start()
+    try:
+        service.animal_analysis.start()
+    except OSError as exc:
+        logging.getLogger(__name__).warning("Animal queue could not resume: %s", exc)
     print(f"BioGlow dashboard listening on http://0.0.0.0:{args.port}/ (use the Pi LAN address)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         return 0
     finally:
+        service.animal_analysis.stop()
         service.presence_sensor.stop()
         server.server_close()
     return 0

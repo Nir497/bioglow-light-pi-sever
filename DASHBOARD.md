@@ -35,6 +35,11 @@ in `/home/nir/recordings/` are not imported. Invalid/incomplete files and symlin
 are omitted from the library. Avoid modifying retained WAVs or their sidecar JSON:
 changed captures fail their SHA-256 integrity check.
 
+Optional local Perch analysis identifies species candidates after each new
+recording. Older recordings can be analyzed with **Identify animals**. See
+[ANIMAL_IDENTIFICATION.md](ANIMAL_IDENTIFICATION.md) for setup, API, measured Pi
+performance and limitations. Suggestions do not count individual animals.
+
 The page also marks a displayed radar frame stale when its freshness window expires,
 without fetching another frame.
 
