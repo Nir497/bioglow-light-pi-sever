@@ -74,7 +74,11 @@ class SensorTests(unittest.TestCase):
                     output = []
                     setattr(handler, sender, lambda status, payload: output.append((status, payload)))
                     handler.do_GET()
-                    self.assertEqual(output[0][0], 404 if endpoint == '/reading' else 503)
+                    expected_status = 404 if module is combined and endpoint == '/reading' else 503
+                    self.assertEqual(output[0][0], expected_status)
+                    if module is birdcast_service:
+                        self.assertFalse(output[0][1]['sensor_connected'])
+                        self.assertNotIn('lux', output[0][1])
                     if endpoint == '/health':
                         self.assertFalse(output[0][1]['serial_connected'])
 

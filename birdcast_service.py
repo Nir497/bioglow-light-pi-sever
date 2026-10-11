@@ -16,9 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import birdcast_scraper
-# Light sensor temporarily disabled until connected.
-# from light_sensor import LightSensor
-from presence import PresenceSensor
+from light_sensor import LightSensor
+from presence import PresenceSensor, health_response
 
 DEFAULT_PORT = 8000
 DEFAULT_RECORDER = "/home/nir/record_microphone.py"
@@ -53,7 +52,7 @@ class RecordingNotFound(RecordingError):
 class Service:
     def __init__(self, root: Path, config: Path, runner=None, recorder: str = DEFAULT_RECORDER):
         self.root = root
-        # self.light_sensor = LightSensor()
+        self.light_sensor = LightSensor()
         self.presence_sensor = PresenceSensor()
         self.config = config
         self.runner = runner or self._run_scraper
@@ -256,14 +255,10 @@ def make_handler(service: Service):
             if self.path == '/presence':
                 self._send(*service.presence_sensor.response())
                 return
-            # if self.path in ('/reading', '/health'):
-            #     status, payload = (health_response(service.light_sensor, service.presence_sensor)
-            #                        if self.path == '/health' else service.light_sensor.response())
-            #     self._send(status, payload)
-            #     return
-            if self.path == '/health':
-                status, radar = service.presence_sensor.response(health=True)
-                self._send(status, {**radar, 'presence_sensor': radar})
+            if self.path in ('/reading', '/health'):
+                status, payload = (health_response(service.light_sensor, service.presence_sensor)
+                                   if self.path == '/health' else service.light_sensor.response())
+                self._send(status, payload)
                 return
             if self.path.startswith("/v1/recordings/"):
                 recording_id = self.path.rsplit("/", 1)[-1]

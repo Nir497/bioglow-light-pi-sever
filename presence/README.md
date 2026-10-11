@@ -2,11 +2,12 @@
 
 Implemented in /home/nir/bioglow-birdcast/presence/__init__.py and integrated into
 both existing entry points. Default bind is 0.0.0.0:8000. Run one entry point only.
-The VEML7700 import, initialization, and HTTP reading handler are temporarily
-commented out in both entry points because the light sensor is disconnected.
-/reading returns 404. /health reports presence sensor health only, including
-presence_sensor, serial_connected, and fresh; it returns 503 when radar data
-is unavailable or stale. /presence continues to report radar readings.
+The repository entry point birdcast_service.py enables the VEML7700 sensor:
+/reading returns lux readings and /health includes light sensor health alongside
+presence_sensor, serial_connected, and fresh. Health returns 503 when either
+sensor is unavailable or radar data is stale. /presence reports radar readings.
+The external combined entry point /home/nir/bioglow-birdcast.py still has the
+light sensor disabled; use birdcast_service.py for light sensor readings.
 
 ## Verified and blocked, 2026-10-11
 

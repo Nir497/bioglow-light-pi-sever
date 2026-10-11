@@ -55,6 +55,7 @@ class ServiceTests(unittest.TestCase):
     def test_health_check_does_not_run_scraper(self):
         calls = []
         service = Service(Path.cwd(), Path("config.json"), runner=lambda region: calls.append(region))
+        service.light_sensor.response = lambda health=False: (200, {"status": "ok", "sensor_connected": True})
         service.presence_sensor.response = lambda health=False: (200, {"status": "ok", "serial_connected": True, "fresh": True})
         server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(service))
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
