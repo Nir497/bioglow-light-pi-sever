@@ -44,7 +44,10 @@ const context=vm.createContext({document,console,URL,Object,Date,location:{hash:
   fetch:async(path,options)=>{
     requests.push({path,options});
     let body;
-    if(path==='/v1/latest'){clock+=delayLatest;body=data;}
+    if(path==='/v1/latest'){
+      clock+=delayLatest;body=JSON.parse(JSON.stringify(data));
+      if(radarUnavailable)body.sources.radar={http_status:503,result:{fresh:false,status:'unavailable',error:{message:'Radar disconnected'}}};
+    }
     else if(path==='/presence') {
       body=radarUnavailable ? {fresh:false,status:'unavailable',error:{message:'Radar disconnected'}} : data.sources.radar.result;
       return {ok:!radarUnavailable,json:async()=>JSON.parse(JSON.stringify(body))};
@@ -91,6 +94,28 @@ async function main(){
   await pendingRadarPoll.fn();
   assert.equal(document.querySelector('#page-title').textContent,'Migration outlook');
   assert.equal(requests.length,beforeNavigation,'Navigation cancels radar polling on other pages');
+  vm.runInContext(`histories={
+    light:[{read_at:'2026-10-11T12:00:00Z',http_status:200,result:{lux:0}},
+      {read_at:'2026-10-11T12:00:01Z',http_status:503,result:{}},
+      {read_at:'2026-10-11T12:00:02Z',http_status:200,result:{lux:42}}],
+    radar:[{read_at:'2026-10-11T12:00:00Z',http_status:200,result:{presence:'none'}},
+      {read_at:'2026-10-11T12:00:01Z',http_status:200,result:{presence:'both'}}],
+    birdcast:[{read_at:'2026-10-11T12:00:00Z',http_status:200,result:{region:{code:'US-CA'},metrics:{birds_in_flight:123}}},
+      {read_at:'2026-10-11T12:00:01Z',http_status:200,result:{region:{code:'US-NY'},metrics:{birds_in_flight:999}}}]
+  }`,context);
+  const lightGraph=vm.runInContext("historyGraph('light')",context);
+  assert.match(lightGraph,/2 saved readings/);
+  assert.match(lightGraph,/Luminance \(lux\) over read time/);
+  assert.equal((lightGraph.match(/<circle /g)||[]).length,2,'Zero lux is a valid reading');
+  assert.ok(!lightGraph.includes('<path d="M '),'Failed reads break plotted lines');
+  const presenceGraph=vm.runInContext("historyGraph('radar')",context);
+  assert.match(presenceGraph,/H .* V /,'Presence uses steps between categorical states');
+  assert.match(presenceGraph,/none/);
+  assert.match(presenceGraph,/both/);
+  const migrationGraph=vm.runInContext("historyGraph('birdcast')",context);
+  assert.match(migrationGraph,/123/);
+  assert.ok(!migrationGraph.includes('999'),'Migration history filters by region');
+  assert.match(vm.runInContext("historyGraph('light')",context),/Measured/);
   document.querySelector('#content').listeners.change({target:{id:'region',value:'US-NY'}});
   await vm.runInContext("run('birdcast')",context);
   const snapshotRequest=requests.find(r=>r.path==='/v1/snapshots');

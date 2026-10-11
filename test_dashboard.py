@@ -110,6 +110,64 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("presence", entry["result"])
         self.assertNotIn("moving_distance_cm", entry["result"])
 
+    def test_text_histories_record_reads_errors_and_survive_restart(self):
+        self.service.presence_sensor.response = Mock(return_value=(200, {
+            "presence": "stationary", "fresh": True, "timestamp": "2026-10-11T12:00:00Z"}))
+        self.service.light_sensor.response = Mock(return_value=(200, {"lux": 42.5}))
+        self.request("GET", "/presence")
+        self.request("GET", "/reading")
+        self.service.snapshot("US-CA")
+        self.service.presence_sensor.response.return_value = (503, {"fresh": False, "error": {"message": "stale"}})
+        self.request("GET", "/presence")
+        for filename in ("presence.txt", "luminance.txt", "migration.txt"):
+            lines = (self.root / "readings" / filename).read_text().splitlines()
+            self.assertTrue(lines)
+            self.assertTrue(json.loads(lines[0])["read_at"].endswith("Z"))
+        restarted = Service(self.root, self.root / "config.json")
+        history = restarted.reading_history.all_recent()
+        self.assertEqual(len(history["radar"]), 2)
+        self.assertEqual(history["radar"][0]["result"]["presence"], "stationary")
+        self.assertEqual(history["radar"][1]["http_status"], 503)
+        self.assertNotIn("presence", history["radar"][1]["result"])
+        self.assertEqual(history["light"][0]["result"]["lux"], 42.5)
+        self.assertEqual(history["birdcast"][0]["result"]["metrics"]["birds_in_flight"], 123)
+
+    def test_history_tail_ignores_corrupt_records_and_preserves_full_log(self):
+        history = self.service.reading_history
+        for value in range(510):
+            history.append("light", 200, {"lux": value, "padding": "x" * 100})
+        recent = history.recent("light")
+        self.assertEqual(len(recent), 500)
+        self.assertEqual(recent[0]["result"]["lux"], 10)
+        path = self.root / "readings" / "luminance.txt"
+        with path.open("a") as stream:
+            stream.write('{"truncated":')
+        history.append("light", 200, {"lux": 999})
+        self.assertEqual(history.recent("light")[-1]["result"]["lux"], 999)
+        self.assertEqual(len(path.read_text().splitlines()), 512)
+
+    def test_history_write_failure_is_visible_without_losing_reading(self):
+        self.service.light_sensor.response = Mock(return_value=(200, {"lux": 42}))
+        with patch.object(self.service.reading_history, "append", side_effect=OSError("full")):
+            with self.assertLogs("birdcast_service", level="WARNING"):
+                status, _, raw = self.request("GET", "/reading")
+        self.assertEqual(status, 200)
+        self.assertIn("history_error", json.loads(raw))
+
+    def test_concurrent_reading_logs_keep_every_complete_record(self):
+        history = self.service.reading_history
+        def write_readings(worker):
+            for index in range(30):
+                history.append("light", 200, {"lux": worker * 30 + index})
+        workers = [threading.Thread(target=write_readings, args=(worker,)) for worker in range(4)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        entries = history.recent("light")
+        self.assertEqual(len(entries), 120)
+        self.assertEqual({entry["result"]["lux"] for entry in entries}, set(range(120)))
+
     def test_corrupt_runtime_cache_does_not_prevent_startup(self):
         self.service._cache_file.parent.mkdir()
         self.service._cache_file.write_text("not json")

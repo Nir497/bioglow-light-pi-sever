@@ -124,7 +124,7 @@ class PresenceSensor:
                        'timestamp': self.latest['timestamp'] if self.latest else None}
             if health:
                 payload.update(valid_frames=self.valid_frames, malformed_frames=self.malformed_frames)
-            elif fresh:
+            if fresh:
                 payload.update(self.latest)
             if not fresh:
                 payload['status'] = 'unavailable'

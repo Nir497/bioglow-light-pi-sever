@@ -666,6 +666,15 @@ select {
     cursor:pointer;
     padding:5px 10px
 }
+.reading-history { margin-top:20px; border-top:1px solid var(--line); padding-top:16px; }
+.reading-history label { display:flex; align-items:center; gap:10px; font-size:13px; }
+.reading-history select { max-width:100%; padding:6px; border:1px solid #d9e1db; border-radius:6px; background:white; }
+.history-chart { display:block; width:100%; margin-top:12px; overflow:visible; }
+.history-chart text { font-size:10px; fill:#596a60; }
+.chart-axis { fill:none; stroke:#ccd6cf; }
+.chart-values path { fill:none; stroke:#287c54; stroke-width:2; }
+.chart-values circle { fill:#287c54; }
+.chart-values circle:focus { outline:2px solid #172e21; }
 @media(max-width:700px) {
     .sidebar-close {
         display:block

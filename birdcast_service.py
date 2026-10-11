@@ -21,6 +21,7 @@ import birdcast_scraper
 from animal_analysis import AnalysisCoordinator, AnalysisUnavailable
 from light_sensor import LightSensor
 from presence import PresenceSensor
+from reading_history import ReadingHistory
 from recording_store import RecordingError, RecordingNotFound, RecordingStore
 
 DEFAULT_PORT = 8000
@@ -48,6 +49,7 @@ class Service:
         self.root = root.resolve()
         self.light_sensor = LightSensor()
         self.presence_sensor = PresenceSensor()
+        self.reading_history = ReadingHistory(self.root)
         self.config = config
         self.runner = runner or self._run_scraper
         self._lock = threading.Lock()
@@ -89,14 +91,27 @@ class Service:
         with self._latest_lock:
             result = copy.deepcopy(self._latest)
         # Radar is passive: this reads worker state without opening UART or sending commands.
-        status, radar = self.presence_sensor.response()
+        status, radar = self.presence_reading()
         result["radar"] = {"http_status": status, "result": radar}
-        return {"status": "ok", "sources": result,
+        return {"status": "ok", "sources": result, "history": self.reading_history.all_recent(),
                 "regions": [{"code": f"US-{code}", "name": name}
                             for code, name in birdcast_scraper.STATE_NAMES.items()]}
 
+    def log_reading(self, source: str, status: int, result: dict[str, Any]) -> None:
+        try:
+            self.reading_history.append(source, status, result)
+        except (OSError, ValueError) as exc:
+            logging.getLogger(__name__).warning("Could not save %s reading: %s", source, exc)
+            result["history_error"] = "This reading could not be saved to its text log."
+
+    def presence_reading(self, health: bool = False) -> tuple[int, dict[str, Any]]:
+        status, result = self.presence_sensor.response(health=health)
+        self.log_reading("radar", status, result)
+        return status, result
+
     def light_reading(self, health: bool = False) -> tuple[int, dict[str, Any]]:
         status, result = self.light_sensor.response(health=health)
+        self.log_reading("light", status, result)
         # Keep the last measurement available even when callers request health only.
         if not health or status != 200:
             self.remember("light", status, result)
@@ -107,11 +122,13 @@ class Service:
             raise BusyError("Another BirdCast snapshot is already in progress.")
         try:
             result = self.runner(region)
+            self.log_reading("birdcast", 200, result)
             self.remember("birdcast", 200, result)
             return result
         except Exception as exc:
             status = 503 if isinstance(exc, LookupError) else 502
             code = "birdcast_unavailable" if status == 503 else "scraper_failed"
+            self.log_reading("birdcast", status, {**error_payload(code, str(exc)), "region": {"code": region}})
             self.remember("birdcast", status, error_payload(code, str(exc)))
             raise
         finally:
@@ -315,12 +332,12 @@ def make_handler(service: Service):
                 self._send(200, service.latest())
                 return
             if path == "/presence":
-                self._send(*service.presence_sensor.response())
+                self._send(*service.presence_reading())
                 return
             if path in ("/reading", "/health"):
                 status, payload = service.light_reading(health=path == "/health")
                 if path == "/health":
-                    radar_status, radar = service.presence_sensor.response(health=True)
+                    radar_status, radar = service.presence_reading(health=True)
                     payload = {**payload, "presence_sensor": radar,
                                "serial_connected": radar["serial_connected"], "fresh": radar["fresh"]}
                     if radar_status != 200:

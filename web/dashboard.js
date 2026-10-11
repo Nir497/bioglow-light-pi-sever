@@ -3,6 +3,13 @@ const names = {overview:'Overview',radar:'Radar',light:'Light',birdcast:'BirdCas
 const titles = {overview:'Station overview',radar:'Presence & movement',light:'Ambient light',birdcast:'Migration outlook',recordings:'Sound library'};
 const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'The newest radar frame, with distances, energy scores, and connection status.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Every recording stays here.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
+let histories = {};
+const historyMetrics = {radar:'presence',light:'lux',birdcast:'birds_in_flight'};
+const graphMetrics = {
+  radar:[['presence','Presence state'],['moving_distance_cm','Moving distance (cm)'],['stationary_distance_cm','Stationary distance (cm)'],['moving_energy_score','Moving energy score'],['stationary_energy_score','Stationary energy score']],
+  light:[['lux','Luminance (lux)']],
+  birdcast:[['birds_in_flight','Birds in flight'],['total_birds_crossed','Birds crossed'],['speed_mph','Speed (mph)'],['altitude_ft','Altitude (ft)']]
+};
 let radarLoadedAt = performance.now(), radarExpiryTimer;
 let radarPollTimer, radarPollGeneration = 0;
 let analysisTimer, analysisPollGeneration = 0;
@@ -57,14 +64,17 @@ function scheduleRadarPoll() {
   radarPollTimer = setTimeout(async()=>{
     if (generation !== radarPollGeneration) return;
     const started = performance.now();
-    let entry;
+    let entry, nextHistory;
     try {
-      entry = {http_status:200,result:await api('/presence')};
+      const latest = await api('/v1/latest');
+      entry = latest.sources.radar;
+      nextHistory = latest.history;
     } catch (error) {
       entry = {http_status:503,result:error.data || {fresh:false,status:'unavailable',
         error:{code:'presence_unavailable',message:error.message}}};
     }
     if (generation !== radarPollGeneration) return;
+    if (nextHistory) histories = nextHistory;
     sources.radar = entry;
     radarLoadedAt = started;
     const card = content.querySelector('[data-source="radar"]');
@@ -95,6 +105,7 @@ function sourceCard(source, expanded = false) {
   const caption = source === 'radar' ? 'Presence in the detection area' : source === 'light' ? 'Latest measured illuminance' : 'Estimated birds in flight';
   const stamp = source === 'birdcast' ? data.retrieved_at : data.timestamp;
   let body = `<div class="big-value">${value}</div><div class="value-caption">${caption}</div><div class="timestamp">${success ? `Measured ${time(stamp)}` : 'No current result'}${entry?.requested_at ? `<br>Last request ${time(entry.requested_at)}` : ''}</div>${resultError(source)}`;
+  if (entry?.result.history_error) body += `<p class="error-message">${escapeHtml(entry.result.history_error)}</p>`;
   if (expanded && source === 'radar') body += facts([
     ['Moving distance',data.moving_distance_cm == null ? '—' : `${number(data.moving_distance_cm)} cm`],
     ['Stationary distance',data.stationary_distance_cm == null ? '—' : `${number(data.stationary_distance_cm)} cm`],
@@ -112,7 +123,37 @@ function sourceCard(source, expanded = false) {
   if (expanded && source === 'light') body += '<p class="timestamp">This is the last requested measurement, not a live stream. If the sensor is disconnected, reconnect it and choose Read now.</p>';
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
   const control = source === 'birdcast' ? action('birdcast','Fetch BirdCast') : action(source,'Read now');
-  return `<article class="card" data-source="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</article>`;
+  return `<article class="card" data-source="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${historyGraph(source)}${expanded ? details(entry || {status:'not_requested'}) : ''}</article>`;
+}
+function historyGraph(source) {
+  const metric = historyMetrics[source];
+  const entries = (histories[source] || []).filter(entry=>source !== 'birdcast' || entry.result.region?.code === region);
+  const states = {none:0,moving:1,stationary:2,both:3};
+  const points = entries.map(entry=>{
+    const value = source === 'radar' && metric === 'presence' ? states[entry.result.presence] :
+      source === 'birdcast' ? entry.result.metrics?.[metric] : entry.result[metric];
+    return {entry,x:Date.parse(entry.read_at),y:entry.http_status === 200 && typeof value === 'number' && Number.isFinite(value) ? value : null};
+  }).filter(point=>Number.isFinite(point.x));
+  const valid = points.filter(point=>point.y !== null);
+  const label = graphMetrics[source].find(item=>item[0]===metric)[1];
+  const selector = `<label>Graph <select data-history-metric="${source}" aria-label="${names[source]} graph metric">${graphMetrics[source].map(([key,title])=>`<option value="${key}" ${key===metric?'selected':''}>${title}</option>`).join('')}</select></label>`;
+  if (!valid.length) return `<section class="reading-history">${selector}<p>No saved ${escapeHtml(label.toLowerCase())} readings yet.</p></section>`;
+  const first = points[0].x, last = points[points.length-1].x;
+  const categorical = source === 'radar' && metric === 'presence';
+  const low = categorical ? 0 : Math.min(0,...valid.map(point=>point.y));
+  const high = categorical ? 3 : Math.max(low+1,...valid.map(point=>point.y));
+  const x = point=>50+(last===first ? 250 : (point.x-first)/(last-first)*500);
+  const y = point=>170-(point.y-low)/(high-low)*140;
+  let previous = null;
+  const marks = points.map(point=>{
+    if (point.y === null) { previous = null; return ''; }
+    const line = previous ? `<path d="M ${x(previous)} ${y(previous)} ${categorical ? `H ${x(point)} V ${y(point)}` : `L ${x(point)} ${y(point)}`}"/>` : '';
+    previous = point;
+    const value = categorical ? point.entry.result.presence : point.y;
+    return `${line}<circle cx="${x(point)}" cy="${y(point)}" r="3" tabindex="0"><title>${escapeHtml(value)} · Read ${time(point.entry.read_at)} · Measured ${time(point.entry.result.timestamp || point.entry.result.retrieved_at)}</title></circle>`;
+  }).join('');
+  const ticks = categorical ? ['none','moving','stationary','both'].map((state,index)=>`<text x="45" y="${170-index/3*140}" text-anchor="end">${state}</text>`).join('') : `<text x="45" y="32" text-anchor="end">${number(high)}</text><text x="45" y="172" text-anchor="end">${number(low)}</text>`;
+  return `<section class="reading-history">${selector}<svg class="history-chart" viewBox="0 0 600 210" role="img" aria-label="${escapeHtml(label)} over read time"><title>${escapeHtml(label)} over time</title><path class="chart-axis" d="M 50 25 V 175 H 550"/>${ticks}<g class="chart-values">${marks}</g><text x="50" y="198">${escapeHtml(new Date(first).toLocaleTimeString())}</text><text x="550" y="198" text-anchor="end">${escapeHtml(new Date(last).toLocaleTimeString())}</text></svg><p class="timestamp">${valid.length} saved readings · ${time(points[0].entry.read_at)} – ${time(points[points.length-1].entry.read_at)}. Latest 500 log entries; unavailable reads leave gaps. Hover or focus a point for its value and timestamps.</p></section>`;
 }
 function facts(items) { return `<dl class="facts">${items.map(([label,value])=>`<div class="fact"><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>`; }
 function animalResults(item) {
@@ -217,7 +258,7 @@ function render() {
 }
 async function loadCache() {
   const requestedAt = performance.now();
-  try { const data = await api('/v1/latest'); sources = data.sources; radarLoadedAt = requestedAt; scheduleRadarExpiry(); regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name)); cacheError = ''; }
+  try { const data = await api('/v1/latest'); sources = data.sources; histories = data.history || {}; radarLoadedAt = requestedAt; scheduleRadarExpiry(); regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name)); cacheError = ''; }
   catch (error) { cacheError = error.message; throw error; }
 }
 async function loadLibrary() {
@@ -250,7 +291,11 @@ content.addEventListener('click',event=>{
   if (detail) { identifyAnimals(detail.dataset.analysisDetails,true); return; }
   const button = event.target.closest('[data-action]'); if (button) run(button.dataset.action);
 });
-content.addEventListener('change',event=>{ if(event.target.id === 'region') region = event.target.value; });
+content.addEventListener('change',event=>{
+  if(event.target.id === 'region') { region = event.target.value; render(); }
+  const source = event.target.dataset?.historyMetric;
+  if (source && graphMetrics[source]?.some(([key])=>key===event.target.value)) { historyMetrics[source] = event.target.value; render(); }
+});
 const mobileNavigation = window.matchMedia('(max-width:700px)');
 function setMenu(open) {
   const sidebar = document.querySelector('#sidebar');

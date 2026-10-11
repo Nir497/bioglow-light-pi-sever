@@ -48,7 +48,7 @@ class LightSensor:
         try:
             reading = self.read()
             if health:
-                return 200, {'status': 'ok', 'service': 'BioGlow BirdCast', 'sensor': reading['sensor'], 'sensor_connected': True, 'timestamp': reading['timestamp']}
+                return 200, {'status': 'ok', 'service': 'BioGlow BirdCast', 'sensor': reading['sensor'], 'sensor_connected': True, 'timestamp': reading['timestamp'], 'lux': reading['lux']}
             return 200, reading
         except SensorError as exc:
             return 503, {'status': 'error', 'sensor': 'VEML7700', 'sensor_connected': False, 'error': {'code': 'sensor_unavailable', 'message': str(exc)}}

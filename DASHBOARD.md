@@ -44,6 +44,21 @@ Overview and Radar refresh the passive radar reading every second while visible.
 Refreshes update only the radar card, preserving audio playback. The page still
 marks expired frames unavailable if the sensor stops reporting or requests fail.
 
+Each API read appends a timestamped JSON line to `readings/presence.txt`,
+`readings/luminance.txt`, or `readings/migration.txt`. Presence reads include
+dashboard refreshes and `/v1/latest`; light health checks also log their measurement.
+Reading saved history does not repeat light measurements or migration fetches.
+Logs retain all entries across restarts and are excluded from Git. Failed reads
+are logged as errors, never as zero or absence. Logging errors appear in the
+response as `history_error` and in server logs.
+
+Sensor cards graph the latest 500 entries from these text files over read time.
+Select a metric for presence state, distance, energy, lux, or migration counts,
+speed and altitude. Migration graphs use the selected region. Missing values and
+failed readings break the line. Hover or focus points for values and read/measurement
+timestamps. Use Refresh view to reload edited text logs. No historical data is
+invented from the single saved snapshot.
+
 Latest successful light/BirdCast results, microphone outcomes, and last request
 errors are cached in `.runtime/latest.json`. Radar state is kept by the existing
 receiver and re-evaluated for freshness on each view request. Cached results do
