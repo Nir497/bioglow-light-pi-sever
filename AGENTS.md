@@ -2,9 +2,25 @@
 
 ## Project Structure & Module Organization
 
-Work only in `/home/nir/bioglow-birdcast`, the repository root. `birdcast_scraper.py` fetches migration data; `birdcast_service.py` exposes the HTTP service. `presence/` contains the LD2410C UART receiver, parser, hardware check, and documentation. `light_sensor.py` implements the VEML7700 integration, currently disabled in the server because the sensor is disconnected.
+Work only in `/home/nir/bioglow-birdcast`, the repository root. `birdcast_service.py` is the current HTTP service and LAN dashboard entry point; `birdcast_scraper.py` fetches migration data. `web/` contains the dashboard HTML, CSS, and JavaScript, with no build step. `presence/` contains the passive LD2410C UART receiver, parser, hardware check, and documentation. `light_sensor.py` implements VEML7700 access; light collection is enabled and reports unavailable hardware explicitly.
 
-The existing combined server entry point is `../bioglow-birdcast.py`; `../record_microphone.py` captures microphone audio. These external files are runtime dependencies; keep new work inside this repository. Tests live beside the project modules, in `presence/`, and in `tests/`. `recordings/` stores generated WAV files; `backups/` stores historical copies.
+`collection_schedule.py` owns automatic sensor sampling and optional microphone scheduling. `microphone_capture.py` captures five-second WAVs; `recording_store.py` validates, stores, downloads, and deletes recordings. `reading_history.py` manages timestamped text logs and graph queries. `animal_analysis.py` manages the optional local Perch queue; `animal_worker.py` performs inference, `animal_model.py` pins model assets, and `animal_names.py` resolves English common names using bundled names and cached iNaturalist lookups.
+
+`../bioglow-birdcast.py` and `../record_microphone.py` are legacy external entry points/dependencies, still covered by compatibility tests. Keep new work inside this repository. Tests live beside the project modules, in `presence/`, and in `tests/`. `recordings/` stores WAVs and metadata; `readings/` stores text logs; `.runtime/` stores caches and analysis states; `.models/` stores model assets. These generated/private directories are ignored by Git. `backups/` stores historical copies. See `DASHBOARD.md`, `ANIMAL_IDENTIFICATION.md`, and `presence/README.md` for details.
+
+## Collection, History & Dashboard Behavior
+
+The repository server samples and logs presence and light every ten seconds, independently of dashboard clients. BirdCast stays manual. Radar still receives UART frames continuously; freshness requires valid frames within two seconds and an open connection. `/v1/latest` reads passive/cached state without adding log entries or measuring light. Explicit sensor reads may add measurements outside the scheduled cadence.
+
+Automatic microphone recording starts stopped after each server restart. Start records immediately, then every 120 seconds; Stop prevents future captures while an active capture finishes. Scheduling is server-owned and shared by clients. Preserve capture locking, analysis pause/resume behavior, error reporting, and shutdown cleanup.
+
+Text files contain one timestamped JSON record per line: `readings/presence.txt`, `luminance.txt`, `migration.txt`, and `recordings.txt`. Keep sensor history indefinitely. Log failed reads as unavailable, never zero or absence. Recording history includes only new recording events and new analysis results, without backfilling old results. Log analysis completion even when the dashboard is closed.
+
+Graphs appear only on individual sensor pages and Recordings. Preserve metric/animal and time-range selectors, region filtering for migration, and gaps for unavailable values. Query the full log for time ranges; disclose sampling when limiting graph points. Automatic refreshes must preserve audio elements, open selectors, and focus.
+
+Recordings persist until explicitly deleted. Dashboard deletion requires confirmation and removes the WAV, metadata, analysis state, corresponding animal-history entries, and cached recording references. Reject deletion during capture or active identification; prevent workers from recreating deleted data. Downloads and `finish_transfer()` do not delete recordings.
+
+Animal predictions are unverified candidates. Show common names alongside scientific names where available, retaining scientific names as a fallback. Raw model scores have no fixed minimum or maximum, may be negative, and are not percentages or animal counts. New five-second recordings use one model window; retained ten-second recordings use two.
 
 ## Development & Test Commands
 
@@ -13,12 +29,13 @@ Run commands from `/home/nir/bioglow-birdcast`:
 ```bash
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m unittest discover -s presence -v
-.venv/bin/python -m unittest test_combined_recording test_light_sensor -v
-.venv/bin/python -m unittest test_birdcast_service test_birdcast_scraper -v
-.venv/bin/python /home/nir/bioglow-birdcast.py --port 8000
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest test_dashboard test_dashboard_frontend test_birdcast_service test_birdcast_scraper test_light_sensor test_combined_recording -v
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest test_collection_schedule test_microphone_capture test_animal_analysis test_animal_names -v
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest test_dashboard_browser -v
+.venv/bin/python birdcast_service.py --port 8000
 ```
 
-These install dependencies, verify radar parsing and audio behavior, test service and scraper behavior, and start the combined server. Run only one server entry point. No build step is required.
+Run checks relevant to the change. Frontend state tests require Node; browser tests require Chromium. HTTP and Chromium checks may require execution outside the sandbox. Optional animal analysis requires `requirements-animal.txt` and `setup_animal_model.py`; use `--no-animal-analysis` to run the server without identification. Run only one server entry point; the legacy combined server also uses port 8000. No build step is required.
 
 ## Coding Style & Naming Conventions
 
@@ -26,12 +43,12 @@ Use Python with four-space indentation, `snake_case` functions and variables, an
 
 ## Testing Guidelines
 
-Use standard-library `unittest`; name files `test_*.py` and methods `test_*`. Cover malformed input, unavailable hardware, stale radar frames, and recording integrity. No numeric coverage threshold is configured. Socket tests require an environment permitting local HTTP connections. Synthetic frames and audio fixtures do not verify physical hardware.
+Use standard-library `unittest`; name files `test_*.py` and methods `test_*`. Cover malformed input, unavailable hardware, stale radar frames, recording integrity/deletion, schedule start/stop and concurrency, durable history, and model-window handling. Verify dashboard updates preserve controls and audio. No numeric coverage threshold is configured. Socket tests require an environment permitting local HTTP connections. Synthetic frames, audio fixtures, and browser mocks do not verify physical hardware. Update mirrored service tests in `tests/` when changing behavior covered by the root service tests.
 
 ## Commit & Pull Request Guidelines
 
-Available history contains only `Initial commit`; no broader convention is established. Use concise, imperative commit subjects. Describe behavior changes, validation results, and hardware limitations in pull requests; link relevant issues when available. Commit and push task changes after each task, excluding unrelated files and generated recordings. Report failures explicitly.
+Use concise, imperative commit subjects. Describe behavior changes, validation results, and hardware limitations in pull requests; link relevant issues when available. Commit and push task changes after each task, excluding unrelated files, generated recordings, sensor logs, caches, models, and bytecode. Report failures explicitly.
 
 ## Hardware & Configuration
 
-Consult `presence/README.md` before UART testing. Never treat unavailable radar data as absence. Preserve microphone downloads as `audio/wav`: ten seconds, mono, 48 kHz, 16-bit PCM. Keep services on the local network and avoid committing credentials, virtual environments, or private captures.
+Consult `presence/README.md` before UART testing. Never treat unavailable radar data as absence. New microphone captures/downloads are `audio/wav`: five seconds, mono, 48 kHz, 16-bit PCM (240,000 frames; 480,044 bytes for the canonical WAV). Preserve support for retained ten-second WAVs and the legacy combined-server tests. Do not change external runtime files. Keep services on the local network and avoid committing credentials, virtual environments, or private captures.
