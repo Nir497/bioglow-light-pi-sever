@@ -18,10 +18,12 @@ const browserRequests=[];
 const recordingId='a'.repeat(32);
 let browserRecordings=[{recording_id:recordingId,created_at:now,byte_length:960044,
   download_path:'/v1/recordings/'+recordingId,analysis:{state:'completed',candidates:[{scientific_name:'Buteo jamaicensis',score:7.5}]}}];
+let browserCollection={enabled:false,recording:false,duration_seconds:5,interval_seconds:120};
 window.fetch=async(path,options={})=>{
   browserRequests.push(path);
   let body;
-  if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},regions:[{code:'US-CA',name:'California'}]};
+  if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},collection:browserCollection,regions:[{code:'US-CA',name:'California'}]};
+  else if(path==='/v1/recording-schedule'){browserCollection.enabled=JSON.parse(options.body).enabled;body={collection:browserCollection};}
   else if(path==='/v1/recordings')body={recordings:browserRecordings};
   else if(path==='/v1/recordings/'+recordingId && options.method==='DELETE'){browserRecordings=[];body={deleted:true};}
   else if(path.startsWith('/v1/animal-names'))body={names:{'Buteo jamaicensis':'Red-tailed Hawk'}};
@@ -61,6 +63,18 @@ setTimeout(async()=>{
     check(document.querySelector('[data-history-metric="microphone"]').textContent.includes('Red-tailed Hawk'),'Animal common name missing');
     check(document.querySelector('[data-chart="microphone"] svg').getAttribute('aria-label').includes('recording time'),'Animal scores must use recording time');
     check(document.querySelector('[data-history="microphone"]').textContent.includes('no fixed minimum or maximum'),'Score scale explanation missing');
+    check(document.querySelector('[data-action="microphone"]').textContent.includes('5 seconds'),'Manual capture duration is not five seconds');
+    document.querySelector('[data-schedule-recording="start"]').click();await pause(50);
+    check(browserCollection.enabled,'Start did not enable periodic recording');
+    check(document.querySelector('[data-schedule-recording="stop"]'),'Stop control missing');
+    document.querySelector('[data-schedule-recording="stop"]').click();await pause(50);
+    check(!browserCollection.enabled,'Stop did not disable periodic recording');
+    const playingAudio=document.querySelector('[data-recording] audio');
+    const animalChoice=document.querySelector('[data-history-metric="microphone"]');
+    animalChoice.focus();await pause(10100);
+    check(document.querySelector('[data-recording] audio')===playingAudio,'Periodic library refresh replaced audio');
+    check(document.querySelector('[data-history-metric="microphone"]')===animalChoice,'Periodic refresh replaced animal selector');
+    check(document.activeElement===animalChoice,'Periodic refresh lost selector focus');
     const deletion=document.querySelector('[data-delete-recording]');
     window.confirm=()=>false;deletion.click();await pause(50);
     check(browserRecordings.length===1,'Cancelled deletion removed a recording');
@@ -81,7 +95,7 @@ setTimeout(async()=>{
             page.write_text(html, encoding="utf-8")
             result = subprocess.run([shutil.which("chromium"), "--headless", "--no-sandbox",
                                      "--disable-gpu", "--disable-dev-shm-usage", "--no-proxy-server",
-                                     "--user-data-dir="+directory+"/profile", "--virtual-time-budget=3500",
+                                     "--user-data-dir="+directory+"/profile", "--virtual-time-budget=15000",
                                      "--dump-dom", page.as_uri()], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr[-1500:])
         self.assertIn('data-browser-check="passed"', result.stdout,

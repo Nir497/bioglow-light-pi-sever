@@ -20,9 +20,9 @@ def audio_windows(data: bytes):
 
     samples = np.frombuffer(data, dtype="<i2", offset=44).astype(np.float32) / 32768.0
     resampled = resample_poly(samples, 2, 3).astype(np.float32)
-    if resampled.shape != (320000,) or not np.isfinite(resampled).all():
+    if resampled.shape not in ((160000,), (320000,)) or not np.isfinite(resampled).all():
         raise ValueError("Invalid resampled audio.")
-    return resampled.reshape(2, 160000)
+    return resampled.reshape(-1, 160000)
 
 
 def ranked_candidates(scores, labels: list[str]) -> list[dict]:

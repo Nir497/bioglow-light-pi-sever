@@ -6,7 +6,8 @@ Existing recordings have an **Identify animals** button; failed jobs have **Retr
 identification**. There is no automatic scan of old recordings.
 
 Each recording shows up to five unverified species candidates, raw model scores, and a
-control to inspect the two five-second windows. The global model is used without
+control to inspect five-second analysis windows (one for new five-second captures,
+two for retained ten-second recordings). The global model is used without
 geographic filtering. Scientific names come from the pinned model labels and
 appear alongside English common names from iNaturalist. Previously encountered
 names are bundled in `animal_common_names.json`; other names use exact-name or
@@ -54,7 +55,7 @@ after setup to resume persisted jobs. To disable new analysis:
 Completed results remain viewable when analysis is disabled. All audio analysis
 is local; recordings are never sent to a cloud API. Setup downloads only model
 files. `.models/` contains model assets and `.runtime/animal_analysis/` contains
-durable job states/results; both are ignored by Git. The original ten-second,
+durable job states/results; both are ignored by Git. The original five- or ten-second,
 mono, 48 kHz, 16-bit WAV and recording sidecar stay intact. Only an in-memory copy
 is resampled to 32 kHz, with an anti-alias filter.
 

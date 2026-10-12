@@ -9,7 +9,7 @@ const rangeOptions = [['30m','Half hour'],['1h','Hour'],['6h','6 hours'],['12h',
 const historyInfo = {}, historyErrors = {}, historyRequests = {}, historyKeys = {};
 let historyTimer, historyGeneration = 0, selectedAnimal = '';
 const commonNames = {'Bubo virginianus':'Great Horned Owl'}, nameRequests = new Set();
-const scoreExplanation = '<p class="timestamp">Score scale: raw model score (logit), with no fixed minimum or maximum. Scores can be negative; they are not out of 10 or 100. Higher scores mean stronger model support, but the scale varies between species. Scores are not confidence percentages. A recording’s score is the maximum from its two five-second windows.</p>';
+const scoreExplanation = '<p class="timestamp">Score scale: raw model score (logit), with no fixed minimum or maximum. Scores can be negative; they are not out of 10 or 100. Higher scores mean stronger model support, but the scale varies between species. Scores are not confidence percentages. Each new five-second recording uses one analysis window; older ten-second recordings use the maximum from two windows.</p>';
 const animalLabel = name => commonNames[name] ? `${commonNames[name]} · ${name}` : `${name} · Common name unavailable`;
 async function loadAnimalNames(names) {
   const missing = [...new Set(names)].filter(name=>typeof name==='string' && /^[A-Z][a-z]+ /.test(name) && !Object.hasOwn(commonNames,name) && !nameRequests.has(name)).slice(0,30);
@@ -36,6 +36,7 @@ const graphMetrics = {
 };
 let radarLoadedAt = performance.now(), radarExpiryTimer;
 let radarPollTimer, radarPollGeneration = 0;
+let collection = {enabled:false,recording:false}, collectionTimer, collectionGeneration = 0;
 let analysisTimer, analysisPollGeneration = 0;
 const analysisRequests = new Set();
 const deletingRecordings = new Set();
@@ -58,7 +59,7 @@ async function api(path, options = {}) {
   return data;
 }
 function details(data, label = 'View complete data') { return `<details class="details"><summary>${escapeHtml(label)}</summary><pre>${escapeHtml(JSON.stringify(data,null,2))}</pre></details>`; }
-function action(source, label) { return `<button class="button" data-action="${source}" ${pending.has(source) ? 'disabled aria-busy="true"' : ''}>${pending.has(source) ? (source === 'microphone' ? 'Recording 10 seconds…' : 'Requesting…') : label}</button>`; }
+function action(source, label) { return `<button class="button" data-action="${source}" ${pending.has(source) ? 'disabled aria-busy="true"' : ''}>${pending.has(source) ? (source === 'microphone' ? 'Recording 5 seconds…' : 'Requesting…') : label}</button>`; }
 function currentEntry(source) {
   const entry = sources[source];
   if (source !== 'radar' || entry?.http_status !== 200) return entry;
@@ -142,7 +143,7 @@ function sourceCard(source, expanded = false) {
       try { const url = new URL(data.source.url); if (url.protocol === 'https:' && url.hostname === 'dashboard.birdcast.org') body += `<p class="timestamp"><a href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">Open BirdCast source ↗</a></p>`; } catch {}
     }
   }
-  if (expanded && source === 'light') body += '<p class="timestamp">This is the last requested measurement, not a live stream. If the sensor is disconnected, reconnect it and choose Read now.</p>';
+  if (expanded && source === 'light') body += '<p class="timestamp">The server collects light every ten seconds. If the sensor is disconnected, reconnect it and choose Read now.</p>';
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
   const control = source === 'birdcast' ? action('birdcast','Fetch BirdCast') : action(source,'Read now');
   return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded ? historyGraph(source) : ''}</article>`;
@@ -334,11 +335,72 @@ async function deleteRecording(identifier) {
 function library(limit = null) {
   if (loadingLibrary) return '<div class="card empty-state"><p>Loading recordings…</p></div>';
   if (libraryError) return `<div class="card empty-state"><h3>Library unavailable</h3><p>${escapeHtml(libraryError)}</p></div>`;
-  if (!recordings.length) return '<div class="card empty-state"><div class="source-icon" aria-hidden="true">≋</div><h3>Your first recording starts here</h3><p>Choose Record 10 seconds to capture audio from the station microphone. Completed recordings are kept for playback and download.</p></div>';
+  if (!recordings.length) return '<div class="card empty-state"><div class="source-icon" aria-hidden="true">≋</div><h3>Your first recording starts here</h3><p>Choose Record 5 seconds to capture audio from the station microphone. Completed recordings are kept for playback and download.</p></div>';
   return `<div class="record-list">${(limit ? recordings.slice(0,limit) : recordings).map(recordingCard).join('')}</div>`;
 }
 function microphone() {
-  return `<article class="card audio-summary"><div class="audio-copy"><div class="sound-icon" aria-hidden="true">${[16,24,38,26,52,65,37,50,26,40,20,12].map(height=>`<i style="--height:${height}px"></i>`).join('')}</div><h2>Listen to your surroundings</h2><p>Record ten seconds from the station microphone. Captures stay in your library until you delete them.</p>${resultError('microphone')}</div><div class="audio-tools">${action('microphone','● Record 10 seconds')}<span class="badge empty" data-recording-count>${recordings.length} saved</span></div></article>`;
+  return `<article class="card audio-summary"><div class="audio-copy"><div class="sound-icon" aria-hidden="true">${[16,24,38,26,52,65,37,50,26,40,20,12].map(height=>`<i style="--height:${height}px"></i>`).join('')}</div><h2>Listen to your surroundings</h2><p>Record five seconds from the station microphone. Captures stay in your library until you delete them.</p>${resultError('microphone')}</div><div class="audio-tools">${action('microphone','● Record 5 seconds')}<div data-recording-schedule>${scheduleControls()}</div><span class="badge empty" data-recording-count>${recordings.length} saved</span></div></article>`;
+}
+function scheduleControls() {
+  return `<button class="button secondary" data-schedule-recording="${collection.enabled?'stop':'start'}" ${pending.has('schedule')?'disabled':''}>${collection.enabled?'Stop automatic recording':'Start recording every two minutes'}</button><p class="timestamp">${collection.recording?'Recording five seconds…':collection.enabled?'Automatic recording is on.':'Automatic recording is stopped.'}${collection.next_recording_at?`<br>Next recording ${time(collection.next_recording_at)}`:''}<br>Stop prevents future captures; an active capture finishes.${collection.error?`<br>${escapeHtml(collection.error)}`:''}</p>`;
+}
+function updateScheduleControls() {
+  const controls = content.querySelector('[data-recording-schedule]');
+  if (controls && !pending.has('schedule')) controls.innerHTML = scheduleControls();
+}
+async function setRecordingSchedule(enabled) {
+  if (pending.has('schedule')) return;
+  pending.add('schedule');
+  const controls = content.querySelector('[data-recording-schedule]');
+  if (controls) controls.innerHTML = scheduleControls();
+  try {
+    const data = await api('/v1/recording-schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
+    collection = data.collection;
+    notice(enabled?'Automatic recording started: five seconds every two minutes.':'Automatic recording stopped.');
+  } catch(error) { notice(error.message,true); }
+  finally { pending.delete('schedule'); updateScheduleControls(); }
+}
+function syncLibrary() {
+  const wrapper = content.querySelector('[data-recording-library]');
+  if (!wrapper) return;
+  const visible = visibleRecordings();
+  const list = wrapper.querySelector('.record-list');
+  if (!list || !visible.length) wrapper.innerHTML = library(view()==='overview'?3:null);
+  else {
+    for (const item of [...visible].reverse()) {
+      if (!list.querySelector(`[data-recording="${item.recording_id}"]`)) list.insertAdjacentHTML('afterbegin',recordingCard(item));
+      else updateAnimalResults(item);
+    }
+    list.querySelectorAll('[data-recording]').forEach(card=>{if(!visible.some(item=>item.recording_id===card.dataset.recording))card.remove();});
+  }
+  const counter = content.querySelector('[data-recording-count]');
+  if (counter) counter.textContent = `${recordings.length} saved`;
+  scheduleAnalysisPoll();
+}
+function scheduleCollectionPoll() {
+  clearTimeout(collectionTimer);
+  const generation = ++collectionGeneration;
+  collectionTimer = setTimeout(async()=>{
+    try {
+      const latest = await api('/v1/latest');
+      if (generation!==collectionGeneration) return;
+      collection = latest.collection || collection;
+      sources.light = latest.sources.light;
+      const reading = content.querySelector('[data-reading="light"]');
+      if (reading && sources.light) {
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = sourceCard('light',view()==='light');
+        reading.replaceWith(wrapper.querySelector('[data-reading="light"]'));
+      }
+      updateScheduleControls();
+      if (['overview','recordings'].includes(view())) {
+        await loadLibrary();
+        if (generation!==collectionGeneration) return;
+        syncLibrary();
+      }
+    } catch(error) { if(generation===collectionGeneration)notice(error.message,true); }
+    if(generation===collectionGeneration)scheduleCollectionPoll();
+  },10000);
 }
 function render() {
   const current = view();
@@ -346,8 +408,8 @@ function render() {
   document.querySelector('#page-title').textContent = titles[current];
   document.querySelector('#page-description').textContent = descriptions[current];
   document.querySelectorAll('[data-view]').forEach(link => { if(link.dataset.view === current) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current'); });
-  if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div>${library(3)}`;
-  else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div>${library()}`;
+  if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div><div data-recording-library>${library(3)}</div>`;
+  else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div><div data-recording-library>${library()}</div>`;
   else {
     const selector = current === 'birdcast' ? `<div class="selector"><label for="region">US region</label><select id="region">${regions.map(item=>`<option value="${escapeHtml(item.code)}" ${item.code === region ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></div>` : '';
     content.innerHTML = `${selector}${sourceCard(current,true)}`;
@@ -355,10 +417,11 @@ function render() {
   scheduleAnalysisPoll();
   scheduleRadarPoll();
   scheduleHistoryPoll();
+  scheduleCollectionPoll();
 }
 async function loadCache() {
   const requestedAt = performance.now();
-  try { const data = await api('/v1/latest'); sources = data.sources; Object.keys(historyKeys).forEach(source=>historyKeys[source]=''); radarLoadedAt = requestedAt; scheduleRadarExpiry(); regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name)); cacheError = ''; }
+  try { const data = await api('/v1/latest'); sources = data.sources; collection = data.collection || collection; Object.keys(historyKeys).forEach(source=>historyKeys[source]=''); radarLoadedAt = requestedAt; scheduleRadarExpiry(); regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name)); cacheError = ''; }
   catch (error) { cacheError = error.message; throw error; }
 }
 async function loadLibrary() {
@@ -385,6 +448,8 @@ async function run(source) {
   } finally { pending.delete(source); render(); }
 }
 content.addEventListener('click',event=>{
+  const schedule = event.target.closest('[data-schedule-recording]');
+  if (schedule) { setRecordingSchedule(schedule.dataset.scheduleRecording==='start'); return; }
   const remove = event.target.closest('[data-delete-recording]');
   if (remove) { deleteRecording(remove.dataset.deleteRecording); return; }
   const refresh = event.target.closest('[data-history-refresh]');

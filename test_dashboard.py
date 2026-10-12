@@ -236,6 +236,25 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(json.loads(raw)["names"]["Buteo jamaicensis"], "Red-tailed Hawk")
         self.assertEqual(self.request("GET", "/v1/animal-names?name=%3Cscript%3E")[0], 400)
 
+    def test_collection_controls_and_passive_dashboard_do_not_duplicate_sensor_logs(self):
+        self.service.light_sensor.response = Mock(return_value=(200, {"lux": 42}))
+        self.service.presence_sensor.response = Mock(return_value=(503, {"fresh": False}))
+        self.service.runner = Mock(side_effect=AssertionError("BirdCast must remain manual"))
+        self.service.collect_sensors()
+        self.service.latest()
+        self.service.latest()
+        self.assertEqual(len(self.service.reading_history.recent("light")), 1)
+        self.assertEqual(len(self.service.reading_history.recent("radar")), 1)
+        self.assertEqual(self.service.collection_schedule.sensor_interval, 10)
+        self.assertEqual(self.service.collection_schedule.recording_interval, 120)
+        status, _, raw = self.request("POST", "/v1/recording-schedule", {"enabled": True})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(raw)["collection"]["enabled"])
+        self.assertEqual(json.loads(raw)["collection"]["duration_seconds"], 5)
+        self.assertEqual(self.request("POST", "/v1/recording-schedule", {"enabled": "yes"})[0], 400)
+        self.request("POST", "/v1/recording-schedule", {"enabled": False})
+        self.assertFalse(self.service.collection_schedule.status()["enabled"])
+
     def test_corrupt_runtime_cache_does_not_prevent_startup(self):
         self.service._cache_file.parent.mkdir()
         self.service._cache_file.write_text("not json")
@@ -283,7 +302,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(data).hexdigest(), first["sha256"])
         with wave.open(io.BytesIO(data), "rb") as audio:
             self.assertEqual((audio.getnchannels(), audio.getframerate(), audio.getsampwidth(),
-                              audio.getnframes()), (1, 48000, 2, 480000))
+                              audio.getnframes()), (1, 48000, 2, 240000))
         self.assertEqual(restarted.recording(first["recording_id"])[1], data)
 
     def test_delete_removes_audio_metadata_analysis_and_history(self):

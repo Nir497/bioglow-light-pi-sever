@@ -21,14 +21,15 @@ import birdcast_scraper
 from animal_analysis import AnalysisBusy, AnalysisCoordinator, AnalysisUnavailable
 from animal_model import is_species_label
 from animal_names import AnimalNames
+from collection_schedule import CollectionSchedule
 from light_sensor import LightSensor
 from presence import PresenceSensor
 from reading_history import ReadingHistory
 from recording_store import RecordingError, RecordingNotFound, RecordingStore
 
 DEFAULT_PORT = 8000
-DEFAULT_RECORDER = "/home/nir/record_microphone.py"
-RECORDING_SECONDS = 10
+DEFAULT_RECORDER = str(Path(__file__).with_name("microphone_capture.py"))
+RECORDING_SECONDS = 5
 RECORDING_RATE = 48_000
 RECORDING_CHANNELS = 1
 RECORDING_SAMPLE_WIDTH = 2
@@ -65,6 +66,7 @@ class Service:
         self._latest_lock = threading.Lock()
         self._cache_file = self.root / ".runtime" / "latest.json"
         self._latest: dict[str, Any] = {}
+        self.collection_schedule = CollectionSchedule(self.collect_sensors, self.start_recording)
         try:
             cached = json.loads(self._cache_file.read_text(encoding="utf-8"))
             if isinstance(cached, dict):
@@ -95,9 +97,10 @@ class Service:
         with self._latest_lock:
             result = copy.deepcopy(self._latest)
         # Radar is passive: this reads worker state without opening UART or sending commands.
-        status, radar = self.presence_reading()
+        status, radar = self.presence_sensor.response()
         result["radar"] = {"http_status": status, "result": radar}
         return {"status": "ok", "sources": result, "history": self.reading_history.all_recent(),
+                "collection": self.collection_schedule.status(),
                 "regions": [{"code": f"US-{code}", "name": name}
                             for code, name in birdcast_scraper.STATE_NAMES.items()]}
 
@@ -107,6 +110,13 @@ class Service:
         except (OSError, ValueError) as exc:
             logging.getLogger(__name__).warning("Could not save %s reading: %s", source, exc)
             result["history_error"] = "This reading could not be saved to its text log."
+
+    def collect_sensors(self):
+        for read in (self.presence_reading, self.light_reading):
+            try:
+                read()
+            except Exception:
+                logging.getLogger(__name__).exception("Scheduled sensor read failed")
 
     def presence_reading(self, health: bool = False) -> tuple[int, dict[str, Any]]:
         status, result = self.presence_sensor.response(health=health)
@@ -182,6 +192,8 @@ class Service:
             if not printed or Path(printed[-1]).resolve() != expected:
                 raise RecordingError("missing_output", "Recorder did not publish the expected output file.")
             metadata, _ = self.recording_store.read(recording_id)
+            if metadata["duration_seconds"] != RECORDING_SECONDS:
+                raise RecordingError("invalid_audio", "New microphone captures must contain exactly five seconds.")
             self.recording_store.publish_metadata(metadata)
             metadata["analysis"] = self.animal_analysis.automatic(metadata)
             self.log_recording(metadata, metadata["analysis"])
@@ -294,6 +306,15 @@ def make_handler(service: Service):
             return body
 
         def do_POST(self):
+            if self.path == "/v1/recording-schedule":
+                try:
+                    body = self._body()
+                    if set(body) != {"enabled"} or not isinstance(body["enabled"], bool):
+                        raise ValueError("Expected enabled boolean.")
+                    self._send(200, {"status": "ok", "collection": service.collection_schedule.set_recording(body["enabled"])})
+                except ValueError:
+                    self._send(400, error_payload("malformed_request", "Use {\"enabled\": true} or {\"enabled\": false}."))
+                return
             if self.path.startswith("/v1/recordings/") and self.path.endswith("/analysis"):
                 try:
                     if self._body(optional=True):
@@ -461,6 +482,7 @@ def main(argv=None) -> int:
                       animal_analysis=not args.no_animal_analysis)
     server = build_server(service, port=args.port)
     service.presence_sensor.start()
+    service.collection_schedule.start()
     try:
         service.animal_analysis.start()
     except OSError as exc:
@@ -471,6 +493,7 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
+        service.collection_schedule.stop()
         service.animal_analysis.stop()
         service.presence_sensor.stop()
         server.server_close()

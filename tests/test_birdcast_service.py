@@ -92,7 +92,7 @@ class ServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             service = Service(Path(directory), Path(directory) / "config.json", recorder=self.recorder_script(directory))
             metadata = service.start_recording()
-            self.assertEqual(metadata["frame_count"], 480000)
+            self.assertEqual(metadata["frame_count"], 240000)
             self.assertEqual(metadata["byte_length"], 44 + RECORDING_BYTES)
             details, data = service.recording(metadata["recording_id"])
             self.assertEqual(len(data), details["byte_length"])

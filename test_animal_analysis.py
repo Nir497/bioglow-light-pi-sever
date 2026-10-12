@@ -34,6 +34,16 @@ def wav_bytes(pcm=None):
 @unittest.skipUnless(importlib.util.find_spec("numpy") and importlib.util.find_spec("scipy"),
                      "Optional audio dependencies are unavailable")
 class AudioTests(unittest.TestCase):
+    def test_five_second_recording_produces_one_model_window(self):
+        import numpy as np
+        data = wav_bytes(b"\0\0" * 240000)
+        self.assertEqual(audio_windows(data).shape, (1, 160000))
+        session = Mock()
+        session.run.return_value = [np.array([[3.2]])]
+        result = analyze(data, session, ["Bubo virginianus"])
+        self.assertEqual(len(result["windows"]), 1)
+        self.assertEqual(result["windows"][0]["end_seconds"], 5)
+        self.assertEqual(session.run.call_count, 1)
     def test_normalization_resampling_and_windows(self):
         import numpy as np
         samples = np.concatenate([np.full(240000, 16384, dtype="<i2"),

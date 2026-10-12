@@ -20,7 +20,14 @@ the host firewall and network; the hostname is not a verified reachability claim
 The sidebar provides Overview, Radar, Light, BirdCast, and Recordings. Opening a
 page or refreshing the view loads saved results and the recording library, without
 starting a microphone capture, light measurement, or BirdCast fetch. Choose
-**Read now**, **Fetch BirdCast**, or **Record 10 seconds** to request new data.
+**Read now**, **Fetch BirdCast**, or **Record 5 seconds** to request new data.
+The server automatically collects presence and light every ten seconds, even
+with the dashboard closed. BirdCast remains manual. On Overview or Recordings,
+choose **Start recording every two minutes** to capture immediately and repeat
+five-second microphone captures every 120 seconds. **Stop automatic recording**
+prevents future captures; an active capture finishes. Automatic microphone
+recording starts stopped after each server restart. Collection status, errors,
+and the next recording time appear beside these controls.
 Radar is a passive receiver: reading it displays its newest frame rather than
 sending a command to the sensor. Stale radar data is unavailable, never absence.
 See `presence/README.md` before UART testing. Light may be unavailable while the
@@ -28,7 +35,7 @@ VEML7700 is disconnected. API errors are shown alongside previous successful lig
 or BirdCast results explicitly labeled as historical data.
 
 New WAVs and their integrity metadata are stored in `recordings/`
-under the selected server root. Capture remains ten seconds, mono, 48 kHz,
+under the selected server root. New captures are five seconds, mono, 48 kHz,
 16-bit PCM. Recordings remain accessible after download, application cleanup,
 and server restart until explicitly deleted. Each recording has a Delete recording
 button with confirmation. Deletion removes audio, metadata, analysis, and its animal
@@ -49,7 +56,9 @@ marks expired frames unavailable if the sensor stops reporting or requests fail.
 
 Each API read appends a timestamped JSON line to `readings/presence.txt`,
 `readings/luminance.txt`, or `readings/migration.txt`. Presence reads include
-dashboard refreshes and `/v1/latest`; light health checks also log their measurement.
+the automatic ten-second sampler and explicit `/presence` reads. `/v1/latest`
+only reads passive/cached state and does not log extra samples. Explicit light
+reads and light health checks also log their measurement.
 Reading saved history does not repeat light measurements or migration fetches.
 Sensor logs retain all entries across restarts and are excluded from Git. Failed reads
 are logged as errors, never as zero or absence. Logging errors appear in the
@@ -66,7 +75,7 @@ every ten seconds and offer Refresh graph. Live radar refreshes preserve selecto
 
 `readings/recordings.txt` logs new recording events and new animal-analysis results,
 including recording timestamp, analysis timestamp, and each returned animal's
-scientific name and raw score. All animals returned across the two windows are
+scientific name and raw score. All animals returned across the analysis windows are
 kept with their maximum score. No existing results are backfilled. Analysis
 completion is logged even with the dashboard closed. The Recordings graph uses
 the latest logged result per recording and plots the selected animal's raw score
@@ -90,6 +99,10 @@ Runtime data and recordings are ignored by Git.
   current passive receiver result and status. This endpoint does not probe hardware.
 - `GET /v1/recordings` returns `recordings` sorted newest first, with timestamps,
   WAV parameters, lengths, hashes, and download links.
+- `POST /v1/recording-schedule` accepts `{"enabled": true}` to start or
+  `{"enabled": false}` to stop periodic captures. `/v1/latest` includes
+  `collection` with enabled/recording state, next capture time, intervals,
+  duration and errors. Scheduling is owned by the server, shared by all clients.
 - `GET /v1/history?source=radar&range=1h` returns bounded plot entries, total count,
   time-axis bounds, sampling status, and animal choices. Sources: `radar`, `light`,
   `birdcast`, `microphone`. Ranges: `30m`, `1h`, `6h`, `12h`, `1d`, `7d`, `all`.
