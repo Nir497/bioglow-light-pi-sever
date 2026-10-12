@@ -1,7 +1,7 @@
 'use strict';
 const names = {overview:'Overview',radar:'Radar',light:'Light',birdcast:'BirdCast',recordings:'Recordings'};
 const titles = {overview:'Station overview',radar:'Presence & movement',light:'Ambient light',birdcast:'Migration outlook',recordings:'Sound library'};
-const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'The newest radar frame, with distances, energy scores, and connection status.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Every recording stays here.'};
+const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'The newest radar frame, with distances, energy scores, and connection status.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
 let histories = {};
 const historyRanges = {radar:'1h',light:'1h',birdcast:'1d',microphone:'1d'};
@@ -38,6 +38,7 @@ let radarLoadedAt = performance.now(), radarExpiryTimer;
 let radarPollTimer, radarPollGeneration = 0;
 let analysisTimer, analysisPollGeneration = 0;
 const analysisRequests = new Set();
+const deletingRecordings = new Set();
 const pending = new Set();
 const content = document.querySelector('#content');
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -304,7 +305,31 @@ async function identifyAnimals(identifier, detailsOnly = false) {
   }
 }
 function recordingCard(item) {
-  return `<article class="card record-row"><div><h3>${time(item.created_at)}</h3><p>10 seconds · Mono · 48 kHz · 16-bit PCM</p><p>${number(item.byte_length / 1024)} KB</p></div><audio controls preload="none" aria-label="Recording from ${time(item.created_at)}" src="${escapeHtml(item.download_path)}"></audio><a class="button secondary" href="${escapeHtml(item.download_path)}" download="${escapeHtml(item.recording_id)}.wav">↓ Download</a><section class="animal-analysis" data-analysis="${escapeHtml(item.recording_id)}" aria-label="Animal identification">${animalResults(item)}</section>${details(item,'Recording details & integrity')}</article>`;
+  return `<article class="card record-row" data-recording="${escapeHtml(item.recording_id)}"><div><h3>${time(item.created_at)}</h3><p>10 seconds · Mono · 48 kHz · 16-bit PCM</p><p>${number(item.byte_length / 1024)} KB</p></div><audio controls preload="none" aria-label="Recording from ${time(item.created_at)}" src="${escapeHtml(item.download_path)}"></audio><a class="button secondary" href="${escapeHtml(item.download_path)}" download="${escapeHtml(item.recording_id)}.wav">↓ Download</a><button class="button secondary" data-delete-recording="${escapeHtml(item.recording_id)}" ${deletingRecordings.has(item.recording_id)?'disabled':''}>Delete recording</button><section class="animal-analysis" data-analysis="${escapeHtml(item.recording_id)}" aria-label="Animal identification">${animalResults(item)}</section>${details(item,'Recording details & integrity')}</article>`;
+}
+async function deleteRecording(identifier) {
+  if (deletingRecordings.has(identifier)) return;
+  const item = recordings.find(recording=>recording.recording_id===identifier);
+  if (!item || !window.confirm(`Delete the recording from ${new Date(item.created_at).toLocaleString()}, its animal results, and its history? This cannot be undone.`)) return;
+  deletingRecordings.add(identifier);
+  const button = content.querySelector(`[data-delete-recording="${identifier}"]`);
+  if (button) { button.disabled = true; button.textContent = 'Deleting…'; }
+  try {
+    try { await api(`/v1/recordings/${identifier}`,{method:'DELETE'}); }
+    catch (error) { if (error.data?.error?.code!=='recording_not_found') throw error; }
+    recordings = recordings.filter(recording=>recording.recording_id!==identifier);
+    const card = content.querySelector(`[data-recording="${identifier}"]`);
+    card?.remove();
+    const counter = content.querySelector('[data-recording-count]');
+    if (counter) counter.textContent = `${recordings.length} saved`;
+    if (!recordings.length) render();
+    if (view()==='recordings') await loadHistory('microphone',true);
+    scheduleAnalysisPoll();
+    notice('Recording, animal results, and history deleted.');
+  } catch (error) {
+    notice(error.message,true);
+    if (button) { button.disabled = false; button.textContent = 'Delete recording'; }
+  } finally { deletingRecordings.delete(identifier); }
 }
 function library(limit = null) {
   if (loadingLibrary) return '<div class="card empty-state"><p>Loading recordings…</p></div>';
@@ -313,7 +338,7 @@ function library(limit = null) {
   return `<div class="record-list">${(limit ? recordings.slice(0,limit) : recordings).map(recordingCard).join('')}</div>`;
 }
 function microphone() {
-  return `<article class="card audio-summary"><div class="audio-copy"><div class="sound-icon" aria-hidden="true">${[16,24,38,26,52,65,37,50,26,40,20,12].map(height=>`<i style="--height:${height}px"></i>`).join('')}</div><h2>Listen to your surroundings</h2><p>Record ten seconds from the station microphone. Every capture stays in your library, even after another app downloads it.</p>${resultError('microphone')}</div><div class="audio-tools">${action('microphone','● Record 10 seconds')}<span class="badge empty">${recordings.length} saved</span></div></article>`;
+  return `<article class="card audio-summary"><div class="audio-copy"><div class="sound-icon" aria-hidden="true">${[16,24,38,26,52,65,37,50,26,40,20,12].map(height=>`<i style="--height:${height}px"></i>`).join('')}</div><h2>Listen to your surroundings</h2><p>Record ten seconds from the station microphone. Captures stay in your library until you delete them.</p>${resultError('microphone')}</div><div class="audio-tools">${action('microphone','● Record 10 seconds')}<span class="badge empty" data-recording-count>${recordings.length} saved</span></div></article>`;
 }
 function render() {
   const current = view();
@@ -322,7 +347,7 @@ function render() {
   document.querySelector('#page-description').textContent = descriptions[current];
   document.querySelectorAll('[data-view]').forEach(link => { if(link.dataset.view === current) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current'); });
   if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div>${library(3)}`;
-  else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · recordings are never automatically deleted</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div>${library()}`;
+  else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div>${library()}`;
   else {
     const selector = current === 'birdcast' ? `<div class="selector"><label for="region">US region</label><select id="region">${regions.map(item=>`<option value="${escapeHtml(item.code)}" ${item.code === region ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></div>` : '';
     content.innerHTML = `${selector}${sourceCard(current,true)}`;
@@ -360,6 +385,8 @@ async function run(source) {
   } finally { pending.delete(source); render(); }
 }
 content.addEventListener('click',event=>{
+  const remove = event.target.closest('[data-delete-recording]');
+  if (remove) { deleteRecording(remove.dataset.deleteRecording); return; }
   const refresh = event.target.closest('[data-history-refresh]');
   if (refresh) { loadHistory(refresh.dataset.historyRefresh,true); return; }
   const identify = event.target.closest('[data-identify]');

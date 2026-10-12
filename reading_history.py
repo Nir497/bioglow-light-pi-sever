@@ -1,6 +1,8 @@
 """Append-only, timestamped JSON lines in human-readable sensor text files."""
 import json
 import math
+import os
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -122,6 +124,29 @@ class ReadingHistory:
                     if stream.read(1) != b"\n":
                         stream.write(b"\n")
                 stream.write(line.encode("utf-8"))
+
+    def delete_recording(self, identifier):
+        with self.recording_lock, self.lock:
+            path = self.root / self.FILES["microphone"]
+            if not path.exists():
+                return
+            temporary = None
+            try:
+                with path.open("rb") as source, tempfile.NamedTemporaryFile(dir=self.root, delete=False) as target:
+                    temporary = Path(target.name)
+                    for line in source:
+                        try:
+                            entry = json.loads(line)
+                            if isinstance(entry, dict) and entry.get("result", {}).get("recording_id") == identifier:
+                                continue
+                        except (ValueError, UnicodeDecodeError, AttributeError):
+                            pass
+                        target.write(line)
+                os.replace(temporary, path)
+                self.recording_keys = None
+            finally:
+                if temporary:
+                    temporary.unlink(missing_ok=True)
 
     def recent(self, source, limit=500):
         # Read from the end so permanent logs do not slow each dashboard refresh.

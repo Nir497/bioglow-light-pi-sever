@@ -98,10 +98,10 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(len(data), details["byte_length"])
             self.assertEqual(hashlib.sha256(data).hexdigest(), details["sha256"])
             service.finish_transfer()
+            self.assertEqual(service.recording(metadata["recording_id"])[1], data)
             service.delete_recording(metadata["recording_id"])
-            retained, again = service.recording(metadata["recording_id"])
-            self.assertEqual(again, data)
-            self.assertEqual(retained, {key: value for key, value in metadata.items() if key != "analysis"})
+            with self.assertRaises(RecordingError):
+                service.recording(metadata["recording_id"])
             self.assertIn("analysis", metadata)
 
     def test_recording_rejects_failures_and_untrusted_paths(self):
@@ -141,7 +141,7 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(response.status, 200); self.assertEqual(len(audio), metadata["byte_length"])
                 conn.request("DELETE", metadata["download_path"])
                 response = conn.getresponse(); self.assertEqual(response.status, 200)
-                self.assertEqual(json.loads(response.read())["retained"], True)
+                self.assertEqual(json.loads(response.read())["deleted"], True)
                 conn.request("POST", "/v1/snapshots", json.dumps({"region": "US-CA"}), {"Content-Type": "application/json"})
                 response = conn.getresponse(); self.assertEqual(response.status, 200)
             finally:

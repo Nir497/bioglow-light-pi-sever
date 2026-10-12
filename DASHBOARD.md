@@ -27,10 +27,13 @@ See `presence/README.md` before UART testing. Light may be unavailable while the
 VEML7700 is disconnected. API errors are shown alongside previous successful light
 or BirdCast results explicitly labeled as historical data.
 
-New WAVs and their integrity metadata are stored permanently in `recordings/`
+New WAVs and their integrity metadata are stored in `recordings/`
 under the selected server root. Capture remains ten seconds, mono, 48 kHz,
 16-bit PCM. Recordings remain accessible after download, application cleanup,
-and server restart. There is no deletion UI or retention timer. Existing captures
+and server restart until explicitly deleted. Each recording has a Delete recording
+button with confirmation. Deletion removes audio, metadata, analysis, and its animal
+history entries. Capture or active analysis returns a busy error; retry when it
+finishes. There is no automatic retention timer. Existing captures
 in `/home/nir/recordings/` are not imported. Invalid/incomplete files and symlinks
 are omitted from the library. Avoid modifying retained WAVs or their sidecar JSON:
 changed captures fail their SHA-256 integrity check.
@@ -48,7 +51,7 @@ Each API read appends a timestamped JSON line to `readings/presence.txt`,
 `readings/luminance.txt`, or `readings/migration.txt`. Presence reads include
 dashboard refreshes and `/v1/latest`; light health checks also log their measurement.
 Reading saved history does not repeat light measurements or migration fetches.
-Logs retain all entries across restarts and are excluded from Git. Failed reads
+Sensor logs retain all entries across restarts and are excluded from Git. Failed reads
 are logged as errors, never as zero or absence. Logging errors appear in the
 response as `history_error` and in server logs.
 
@@ -100,11 +103,12 @@ Runtime data and recordings are ignored by Git.
   `download_url`, plus aliases for external combined-server WAV parameter fields.
 - `GET /v1/recordings/<id>` repeatedly serves validated `audio/wav` with
   `X-Content-SHA256`. Downloads do not block a new capture.
-- `DELETE /v1/recordings/<id>` is a compatibility acknowledgment, **not a deletion**:
-  it returns `{ "status": "ok", "recording_id": "...", "retained": true,
-  "deleted": false }`. Existing cleanup acknowledgment bodies are accepted.
-  Apps requiring an actual deletion or the external server's HTTP 201 creation
-  status must update their expectations when switching to this server.
+- `DELETE /v1/recordings/<id>` permanently deletes the WAV, its metadata and
+  analysis state, and its recording/animal-history entries. It returns
+  `{ "status": "ok", "recording_id": "...", "retained": false, "deleted": true }`.
+  Missing recordings return 404; active capture or identification returns 409.
+  Downloads and `finish_transfer()` retain recordings. Legacy clients that used
+  DELETE only to acknowledge a download must stop calling it to preserve audio.
 
 ## Checks
 

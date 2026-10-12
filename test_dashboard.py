@@ -286,8 +286,11 @@ class DashboardTests(unittest.TestCase):
                               audio.getnframes()), (1, 48000, 2, 480000))
         self.assertEqual(restarted.recording(first["recording_id"])[1], data)
 
-    def test_legacy_cleanup_acknowledgment_never_deletes(self):
+    def test_delete_removes_audio_metadata_analysis_and_history(self):
         metadata = self.capture()
+        analysis_path = self.service.animal_analysis.directory/(metadata["recording_id"]+".json")
+        analysis_path.parent.mkdir(parents=True, exist_ok=True)
+        analysis_path.write_text(json.dumps({"recording_id": metadata["recording_id"], "state": "completed"}))
         path = metadata["download_path"]
         status, headers, data = self.request("GET", path)
         self.assertEqual(status, 200)
@@ -298,10 +301,44 @@ class DashboardTests(unittest.TestCase):
                                        {"verified": True, "sha256": metadata["sha256"], "byte_length": len(data)})
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"status": "ok", "recording_id": metadata["recording_id"],
-                                           "retained": True, "deleted": False})
-        self.assertEqual(self.request("GET", path)[2], data)
-        self.assertEqual(self.request("DELETE", path)[0], 200)
-        self.assertEqual(len(json.loads(self.request("GET", "/v1/recordings")[2])["recordings"]), 1)
+                                           "retained": False, "deleted": True})
+        self.assertEqual(self.request("GET", path)[0], 404)
+        self.assertEqual(self.request("DELETE", path)[0], 404)
+        self.assertEqual(len(json.loads(self.request("GET", "/v1/recordings")[2])["recordings"]), 0)
+        self.assertFalse(self.service.recording_store.path(metadata["recording_id"]).with_suffix(".json").exists())
+        self.assertFalse((self.service.animal_analysis.directory/(metadata["recording_id"]+".json")).exists())
+        self.assertEqual(self.service.reading_history.recent("microphone"), [])
+        self.assertNotIn("microphone", Service(self.root, self.root/"config.json").latest()["sources"])
+
+    def test_delete_refuses_running_analysis_capture_and_untrusted_paths(self):
+        metadata = self.capture()
+        identifier = metadata["recording_id"]
+        state = {"recording_id": identifier, "state": "running"}
+        self.service.animal_analysis._write(state)
+        self.assertEqual(self.request("DELETE", metadata["download_path"])[0], 409)
+        self.assertTrue(self.service.recording_store.path(identifier).exists())
+        self.assertEqual(self.request("DELETE", "/v1/recordings/../../outside")[0], 404)
+        self.service.animal_analysis._write({**state, "state": "queued"})
+        self.service._recording_lock.acquire()
+        try:
+            self.assertEqual(self.request("DELETE", metadata["download_path"])[0], 409)
+        finally:
+            self.service._recording_lock.release()
+        self.assertEqual(self.request("DELETE", metadata["download_path"])[0], 200)
+        self.assertEqual(list(self.service.animal_analysis._jobs()), [])
+
+    def test_delete_preserves_other_recordings_and_their_animal_history(self):
+        first, second = self.capture(), self.capture()
+        self.service.delete_recording(first["recording_id"])
+        self.assertEqual(self.service.recording(second["recording_id"])[0]["recording_id"], second["recording_id"])
+        self.assertEqual({entry["result"]["recording_id"] for entry in self.service.reading_history.recent("microphone")},
+                         {second["recording_id"]})
+        outside = self.root/"outside.wav"
+        outside.write_text("preserve me")
+        malicious = self.root/"recordings"/("a"*32+".wav")
+        malicious.symlink_to(outside)
+        self.assertEqual(self.request("DELETE", "/v1/recordings/"+"a"*32)[0], 500)
+        self.assertEqual(outside.read_text(), "preserve me")
 
     def test_capture_busy_does_not_block_library_or_downloads(self):
         metadata = self.capture()

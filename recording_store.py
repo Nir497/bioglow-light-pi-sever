@@ -1,4 +1,4 @@
-"""Permanent, validated WAV storage shared by capture and download requests."""
+"""Validated WAV storage shared by capture, download, and deletion requests."""
 from __future__ import annotations
 
 import hashlib
@@ -100,6 +100,21 @@ class RecordingStore:
     def publish_metadata(self, metadata: dict) -> None:
         from birdcast_scraper import atomic_write_json
         atomic_write_json(self.path(metadata["recording_id"]).with_suffix(".json"), metadata)
+
+    def delete(self, identifier: str) -> None:
+        path = self.path(identifier)
+        sidecar = path.with_suffix(".json")
+        if sidecar.is_symlink():
+            raise RecordingError("invalid_audio", "Recording metadata must not contain symlinks.")
+        try:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise RecordingError("invalid_audio", "Recording must be a regular file.")
+            path.unlink()
+            sidecar.unlink(missing_ok=True)
+        except FileNotFoundError as exc:
+            raise RecordingNotFound() from exc
+        except OSError as exc:
+            raise RecordingError("delete_failed", "Recording could not be deleted.") from exc
 
     def list_recordings(self) -> list[dict]:
         recordings = []

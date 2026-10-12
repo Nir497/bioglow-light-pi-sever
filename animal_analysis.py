@@ -32,6 +32,10 @@ class AnalysisUnavailable(Exception):
     pass
 
 
+class AnalysisBusy(Exception):
+    pass
+
+
 class AnalysisCoordinator:
     def __init__(self, root: Path, store, enabled: bool = True, timeout: float = 120, on_result=None):
         self.root, self.store, self.enabled, self.timeout = root, store, enabled, timeout
@@ -79,6 +83,16 @@ class AnalysisCoordinator:
 
     def _write(self, state: dict) -> None:
         atomic_write_json(self.directory / f'{state["recording_id"]}.json', state)
+
+    def delete(self, identifier, remove_recording):
+        with self._condition:
+            state = self._read(identifier)
+            if state and state["state"] == "running":
+                raise AnalysisBusy("Animal identification is running for this recording. Try deleting it when identification finishes.")
+            remove_recording()
+            (self.directory / f"{identifier}.json").unlink(missing_ok=True)
+            self._errors.pop(identifier, None)
+            self._condition.notify_all()
 
     def status(self, metadata: dict) -> dict:
         with self._condition:
@@ -298,11 +312,11 @@ class AnalysisCoordinator:
                         LOG.warning("Could not persist animal analysis: %s", exc)
                         # Avoid repeatedly executing an unwritable running job.
                         return
-                if self.on_result and metadata and state["state"] in ("completed", "failed"):
-                    try:
-                        self.on_result(metadata, state)
-                    except Exception as exc:
-                        LOG.warning("Could not log recording analysis: %s", exc)
+                    if self.on_result and metadata and state["state"] in ("completed", "failed"):
+                        try:
+                            self.on_result(metadata, state)
+                        except Exception as exc:
+                            LOG.warning("Could not log recording analysis: %s", exc)
         except Exception as exc:
             LOG.exception("Animal queue stopped: %s", exc)
             with self._condition:

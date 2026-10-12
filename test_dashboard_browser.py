@@ -15,11 +15,15 @@ const now = new Date().toISOString();
 const reading = {fresh:true,presence:'moving',moving_distance_cm:120,moving_energy_score:70,
   serial_connected:true,age_seconds:0,stale_after_seconds:2,timestamp:now};
 const browserRequests=[];
+const recordingId='a'.repeat(32);
+let browserRecordings=[{recording_id:recordingId,created_at:now,byte_length:960044,
+  download_path:'/v1/recordings/'+recordingId,analysis:{state:'completed',candidates:[{scientific_name:'Buteo jamaicensis',score:7.5}]}}];
 window.fetch=async(path,options={})=>{
   browserRequests.push(path);
   let body;
   if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},regions:[{code:'US-CA',name:'California'}]};
-  else if(path==='/v1/recordings')body={recordings:[]};
+  else if(path==='/v1/recordings')body={recordings:browserRecordings};
+  else if(path==='/v1/recordings/'+recordingId && options.method==='DELETE'){browserRecordings=[];body={deleted:true};}
   else if(path.startsWith('/v1/animal-names'))body={names:{'Buteo jamaicensis':'Red-tailed Hawk'}};
   else if(path.startsWith('/v1/history')){
     const source=new URL(path,'http://test').searchParams.get('source');
@@ -57,6 +61,13 @@ setTimeout(async()=>{
     check(document.querySelector('[data-history-metric="microphone"]').textContent.includes('Red-tailed Hawk'),'Animal common name missing');
     check(document.querySelector('[data-chart="microphone"] svg').getAttribute('aria-label').includes('recording time'),'Animal scores must use recording time');
     check(document.querySelector('[data-history="microphone"]').textContent.includes('no fixed minimum or maximum'),'Score scale explanation missing');
+    const deletion=document.querySelector('[data-delete-recording]');
+    window.confirm=()=>false;deletion.click();await pause(50);
+    check(browserRecordings.length===1,'Cancelled deletion removed a recording');
+    window.confirm=()=>true;deletion.click();await pause(100);
+    check(browserRecordings.length===0,'Confirmed deletion did not call DELETE');
+    check(!document.querySelector('[data-recording]'),'Deleted recording remains visible');
+    check(document.querySelector('#content').textContent.includes('Your first recording starts here'),'Empty recording library missing');
     document.body.dataset.browserCheck='passed';
   }catch(error){document.body.dataset.browserCheck='failed: '+error.message;}
 },50);

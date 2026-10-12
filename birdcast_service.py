@@ -18,7 +18,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import birdcast_scraper
-from animal_analysis import AnalysisCoordinator, AnalysisUnavailable
+from animal_analysis import AnalysisBusy, AnalysisCoordinator, AnalysisUnavailable
 from animal_model import is_species_label
 from animal_names import AnimalNames
 from light_sensor import LightSensor
@@ -229,8 +229,28 @@ class Service:
         pass
 
     def delete_recording(self, recording_id: str) -> None:
-        # Legacy cleanup acknowledges the transfer but permanently preserves its source.
-        self.recording_store.read(recording_id)
+        self.recording_store.path(recording_id)  # Validate before accessing analysis paths.
+        if not self._recording_lock.acquire(blocking=False):
+            raise BusyError("A recording is being captured. Try deleting when capture finishes.")
+        try:
+            def remove():
+                self.recording_store.delete(recording_id)
+                self.reading_history.delete_recording(recording_id)
+            self.animal_analysis.delete(recording_id, remove)
+            with self._latest_lock:
+                entry = self._latest.get("microphone", {})
+                if any((entry.get(key) or {}).get("recording_id") == recording_id for key in ("result", "last_success")):
+                    self._latest.pop("microphone", None)
+                    try:
+                        birdcast_scraper.atomic_write_json(self._cache_file, self._latest)
+                    except OSError as exc:
+                        logging.getLogger(__name__).warning("Could not update recording cache after deletion: %s", exc)
+        except AnalysisBusy as exc:
+            raise BusyError(str(exc)) from exc
+        except OSError as exc:
+            raise RecordingError("delete_failed", "Recording cleanup could not be completed.") from exc
+        finally:
+            self._recording_lock.release()
 
 
 def make_handler(service: Service):
@@ -407,14 +427,15 @@ def make_handler(service: Service):
             self._send(404, error_payload("not_found", "Unknown endpoint."))
 
         def do_DELETE(self):
-            if not self.path.startswith("/v1/recordings/"):
+            path = urlsplit(self.path).path
+            if not path.startswith("/v1/recordings/"):
                 self._send(404, error_payload("not_found", "Unknown endpoint."))
                 return
-            recording_id = self.path[len("/v1/recordings/"):]
+            recording_id = path[len("/v1/recordings/"):]
             try:
                 service.delete_recording(recording_id)
                 self._send(200, {"status": "ok", "recording_id": recording_id,
-                                 "retained": True, "deleted": False})
+                                 "retained": False, "deleted": True})
             except BusyError as exc:
                 self._send(409, error_payload("busy", str(exc)))
             except RecordingNotFound as exc:
