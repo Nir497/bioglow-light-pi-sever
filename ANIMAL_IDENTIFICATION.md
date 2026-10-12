@@ -7,15 +7,24 @@ identification**. There is no automatic scan of old recordings.
 
 Each recording shows up to five unverified species candidates, raw model scores, and a
 control to inspect the two five-second windows. The global model is used without
-geographic filtering. Scientific names come from the pinned model labels; great
-horned owl (`Bubo virginianus`) also has its common name displayed.
+geographic filtering. Scientific names come from the pinned model labels and
+appear alongside English common names from iNaturalist. Previously encountered
+names are bundled in `animal_common_names.json`; other names use exact-name or
+exact-synonym lookups cached in `.runtime/animal_common_names.json`. Scientific
+names remain available if no common name is found or the station is offline.
+Source: [iNaturalist API](https://api.inaturalist.org/v1/docs/).
 
 These are suggestions, not confirmed observations. Scores are uncalibrated logits,
 not percentages, and cannot tell one frog from ten frogs. Noise and silence can
 produce ranked candidates. A missing suggestion does not establish absence;
 overlapping animals, distant calls and unsupported species can be missed. There
-is no calibrated detection threshold, population estimate or trend chart in this
-version. Manually review representative recordings before relying on detections.
+is no calibrated detection threshold or population estimate. Scores have no fixed
+minimum or maximum, can be negative, and are not out of 10 or 100. Their scale
+differs between species. See [Google's Perch model card](https://www.kaggle.com/models/google/bird-vocalization-classifier).
+The Recordings page plots raw scores over recording time for the selected animal
+using `readings/recordings.txt`; only new recording events and new analyses are
+logged, without importing old results. Manually review representative recordings
+before relying on detections.
 
 ## Setup and operation
 

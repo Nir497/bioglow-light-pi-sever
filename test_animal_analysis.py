@@ -17,6 +17,7 @@ from animal_model import IDENTITY, read_labels
 from animal_worker import analyze, audio_windows, ranked_candidates
 from birdcast_scraper import atomic_write_json
 from recording_store import RecordingStore
+from reading_history import ReadingHistory
 import test_dashboard
 
 
@@ -151,9 +152,14 @@ for line in sys.stdin:
         return self.coordinator.status(self.metadata)["state"]
 
     def test_completion_persistence_cached_request_and_audio_unchanged(self):
+        history = ReadingHistory(self.root)
+        self.coordinator.on_result = history.recording
         original = self.store.path(self.identifier).read_bytes()
         self.assertEqual(self.coordinator.request(self.metadata)["state"], "queued")
         self.wait_for(lambda: self.state() == "completed")
+        self.wait_for(lambda: bool(history.recent("microphone")))
+        self.assertEqual(history.recent("microphone")[0]["result"]["animals"],
+                         [{"scientific_name": "Bubo virginianus", "score": 3.2}])
         pid = self.coordinator._process.pid
         completed = self.coordinator.request(self.metadata)
         self.assertEqual(completed["state"], "completed")

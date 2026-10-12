@@ -33,7 +33,7 @@ class AnalysisUnavailable(Exception):
 
 
 class AnalysisCoordinator:
-    def __init__(self, root: Path, store, enabled: bool = True, timeout: float = 120):
+    def __init__(self, root: Path, store, enabled: bool = True, timeout: float = 120, on_result=None):
         self.root, self.store, self.enabled, self.timeout = root, store, enabled, timeout
         self.directory = root / ".runtime" / "animal_analysis"
         self.assets = root / ".models" / "perch-v2"
@@ -46,6 +46,7 @@ class AnalysisCoordinator:
         self._paused_seconds = 0.0
         self._buffer = b""
         self._errors = {}
+        self.on_result = on_result
 
     def availability(self) -> str | None:
         if not self.enabled:
@@ -266,6 +267,7 @@ class AnalysisCoordinator:
                     state.update(state="running", started_at=now())
                     self._write(state)
                 started = time.monotonic()
+                metadata = None
                 with self._condition:
                     pause_start = self._pause_total()
                 try:
@@ -296,6 +298,11 @@ class AnalysisCoordinator:
                         LOG.warning("Could not persist animal analysis: %s", exc)
                         # Avoid repeatedly executing an unwritable running job.
                         return
+                if self.on_result and metadata and state["state"] in ("completed", "failed"):
+                    try:
+                        self.on_result(metadata, state)
+                    except Exception as exc:
+                        LOG.warning("Could not log recording analysis: %s", exc)
         except Exception as exc:
             LOG.exception("Animal queue stopped: %s", exc)
             with self._condition:

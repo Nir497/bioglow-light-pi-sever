@@ -15,10 +15,12 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import birdcast_scraper
 from animal_analysis import AnalysisCoordinator, AnalysisUnavailable
+from animal_model import is_species_label
+from animal_names import AnimalNames
 from light_sensor import LightSensor
 from presence import PresenceSensor
 from reading_history import ReadingHistory
@@ -50,13 +52,15 @@ class Service:
         self.light_sensor = LightSensor()
         self.presence_sensor = PresenceSensor()
         self.reading_history = ReadingHistory(self.root)
+        self.animal_names = AnimalNames(self.root)
         self.config = config
         self.runner = runner or self._run_scraper
         self._lock = threading.Lock()
         self.recorder = recorder
         self.recording_dir = self.root / "recordings"
         self.recording_store = RecordingStore(self.recording_dir)
-        self.animal_analysis = AnalysisCoordinator(self.root, self.recording_store, enabled=animal_analysis)
+        self.animal_analysis = AnalysisCoordinator(self.root, self.recording_store, enabled=animal_analysis,
+                                                  on_result=self.log_recording)
         self._recording_lock = threading.Lock()
         self._latest_lock = threading.Lock()
         self._cache_file = self.root / ".runtime" / "latest.json"
@@ -180,6 +184,7 @@ class Service:
             metadata, _ = self.recording_store.read(recording_id)
             self.recording_store.publish_metadata(metadata)
             metadata["analysis"] = self.animal_analysis.automatic(metadata)
+            self.log_recording(metadata, metadata["analysis"])
             self.remember("microphone", 200, metadata)
             return metadata
         except RecordingError as exc:
@@ -203,6 +208,15 @@ class Service:
                                     ("state", "error", "outdated", "candidates", "processing_seconds")
                                     if key in result}
         return recordings
+
+    def log_recording(self, metadata, analysis):
+        try:
+            self.reading_history.recording(metadata, analysis)
+        except (OSError, ValueError) as exc:
+            logging.getLogger(__name__).warning("Could not log recording analysis: %s", exc)
+
+    def history(self, source, window, region=None):
+        return {"status": "ok", **self.reading_history.series(source, window, region)}
 
     def analyze_recording(self, recording_id: str, request: bool = False) -> dict[str, Any]:
         metadata, _ = self.recording_store.read(recording_id)
@@ -331,8 +345,28 @@ def make_handler(service: Service):
             if path == "/v1/latest":
                 self._send(200, service.latest())
                 return
+            if path == "/v1/history":
+                query = parse_qs(urlsplit(self.path).query)
+                source, window = query.get("source", [""])[0], query.get("range", ["1h"])[0]
+                region = query.get("region", [None])[0]
+                if (source not in ReadingHistory.FILES or window not in ReadingHistory.RANGES
+                        or (region is not None and region not in SUPPORTED_REGIONS)):
+                    self._send(400, error_payload("invalid_history", "Choose a valid source, time range, and region."))
+                    return
+                try:
+                    self._send(200, service.history(source, window, region))
+                except OSError as exc:
+                    self._send(503, error_payload("history_unavailable", str(exc)))
+                return
             if path == "/presence":
                 self._send(*service.presence_reading())
+                return
+            if path == "/v1/animal-names":
+                names = parse_qs(urlsplit(self.path).query).get("name", [])
+                if not names or len(names) > 30 or any(not is_species_label(name) or len(name) > 150 for name in names):
+                    self._send(400, error_payload("invalid_names", "Provide up to 30 scientific species names."))
+                    return
+                self._send(200, {"status": "ok", "names": service.animal_names.resolve(names)})
                 return
             if path in ("/reading", "/health"):
                 status, payload = service.light_reading(health=path == "/health")

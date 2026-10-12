@@ -4,6 +4,30 @@ const titles = {overview:'Station overview',radar:'Presence & movement',light:'A
 const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'The newest radar frame, with distances, energy scores, and connection status.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Every recording stays here.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
 let histories = {};
+const historyRanges = {radar:'1h',light:'1h',birdcast:'1d',microphone:'1d'};
+const rangeOptions = [['30m','Half hour'],['1h','Hour'],['6h','6 hours'],['12h','12 hours'],['1d','Day'],['7d','Week'],['all','All time']];
+const historyInfo = {}, historyErrors = {}, historyRequests = {}, historyKeys = {};
+let historyTimer, historyGeneration = 0, selectedAnimal = '';
+const commonNames = {'Bubo virginianus':'Great Horned Owl'}, nameRequests = new Set();
+const scoreExplanation = '<p class="timestamp">Score scale: raw model score (logit), with no fixed minimum or maximum. Scores can be negative; they are not out of 10 or 100. Higher scores mean stronger model support, but the scale varies between species. Scores are not confidence percentages. A recording’s score is the maximum from its two five-second windows.</p>';
+const animalLabel = name => commonNames[name] ? `${commonNames[name]} · ${name}` : `${name} · Common name unavailable`;
+async function loadAnimalNames(names) {
+  const missing = [...new Set(names)].filter(name=>typeof name==='string' && /^[A-Z][a-z]+ /.test(name) && !Object.hasOwn(commonNames,name) && !nameRequests.has(name)).slice(0,30);
+  if (!missing.length) return;
+  missing.forEach(name=>nameRequests.add(name));
+  try {
+    const data = await api(`/v1/animal-names?${missing.map(name=>`name=${encodeURIComponent(name)}`).join('&')}`);
+    Object.assign(commonNames,data.names);
+    visibleRecordings().forEach(updateAnimalResults);
+    updateAnimalSelector();
+    if (view()==='recordings') updateHistoryPlot('microphone');
+  } catch { /* Scientific names remain available offline. */ }
+  finally { missing.forEach(name=>nameRequests.delete(name)); }
+}
+function updateAnimalSelector() {
+  const selector = content.querySelector('[data-history-metric="microphone"]');
+  if (selector?.options) [...selector.options].forEach(option=>option.textContent=animalLabel(option.value));
+}
 const historyMetrics = {radar:'presence',light:'lux',birdcast:'birds_in_flight'};
 const graphMetrics = {
   radar:[['presence','Presence state'],['moving_distance_cm','Moving distance (cm)'],['stationary_distance_cm','Stationary distance (cm)'],['moving_energy_score','Moving energy score'],['stationary_energy_score','Stationary energy score']],
@@ -50,11 +74,7 @@ function scheduleRadarExpiry() {
   if (entry?.http_status !== 200) return;
   const remaining = entry.result.stale_after_seconds - (entry.result.age_seconds ?? 0) - (performance.now() - radarLoadedAt) / 1000;
   radarExpiryTimer = setTimeout(()=>{
-    const card = content.querySelector('[data-source="radar"]');
-    if (!card) return;
-    const wrapper = document.createElement('div');
-    wrapper.innerHTML = sourceCard('radar',view()==='radar');
-    card.replaceWith(wrapper.firstElementChild);
+    updateRadarReading();
   },Math.max(0,remaining)*1000+25);
 }
 function scheduleRadarPoll() {
@@ -64,28 +84,29 @@ function scheduleRadarPoll() {
   radarPollTimer = setTimeout(async()=>{
     if (generation !== radarPollGeneration) return;
     const started = performance.now();
-    let entry, nextHistory;
+    let entry;
     try {
       const latest = await api('/v1/latest');
       entry = latest.sources.radar;
-      nextHistory = latest.history;
     } catch (error) {
       entry = {http_status:503,result:error.data || {fresh:false,status:'unavailable',
         error:{code:'presence_unavailable',message:error.message}}};
     }
     if (generation !== radarPollGeneration) return;
-    if (nextHistory) histories = nextHistory;
     sources.radar = entry;
     radarLoadedAt = started;
-    const card = content.querySelector('[data-source="radar"]');
-    if (card) {
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = sourceCard('radar',view()==='radar');
-      card.replaceWith(wrapper.firstElementChild);
-    }
+    updateRadarReading();
     scheduleRadarExpiry();
     scheduleRadarPoll();
   },1000);
+}
+function updateRadarReading() {
+  const reading = content.querySelector('[data-reading="radar"]');
+  if (!reading) return;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = sourceCard('radar',view()==='radar');
+  const replacement = wrapper.querySelector('[data-reading="radar"]');
+  reading.replaceWith(replacement);
 }
 function badge(source) {
   const entry = currentEntry(source);
@@ -123,22 +144,30 @@ function sourceCard(source, expanded = false) {
   if (expanded && source === 'light') body += '<p class="timestamp">This is the last requested measurement, not a live stream. If the sensor is disconnected, reconnect it and choose Read now.</p>';
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
   const control = source === 'birdcast' ? action('birdcast','Fetch BirdCast') : action(source,'Read now');
-  return `<article class="card" data-source="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${historyGraph(source)}${expanded ? details(entry || {status:'not_requested'}) : ''}</article>`;
+  return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded ? historyGraph(source) : ''}</article>`;
 }
 function historyGraph(source) {
-  const metric = historyMetrics[source];
+  const options = source === 'microphone' ? (historyInfo.microphone?.animals || []).map(animal=>[animal,animalLabel(animal)]) : graphMetrics[source];
+  const metric = source === 'microphone' ? selectedAnimal : historyMetrics[source];
+  const metricControl = `<label>${source === 'microphone' ? 'Animal' : 'Graph'} <select data-history-metric="${source}" aria-label="${source === 'microphone' ? 'Animal' : names[source]} graph metric">${options.map(([key,title])=>`<option value="${escapeHtml(key)}" ${key===metric?'selected':''}>${escapeHtml(title)}</option>`).join('')}</select></label>`;
+  const rangeControl = `<label>Time range <select data-history-range="${source}" aria-label="${source} time range">${rangeOptions.map(([key,title])=>`<option value="${key}" ${key===historyRanges[source]?'selected':''}>${title}</option>`).join('')}</select></label>`;
+  return `<section class="reading-history" data-history="${source}"><div class="history-controls">${metricControl}${rangeControl}<button class="button secondary" data-history-refresh="${source}">Refresh graph</button></div>${source==='microphone' ? scoreExplanation : ''}<div data-chart="${source}">${historyPlot(source)}</div></section>`;
+}
+function historyPlot(source) {
+  const metric = source === 'microphone' ? selectedAnimal : historyMetrics[source];
   const entries = (histories[source] || []).filter(entry=>source !== 'birdcast' || entry.result.region?.code === region);
   const states = {none:0,moving:1,stationary:2,both:3};
   const points = entries.map(entry=>{
     const value = source === 'radar' && metric === 'presence' ? states[entry.result.presence] :
-      source === 'birdcast' ? entry.result.metrics?.[metric] : entry.result[metric];
-    return {entry,x:Date.parse(entry.read_at),y:entry.http_status === 200 && typeof value === 'number' && Number.isFinite(value) ? value : null};
+      source === 'birdcast' ? entry.result.metrics?.[metric] : source === 'microphone' ? entry.result.animals?.find(animal=>animal.scientific_name===metric)?.score : entry.result[metric];
+    return {entry,x:Date.parse(source === 'microphone' ? entry.result.timestamp : entry.read_at),y:entry.http_status === 200 && typeof value === 'number' && Number.isFinite(value) ? value : null};
   }).filter(point=>Number.isFinite(point.x));
   const valid = points.filter(point=>point.y !== null);
-  const label = graphMetrics[source].find(item=>item[0]===metric)[1];
-  const selector = `<label>Graph <select data-history-metric="${source}" aria-label="${names[source]} graph metric">${graphMetrics[source].map(([key,title])=>`<option value="${key}" ${key===metric?'selected':''}>${title}</option>`).join('')}</select></label>`;
-  if (!valid.length) return `<section class="reading-history">${selector}<p>No saved ${escapeHtml(label.toLowerCase())} readings yet.</p></section>`;
-  const first = points[0].x, last = points[points.length-1].x;
+  const label = source === 'microphone' ? `${metric ? animalLabel(metric) : 'Animal'} model score` : graphMetrics[source].find(item=>item[0]===metric)[1];
+  if (historyErrors[source]) return `<p class="error-message">${escapeHtml(historyErrors[source])}</p>`;
+  if (!valid.length) return `<p>No saved ${escapeHtml(label.toLowerCase())} readings in this time range.</p>`;
+  const info = historyInfo[source];
+  const first = info ? info.start*1000 : points[0].x, last = info ? info.end*1000 : points[points.length-1].x;
   const categorical = source === 'radar' && metric === 'presence';
   const low = categorical ? 0 : Math.min(0,...valid.map(point=>point.y));
   const high = categorical ? 3 : Math.max(low+1,...valid.map(point=>point.y));
@@ -153,7 +182,49 @@ function historyGraph(source) {
     return `${line}<circle cx="${x(point)}" cy="${y(point)}" r="3" tabindex="0"><title>${escapeHtml(value)} · Read ${time(point.entry.read_at)} · Measured ${time(point.entry.result.timestamp || point.entry.result.retrieved_at)}</title></circle>`;
   }).join('');
   const ticks = categorical ? ['none','moving','stationary','both'].map((state,index)=>`<text x="45" y="${170-index/3*140}" text-anchor="end">${state}</text>`).join('') : `<text x="45" y="32" text-anchor="end">${number(high)}</text><text x="45" y="172" text-anchor="end">${number(low)}</text>`;
-  return `<section class="reading-history">${selector}<svg class="history-chart" viewBox="0 0 600 210" role="img" aria-label="${escapeHtml(label)} over read time"><title>${escapeHtml(label)} over time</title><path class="chart-axis" d="M 50 25 V 175 H 550"/>${ticks}<g class="chart-values">${marks}</g><text x="50" y="198">${escapeHtml(new Date(first).toLocaleTimeString())}</text><text x="550" y="198" text-anchor="end">${escapeHtml(new Date(last).toLocaleTimeString())}</text></svg><p class="timestamp">${valid.length} saved readings · ${time(points[0].entry.read_at)} – ${time(points[points.length-1].entry.read_at)}. Latest 500 log entries; unavailable reads leave gaps. Hover or focus a point for its value and timestamps.</p></section>`;
+  return `<svg class="history-chart" viewBox="0 0 600 210" role="img" aria-label="${escapeHtml(label)} over ${source === 'microphone' ? 'recording' : 'read'} time"><title>${escapeHtml(label)} over time</title><path class="chart-axis" d="M 50 25 V 175 H 550"/>${ticks}<g class="chart-values">${marks}</g><text x="50" y="198">${escapeHtml(new Date(first).toLocaleString())}</text><text x="550" y="198" text-anchor="end">${escapeHtml(new Date(last).toLocaleString())}</text></svg><p class="timestamp">${valid.length} plotted readings${info ? ` from ${info.total} saved entries` : ''} · ${time(new Date(first).toISOString())} – ${time(new Date(last).toISOString())}. ${info?.sampled ? 'Last reading in each time bucket shown (up to 1,000 points).' : ''} Unavailable values leave gaps. Hover or focus a point for its value and timestamps.${source === 'microphone' ? ' Model scores are unverified suggestions, not confidence percentages. An unlisted animal has no score, not zero.' : ''}</p>`;
+}
+function updateHistoryPlot(source) {
+  const chart = content.querySelector(`[data-chart="${source}"]`);
+  if (chart) chart.innerHTML = historyPlot(source);
+}
+async function loadHistory(source, force = false) {
+  const key = `${historyRanges[source]}:${source==='birdcast' ? region : ''}`;
+  if (!force && historyKeys[source]===key) return;
+  const generation = (historyRequests[source] || 0)+1;
+  historyRequests[source] = generation;
+  historyKeys[source] = key;
+  try {
+    const data = await api(`/v1/history?source=${source}&range=${historyRanges[source]}${source==='birdcast' ? `&region=${region}` : ''}`);
+    if (historyRequests[source]!==generation) return;
+    histories[source] = data.entries;
+    const previousAnimals = historyInfo[source]?.animals || [];
+    historyInfo[source] = data;
+    historyErrors[source] = '';
+    if (source==='microphone') {
+      if (!data.animals.includes(selectedAnimal)) selectedAnimal = data.animals[0] || '';
+      const selector = content.querySelector('[data-history-metric="microphone"]');
+      if (selector && JSON.stringify(previousAnimals)!==JSON.stringify(data.animals)) selector.innerHTML = data.animals.map(animal=>`<option value="${escapeHtml(animal)}" ${animal===selectedAnimal?'selected':''}>${escapeHtml(animalLabel(animal))}</option>`).join('');
+      loadAnimalNames(data.animals);
+    }
+  } catch (error) {
+    if (historyRequests[source]!==generation) return;
+    historyKeys[source] = '';
+    historyErrors[source] = error.message;
+  }
+  if (historyKeys[source]===key || historyErrors[source]) updateHistoryPlot(source);
+}
+function scheduleHistoryPoll() {
+  clearTimeout(historyTimer);
+  const generation = ++historyGeneration;
+  const source = view()==='recordings' ? 'microphone' : view();
+  if (!historyRanges[source]) return;
+  loadHistory(source);
+  historyTimer = setTimeout(async()=>{
+    if (generation!==historyGeneration) return;
+    await loadHistory(source,true);
+    if (generation===historyGeneration) scheduleHistoryPoll();
+  },10000);
 }
 function facts(items) { return `<dl class="facts">${items.map(([label,value])=>`<div class="fact"><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>`; }
 function animalResults(item) {
@@ -164,7 +235,8 @@ function animalResults(item) {
   if (analysis.error) body += `<p class="error-message">${escapeHtml(analysis.error)}</p>`;
   if (analysis.outdated) body += '<p>The recording or model changed. Identify again for current suggestions.</p>';
   if (analysis.state === 'completed') {
-    body += `<ul class="animal-candidates">${(analysis.candidates || []).map(candidate=>`<li><span>${escapeHtml(candidate.scientific_name === 'Bubo virginianus' ? 'Great horned owl · Bubo virginianus' : candidate.scientific_name)}</span><span>Model score ${number(candidate.score)}</span></li>`).join('')}</ul>`;
+    body += `<ul class="animal-candidates">${(analysis.candidates || []).map(candidate=>`<li><span>${escapeHtml(animalLabel(candidate.scientific_name))}</span><span>Raw score ${number(candidate.score)}</span></li>`).join('')}</ul>`;
+    body += scoreExplanation;
     body += '<p class="timestamp">Unverified suggestions. Scores are not confidence percentages or animal counts. Background noise can also produce candidates.</p>';
     if (analysis.windows) body += details(analysis.windows,'Five-second window scores');
     else body += `<button class="button secondary" data-analysis-details="${escapeHtml(item.recording_id)}">View window scores</button>`;
@@ -206,6 +278,7 @@ function scheduleAnalysisPoll() {
       }
       if (generation !== analysisPollGeneration) return;
       updateAnimalResults(item);
+      loadAnimalNames((item.analysis?.candidates || []).map(candidate=>candidate.scientific_name));
     }
     scheduleAnalysisPoll();
   },3000);
@@ -219,6 +292,7 @@ async function identifyAnimals(identifier, detailsOnly = false) {
   try {
     const result = await api(`/v1/recordings/${identifier}/analysis`,detailsOnly ? {} : {method:'POST'});
     item.analysis = result.analysis;
+    loadAnimalNames((item.analysis?.candidates || []).map(candidate=>candidate.scientific_name));
     notice(detailsOnly ? '' : 'Animal identification requested.');
   } catch (error) {
     if (error.data?.analysis) item.analysis = error.data.analysis;
@@ -248,21 +322,22 @@ function render() {
   document.querySelector('#page-description').textContent = descriptions[current];
   document.querySelectorAll('[data-view]').forEach(link => { if(link.dataset.view === current) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current'); });
   if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div>${library(3)}`;
-  else if (current === 'recordings') content.innerHTML = `${microphone()}<div class="section-heading"><div><h2>All recordings</h2><p>Newest first · recordings are never automatically deleted</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div>${library()}`;
+  else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · recordings are never automatically deleted</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div>${library()}`;
   else {
     const selector = current === 'birdcast' ? `<div class="selector"><label for="region">US region</label><select id="region">${regions.map(item=>`<option value="${escapeHtml(item.code)}" ${item.code === region ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></div>` : '';
     content.innerHTML = `${selector}${sourceCard(current,true)}`;
   }
   scheduleAnalysisPoll();
   scheduleRadarPoll();
+  scheduleHistoryPoll();
 }
 async function loadCache() {
   const requestedAt = performance.now();
-  try { const data = await api('/v1/latest'); sources = data.sources; histories = data.history || {}; radarLoadedAt = requestedAt; scheduleRadarExpiry(); regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name)); cacheError = ''; }
+  try { const data = await api('/v1/latest'); sources = data.sources; Object.keys(historyKeys).forEach(source=>historyKeys[source]=''); radarLoadedAt = requestedAt; scheduleRadarExpiry(); regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name)); cacheError = ''; }
   catch (error) { cacheError = error.message; throw error; }
 }
 async function loadLibrary() {
-  try { const data = await api('/v1/recordings'); recordings = data.recordings; libraryError = ''; }
+  try { const data = await api('/v1/recordings'); recordings = data.recordings; libraryError = ''; loadAnimalNames(recordings.flatMap(item=>(item.analysis?.candidates || []).map(candidate=>candidate.scientific_name))); }
   catch (error) { libraryError = error.message; throw error; }
   finally { loadingLibrary = false; }
 }
@@ -285,6 +360,8 @@ async function run(source) {
   } finally { pending.delete(source); render(); }
 }
 content.addEventListener('click',event=>{
+  const refresh = event.target.closest('[data-history-refresh]');
+  if (refresh) { loadHistory(refresh.dataset.historyRefresh,true); return; }
   const identify = event.target.closest('[data-identify]');
   if (identify) { identifyAnimals(identify.dataset.identify); return; }
   const detail = event.target.closest('[data-analysis-details]');
@@ -294,7 +371,13 @@ content.addEventListener('click',event=>{
 content.addEventListener('change',event=>{
   if(event.target.id === 'region') { region = event.target.value; render(); }
   const source = event.target.dataset?.historyMetric;
-  if (source && graphMetrics[source]?.some(([key])=>key===event.target.value)) { historyMetrics[source] = event.target.value; render(); }
+  if (source==='microphone') { selectedAnimal = event.target.value; updateHistoryPlot(source); }
+  else if (source && graphMetrics[source]?.some(([key])=>key===event.target.value)) { historyMetrics[source] = event.target.value; updateHistoryPlot(source); }
+  const rangeSource = event.target.dataset?.historyRange;
+  if (historyRanges[rangeSource] && rangeOptions.some(([key])=>key===event.target.value)) {
+    historyRanges[rangeSource] = event.target.value;
+    loadHistory(rangeSource,true);
+  }
 });
 const mobileNavigation = window.matchMedia('(max-width:700px)');
 function setMenu(open) {

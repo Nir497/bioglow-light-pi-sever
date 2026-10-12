@@ -52,12 +52,25 @@ Logs retain all entries across restarts and are excluded from Git. Failed reads
 are logged as errors, never as zero or absence. Logging errors appear in the
 response as `history_error` and in server logs.
 
-Sensor cards graph the latest 500 entries from these text files over read time.
-Select a metric for presence state, distance, energy, lux, or migration counts,
-speed and altitude. Migration graphs use the selected region. Missing values and
-failed readings break the line. Hover or focus points for values and read/measurement
-timestamps. Use Refresh view to reload edited text logs. No historical data is
-invented from the single saved snapshot.
+Graphs appear only on Radar, Light, BirdCast, and Recordings pages. Select a
+metric and a time range: half hour, hour, 6 hours, 12 hours, day, week, or all time.
+The history endpoint queries the full text log rather than the latest 500 entries.
+For large ranges, it plots the last reading per time bucket (up to 1,000 points),
+with sampling disclosed below the graph; full logs are preserved. Migration graphs
+use the selected region. Missing values and failed readings leave gaps among the
+plotted readings. Hover or focus points for values and timestamps. Graphs refresh
+every ten seconds and offer Refresh graph. Live radar refreshes preserve selectors.
+
+`readings/recordings.txt` logs new recording events and new animal-analysis results,
+including recording timestamp, analysis timestamp, and each returned animal's
+scientific name and raw score. All animals returned across the two windows are
+kept with their maximum score. No existing results are backfilled. Analysis
+completion is logged even with the dashboard closed. The Recordings graph uses
+the latest logged result per recording and plots the selected animal's raw score
+at recording time. An animal missing from a result has no score, never zero.
+Unverified model scores have no fixed minimum or maximum and are not percentages.
+Common names from iNaturalist appear alongside scientific names; seed names and
+cached lookups work offline, and unknown names retain their scientific name.
 
 Latest successful light/BirdCast results, microphone outcomes, and last request
 errors are cached in `.runtime/latest.json`. Radar state is kept by the existing
@@ -74,6 +87,13 @@ Runtime data and recordings are ignored by Git.
   current passive receiver result and status. This endpoint does not probe hardware.
 - `GET /v1/recordings` returns `recordings` sorted newest first, with timestamps,
   WAV parameters, lengths, hashes, and download links.
+- `GET /v1/history?source=radar&range=1h` returns bounded plot entries, total count,
+  time-axis bounds, sampling status, and animal choices. Sources: `radar`, `light`,
+  `birdcast`, `microphone`. Ranges: `30m`, `1h`, `6h`, `12h`, `1d`, `7d`, `all`.
+  BirdCast accepts `region=US-CA`. This endpoint does not read sensors or log a reading.
+- `GET /v1/animal-names?name=Bubo%20virginianus` returns English common names for
+  up to 30 scientific names. Exact scientific names or exact scientific synonyms
+  are matched against iNaturalist; unrelated search matches are rejected.
 - Existing `/presence`, `/reading`, `/health`, `POST /v1/snapshots`, and
   `POST /v1/recordings` remain available. Recording creation returns HTTP 200 as
   in the repository server. Metadata includes both `download_path` and

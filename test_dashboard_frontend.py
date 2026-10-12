@@ -15,7 +15,7 @@ class FrontendTests(unittest.TestCase):
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
-let clock = 0, delayLatest = 0, replacement = '', requests = [], timers = [];
+let clock = 0, delayLatest = 0, replacement = '', requests = [], timers = [], queried = [];
 const cancelledTimers = new Set();
 let analysisState = {state:'queued'};
 let radarUnavailable = false;
@@ -26,7 +26,7 @@ function element() {
     classList:{toggle(name,on){if(on)classes.add(name);else classes.delete(name);return on;},contains(name){return classes.has(name);},remove(name){classes.delete(name);}},
     addEventListener(name,fn){this.listeners ??= {};this.listeners[name]=fn;},
     setAttribute(){},removeAttribute(){},focus(){},
-    querySelector(){return {replaceWith(node){replacement=node.html;}};},
+    querySelector(selector){queried.push(selector);return {html:this.innerHTML,replaceWith(node){replacement=node.html;}};},
     get firstElementChild(){return {html:this.innerHTML};}};
 }
 const document = {
@@ -52,6 +52,8 @@ const context=vm.createContext({document,console,URL,Object,Date,location:{hash:
       body=radarUnavailable ? {fresh:false,status:'unavailable',error:{message:'Radar disconnected'}} : data.sources.radar.result;
       return {ok:!radarUnavailable,json:async()=>JSON.parse(JSON.stringify(body))};
     }
+    else if(path.startsWith('/v1/history?'))body={entries:[],animals:[],total:0,sampled:false,start:0,end:1};
+    else if(path.startsWith('/v1/animal-names?'))body={names:{'Buteo jamaicensis':'Red-tailed Hawk'}};
     else if(path==='/v1/recordings' && !options.method)body={recordings};
     else if(path.endsWith('/analysis')) {
       body={status:'ok',analysis:options.method==='POST' ? {state:'queued'} : analysisState};
@@ -72,6 +74,7 @@ async function main(){
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(requests.map(r=>r.path),['/v1/latest','/v1/recordings']);
   assert.match(document.querySelector('#content').innerHTML,/Fresh frame/);
+  assert.ok(!document.querySelector('#content').innerHTML.includes('data-history-metric'), 'Overview contains no graphs or graph controls');
   const expiry=timers.find(timer=>timer.delay>=1900 && timer.delay<=2000);
   assert.ok(expiry);
   clock=3000;expiry.fn();
@@ -93,7 +96,8 @@ async function main(){
   context.location.hash='#birdcast';windowEvents.hashchange();
   await pendingRadarPoll.fn();
   assert.equal(document.querySelector('#page-title').textContent,'Migration outlook');
-  assert.equal(requests.length,beforeNavigation,'Navigation cancels radar polling on other pages');
+  assert.equal(requests.filter(r=>r.path==='/v1/latest').length,4,'Navigation cancels radar polling on other pages');
+  await new Promise(resolve=>setImmediate(resolve));
   vm.runInContext(`histories={
     light:[{read_at:'2026-10-11T12:00:00Z',http_status:200,result:{lux:0}},
       {read_at:'2026-10-11T12:00:01Z',http_status:503,result:{}},
@@ -104,7 +108,7 @@ async function main(){
       {read_at:'2026-10-11T12:00:01Z',http_status:200,result:{region:{code:'US-NY'},metrics:{birds_in_flight:999}}}]
   }`,context);
   const lightGraph=vm.runInContext("historyGraph('light')",context);
-  assert.match(lightGraph,/2 saved readings/);
+  assert.match(lightGraph,/2 plotted readings/);
   assert.match(lightGraph,/Luminance \(lux\) over read time/);
   assert.equal((lightGraph.match(/<circle /g)||[]).length,2,'Zero lux is a valid reading');
   assert.ok(!lightGraph.includes('<path d="M '),'Failed reads break plotted lines');
@@ -116,6 +120,30 @@ async function main(){
   assert.match(migrationGraph,/123/);
   assert.ok(!migrationGraph.includes('999'),'Migration history filters by region');
   assert.match(vm.runInContext("historyGraph('light')",context),/Measured/);
+  assert.match(migrationGraph,/Half hour/);
+  assert.match(migrationGraph,/All time/);
+  const unchangedPage=document.querySelector('#content').innerHTML;
+  const metricSelect={dataset:{historyMetric:'radar'},value:'moving_distance_cm'};
+  document.activeElement=metricSelect;
+  document.querySelector('#content').listeners.change({target:metricSelect});
+  assert.equal(vm.runInContext('historyMetrics.radar',context),'moving_distance_cm');
+  assert.equal(document.querySelector('#content').innerHTML,unchangedPage,'Selecting a metric does not replace the controls');
+  assert.equal(document.activeElement,metricSelect);
+  assert.match(vm.runInContext("historyPlot('radar')",context),/moving distance/);
+  document.querySelector('#content').listeners.change({target:{dataset:{historyRange:'light'},value:'30m'}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(requests.some(r=>r.path==='/v1/history?source=light&range=30m'));
+  assert.ok(queried.includes('[data-reading="radar"]'),'Radar updates target only readings, preserving graph controls');
+  await vm.runInContext("loadAnimalNames(['Buteo jamaicensis'])",context);
+  assert.match(vm.runInContext("animalLabel('Buteo jamaicensis')",context),/Red-tailed Hawk.*Buteo jamaicensis/);
+  vm.runInContext(`histories.microphone=[{read_at:'2026-10-11T12:00:00Z',http_status:200,result:{timestamp:'2026-10-11T11:00:00Z',animals:[{scientific_name:'Buteo jamaicensis',score:-2}]}}];historyInfo.microphone={animals:['Buteo jamaicensis']};selectedAnimal='Buteo jamaicensis'`,context);
+  // Use the entry times when no server axis metadata is present.
+  vm.runInContext("delete historyInfo.microphone;historyInfo.microphone=undefined",context);
+  const animalGraph=vm.runInContext("historyGraph('microphone')",context);
+  assert.match(animalGraph,/Red-tailed Hawk/);
+  assert.match(animalGraph,/no fixed minimum or maximum/);
+  assert.match(animalGraph,/over recording time/);
+  assert.match(animalGraph,/-2/);
   document.querySelector('#content').listeners.change({target:{id:'region',value:'US-NY'}});
   await vm.runInContext("run('birdcast')",context);
   const snapshotRequest=requests.find(r=>r.path==='/v1/snapshots');
@@ -152,8 +180,8 @@ async function main(){
   assert.equal(requests.filter(r=>r.path.endsWith('/analysis') && r.options.method==='POST').length,1);
   assert.equal(vm.runInContext("recordings[0].analysis.state",context),'queued');
   const pendingPoll = timers.findLast(timer=>timer.delay===3000);
-  const countBeforeNavigation = requests.length;
   context.location.hash='#birdcast';windowEvents.hashchange();
+  const countBeforeNavigation = requests.length;
   await pendingPoll.fn();
   assert.equal(requests.length,countBeforeNavigation,'Navigation cancels polling for hidden recordings');
   assert.ok(cancelledTimers.has(timers.indexOf(pendingPoll)+1));

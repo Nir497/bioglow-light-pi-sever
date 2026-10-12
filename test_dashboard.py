@@ -8,6 +8,7 @@ import threading
 import time
 import unittest
 import wave
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -167,6 +168,73 @@ class DashboardTests(unittest.TestCase):
         entries = history.recent("light")
         self.assertEqual(len(entries), 120)
         self.assertEqual({entry["result"]["lux"] for entry in entries}, set(range(120)))
+
+    def test_history_ranges_use_full_logs_and_filter_region(self):
+        history = self.service.reading_history
+        history.root.mkdir()
+        now = datetime.now(timezone.utc)
+        with (history.root / "luminance.txt").open("w") as stream:
+            for index in range(750):
+                stream.write(json.dumps({"read_at": (now-timedelta(seconds=2400-index)).isoformat(),
+                                         "http_status": 200, "result": {"lux": index}})+"\n")
+        hour = history.series("light", "1h")
+        self.assertEqual(hour["total"], 750)
+        self.assertEqual(len(hour["entries"]), 750)
+        self.assertEqual(hour["entries"][0]["result"]["lux"], 0)
+        half_hour = history.series("light", "30m")
+        self.assertLess(half_hour["total"], 750)
+        self.assertGreater(half_hour["entries"][0]["result"]["lux"], 500)
+        for region in ("US-CA", "US-NY"):
+            history.append("birdcast", 200, {"region": {"code": region}, "metrics": {"birds_in_flight": 5}})
+        data = json.loads(self.request("GET", "/v1/history?source=birdcast&range=1d&region=US-NY")[2])
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["entries"][0]["result"]["region"]["code"], "US-NY")
+        self.assertEqual(self.request("GET", "/v1/history?source=../../secret&range=1h")[0], 400)
+        self.assertEqual(self.request("GET", "/v1/history?source=light&range=invalid")[0], 400)
+
+    def test_history_sampling_is_bounded_and_keeps_full_text_file(self):
+        history = self.service.reading_history
+        for value in range(1200):
+            history.append("light", 200, {"lux": value})
+        series = history.series("light", "all", max_points=100)
+        self.assertEqual(series["total"], 1200)
+        self.assertLessEqual(len(series["entries"]), 100)
+        self.assertTrue(series["sampled"])
+        self.assertEqual(series["entries"][-1]["result"]["lux"], 1199)
+        self.assertEqual(len((history.root/"luminance.txt").read_text().splitlines()), 1200)
+
+    def test_recording_history_keeps_animal_scores_and_no_backfill(self):
+        metadata = self.capture()
+        analysis = {"state": "completed", "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "candidates": [{"scientific_name": "Bubo virginianus", "score": 8.5},
+                                   {"scientific_name": "Rana temporaria", "score": -2.1}],
+                    "windows": [{"candidates": [{"scientific_name": "Bubo virginianus", "score": 9},
+                                                  {"scientific_name": "Strix varia", "score": 4}]}]}
+        self.service.animal_analysis.status = Mock(return_value=analysis)
+        before = len(self.service.reading_history.recent("microphone"))
+        self.service.recordings()
+        self.assertEqual(len(self.service.reading_history.recent("microphone")), before,
+                         "Reading existing results must not backfill the new log")
+        self.service.animal_analysis.on_result(metadata, analysis)
+        self.service.animal_analysis.on_result(metadata, analysis)
+        series = self.service.reading_history.series("microphone", "all")
+        self.assertEqual(series["total"], 1, "The graph uses the latest result per recording")
+        entry = series["entries"][0]["result"]
+        self.assertEqual(entry["timestamp"], metadata["created_at"])
+        self.assertEqual(entry["animals"], [{"scientific_name": "Bubo virginianus", "score": 9},
+                                            {"scientific_name": "Strix varia", "score": 4},
+                                            {"scientific_name": "Rana temporaria", "score": -2.1}])
+        self.assertEqual(series["animals"], ["Bubo virginianus", "Rana temporaria", "Strix varia"])
+        restarted = Service(self.root, self.root/"config.json")
+        restarted.log_recording(metadata, analysis)
+        self.assertEqual(len(restarted.reading_history.recent("microphone")), before+1)
+
+    def test_common_name_endpoint_validates_and_returns_seeded_names_offline(self):
+        with patch("animal_names.urlopen", side_effect=AssertionError("network")):
+            status, _, raw = self.request("GET", "/v1/animal-names?name=Bubo%20virginianus&name=Buteo%20jamaicensis")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(raw)["names"]["Buteo jamaicensis"], "Red-tailed Hawk")
+        self.assertEqual(self.request("GET", "/v1/animal-names?name=%3Cscript%3E")[0], 400)
 
     def test_corrupt_runtime_cache_does_not_prevent_startup(self):
         self.service._cache_file.parent.mkdir()
