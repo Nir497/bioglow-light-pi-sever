@@ -8,6 +8,7 @@ import http.client
 import tempfile
 import textwrap
 import wave
+from unittest.mock import MagicMock
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from birdcast_service import BusyError, RecordingError, Service, SUPPORTED_REGIONS, make_handler, RECORDING_BYTES
@@ -20,6 +21,18 @@ class ServiceTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.service = Service(self.root, self.root / "config.json", runner=lambda region: self.snapshot)
+
+    def test_lux_drives_lighting_and_latest_is_passive(self):
+        self.service.lighting = MagicMock()
+        self.service.light_sensor.response = MagicMock(return_value=(200, {"lux": 12}))
+        self.service.light_reading()
+        self.service.lighting.update.assert_called_once_with(12)
+        self.service.lighting.status.return_value = {"brightness": 173}
+        self.assertEqual(self.service.latest()["lighting"]["brightness"], 173)
+        self.service.light_sensor.response.assert_called_once()
+        self.service.light_sensor.response.return_value = (503, {"error": "unavailable"})
+        self.service.light_reading()
+        self.service.lighting.update.assert_called_with(None)
 
     def test_supported_regions_and_success_preserve_nulls_warnings(self):
         self.assertIn("US-CA", SUPPORTED_REGIONS)

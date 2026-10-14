@@ -1,9 +1,10 @@
 'use strict';
 const names = {overview:'Overview',radar:'Radar',light:'Light',birdcast:'BirdCast',recordings:'Recordings'};
-const titles = {overview:'Station overview',radar:'Presence & movement',light:'Ambient light',birdcast:'Migration outlook',recordings:'Sound library'};
+const titles = {overview:'Station overview',radar:'Presence & movement',light:'Luminance & lighting',birdcast:'Migration outlook',recordings:'Sound library'};
 const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'The newest radar frame, with distances, energy scores, and connection status.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
 let histories = {};
+let lighting = {};
 const historyRanges = {radar:'1h',light:'1h',birdcast:'1d',microphone:'1d'};
 const rangeOptions = [['30m','Half hour'],['1h','Hour'],['6h','6 hours'],['12h','12 hours'],['1d','Day'],['7d','Week'],['all','All time']];
 const historyInfo = {}, historyErrors = {}, historyRequests = {}, historyKeys = {};
@@ -143,6 +144,7 @@ function sourceCard(source, expanded = false) {
       try { const url = new URL(data.source.url); if (url.protocol === 'https:' && url.hostname === 'dashboard.birdcast.org') body += `<p class="timestamp"><a href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">Open BirdCast source ↗</a></p>`; } catch {}
     }
   }
+  if (expanded && source === 'light') body += facts([['Fixture','BioGlow · bioglow.local'],['Lighting status',escapeHtml(lighting.status || 'waiting')],['Commanded brightness',lighting.brightness == null ? '—' : `${number(lighting.brightness)} / 255`],['Target brightness',lighting.target_brightness == null ? '—' : `${number(lighting.target_brightness)} / 255`],['Smoothed luminance',lighting.smoothed_lux == null ? '—' : `${number(lighting.smoothed_lux)} lux`]]) + '<p class="timestamp">Automatic: on below 30 lux, off above 300 lux. Between thresholds, keep the current state. Readings are averaged over 30 seconds; brightness fades over 3 seconds.</p>' + (lighting.error ? `<p class="error-message">${escapeHtml(lighting.error)}</p>` : '');
   if (expanded && source === 'light') body += '<p class="timestamp">The server collects light every ten seconds. If the sensor is disconnected, reconnect it and choose Read now.</p>';
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
   const control = source === 'birdcast' ? action('birdcast','Fetch BirdCast') : action(source,'Read now');
@@ -385,6 +387,7 @@ function scheduleCollectionPoll() {
       const latest = await api('/v1/latest');
       if (generation!==collectionGeneration) return;
       collection = latest.collection || collection;
+      lighting = latest.lighting || {};
       sources.light = latest.sources.light;
       const reading = content.querySelector('[data-reading="light"]');
       if (reading && sources.light) {
@@ -421,7 +424,7 @@ function render() {
 }
 async function loadCache() {
   const requestedAt = performance.now();
-  try { const data = await api('/v1/latest'); sources = data.sources; collection = data.collection || collection; Object.keys(historyKeys).forEach(source=>historyKeys[source]=''); radarLoadedAt = requestedAt; scheduleRadarExpiry(); regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name)); cacheError = ''; }
+  try { const data = await api('/v1/latest'); sources = data.sources; lighting = data.lighting || {}; collection = data.collection || collection; Object.keys(historyKeys).forEach(source=>historyKeys[source]=''); radarLoadedAt = requestedAt; scheduleRadarExpiry(); regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name)); cacheError = ''; }
   catch (error) { cacheError = error.message; throw error; }
 }
 async function loadLibrary() {

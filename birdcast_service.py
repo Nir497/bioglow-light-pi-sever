@@ -23,6 +23,7 @@ from animal_model import is_species_label
 from animal_names import AnimalNames
 from collection_schedule import CollectionSchedule
 from light_sensor import LightSensor
+from lighting_control import LightingControl
 from presence import PresenceSensor
 from reading_history import ReadingHistory
 from recording_store import RecordingError, RecordingNotFound, RecordingStore
@@ -51,6 +52,7 @@ class Service:
                  animal_analysis: bool = True):
         self.root = root.resolve()
         self.light_sensor = LightSensor()
+        self.lighting = LightingControl()
         self.presence_sensor = PresenceSensor()
         self.reading_history = ReadingHistory(self.root)
         self.animal_names = AnimalNames(self.root)
@@ -99,7 +101,7 @@ class Service:
         # Radar is passive: this reads worker state without opening UART or sending commands.
         status, radar = self.presence_sensor.response()
         result["radar"] = {"http_status": status, "result": radar}
-        return {"status": "ok", "sources": result, "history": self.reading_history.all_recent(),
+        return {"status": "ok", "sources": result, "lighting": self.lighting.status(), "history": self.reading_history.all_recent(),
                 "collection": self.collection_schedule.status(),
                 "regions": [{"code": f"US-{code}", "name": name}
                             for code, name in birdcast_scraper.STATE_NAMES.items()]}
@@ -125,6 +127,7 @@ class Service:
 
     def light_reading(self, health: bool = False) -> tuple[int, dict[str, Any]]:
         status, result = self.light_sensor.response(health=health)
+        self.lighting.update(result.get("lux") if status == 200 else None)
         self.log_reading("light", status, result)
         # Keep the last measurement available even when callers request health only.
         if not health or status != 200:
