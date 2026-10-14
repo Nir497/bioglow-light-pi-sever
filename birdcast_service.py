@@ -272,6 +272,14 @@ def make_handler(service: Service):
     class Handler(BaseHTTPRequestHandler):
         server_version = "BioGlowBirdCast/1.0"
 
+        def handle(self):
+            try:
+                super().handle()
+            except (BrokenPipeError, ConnectionResetError):
+                # Navigation or a cancelled fetch can close the client socket
+                # during headers, body writes, or the final response flush.
+                self.close_connection = True
+
         def log_message(self, fmt, *args):
             return
 

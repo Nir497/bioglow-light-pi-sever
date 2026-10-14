@@ -8,7 +8,7 @@ import http.client
 import tempfile
 import textwrap
 import wave
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from birdcast_service import BusyError, RecordingError, Service, SUPPORTED_REGIONS, make_handler, RECORDING_BYTES
@@ -57,6 +57,28 @@ class ServiceTests(unittest.TestCase):
             server.shutdown()
             thread.join()
             server.server_close()
+
+    def test_disconnected_clients_close_without_hiding_other_errors(self):
+        handler_class = make_handler(self.service)
+        for response in ("json", "bytes"):
+            for failure in (BrokenPipeError(), ConnectionResetError()):
+                handler = handler_class.__new__(handler_class)
+                handler.send_response = MagicMock()
+                handler.send_header = MagicMock()
+                handler.end_headers = MagicMock()
+                handler.wfile = MagicMock()
+                handler.wfile.write.side_effect = failure
+                def send(instance):
+                    if response == "json":
+                        instance._send(200, {"status": "ok"})
+                    else:
+                        instance._send_bytes(b"audio", "audio/wav")
+                with patch("birdcast_service.BaseHTTPRequestHandler.handle", send):
+                    handler.handle()
+                self.assertTrue(handler.close_connection)
+        with patch("birdcast_service.BaseHTTPRequestHandler.handle", side_effect=OSError("disk error")):
+            with self.assertRaisesRegex(OSError, "disk error"):
+                handler.handle()
 
     def test_supported_regions_and_success_preserve_nulls_warnings(self):
         self.assertIn("US-CA", SUPPORTED_REGIONS)
