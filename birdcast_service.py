@@ -309,6 +309,18 @@ def make_handler(service: Service):
             return body
 
         def do_POST(self):
+            if self.path == "/v1/lighting":
+                try:
+                    body = self._body()
+                    if set(body) != {"mode"} or not isinstance(body["mode"], str):
+                        raise ValueError('Request must contain mode: on, off, or auto.')
+                    lighting = service.lighting.set_mode(body["mode"])
+                    self._send(503 if lighting["status"] == "controller_unavailable" else 200,
+                               {"status": "ok" if lighting["status"] != "controller_unavailable" else "error",
+                                "lighting": lighting})
+                except ValueError as exc:
+                    self._send(400, error_payload("malformed_request", str(exc)))
+                return
             if self.path == "/v1/recording-schedule":
                 try:
                     body = self._body()

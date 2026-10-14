@@ -34,6 +34,30 @@ class ServiceTests(unittest.TestCase):
         self.service.light_reading()
         self.service.lighting.update.assert_called_with(None)
 
+    def test_manual_lighting_endpoint_validation_and_failure(self):
+        self.service.lighting = MagicMock()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=2)
+            for mode, state, expected in (("on", "ok", 200), ("off", "controller_unavailable", 503)):
+                self.service.lighting.set_mode.return_value = {"mode": mode, "status": state}
+                conn.request("POST", "/v1/lighting", json.dumps({"mode": mode}), {"Content-Type": "application/json"})
+                response = conn.getresponse()
+                self.assertEqual(response.status, expected)
+                self.assertEqual(json.loads(response.read())["lighting"]["mode"], mode)
+                self.service.lighting.set_mode.assert_called_with(mode)
+            conn.request("POST", "/v1/lighting", '{}', {"Content-Type": "application/json"})
+            response = conn.getresponse()
+            self.assertEqual(response.status, 400)
+            response.read()
+            conn.close()
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
     def test_supported_regions_and_success_preserve_nulls_warnings(self):
         self.assertIn("US-CA", SUPPORTED_REGIONS)
         result = self.service.snapshot("US-CA")

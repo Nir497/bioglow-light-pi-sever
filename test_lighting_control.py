@@ -32,6 +32,23 @@ class LightingTests(unittest.TestCase):
             self.assertEqual(self.read(value)['brightness'], 255)
             self.assertEqual(self.light.status()['status'], 'sensor_unavailable')
 
+    def test_manual_override_survives_reads_and_auto_restores_lux_control(self):
+        self.read(500)
+        self.assertEqual(self.light.set_mode('on')['brightness'], 255)
+        self.assertEqual(self.read(600)['brightness'], 255)
+        self.assertEqual(self.light.set_mode('auto')['brightness'], 0)
+        self.read(0)
+        self.assertEqual(self.light.set_mode('off')['brightness'], 0)
+        self.assertEqual(self.read(0)['brightness'], 0)
+        self.assertEqual(self.light.set_mode('auto')['brightness'], 255)
+
+    def test_manual_works_without_sensor_and_rejects_invalid_modes(self):
+        self.assertEqual(self.light.set_mode('on')['brightness'], 255)
+        self.assertEqual(self.read(None)['brightness'], 255)
+        self.assertEqual(self.light.set_mode('auto')['status'], 'waiting')
+        with self.assertRaises(ValueError):
+            self.light.set_mode('invalid')
+
     def test_failure_retries_without_claiming_success(self):
         self.opener.side_effect = OSError('offline')
         self.assertIsNone(self.read(0)['brightness'])

@@ -4,6 +4,12 @@ The existing `birdcast_service.py` owns automatic lighting independently of
 dashboard clients. The Light page shows luminance and lighting together.
 Run the existing server without starting `bioglow_light/server.py` separately.
 
+On the Light page, **On** selects full brightness (255), **Off** switches
+the fixture off, and **Auto** restores lux control immediately using the
+latest smoothed reading. Manual selection is shared by all clients and
+survives scheduled reads, including sensor failures. Restarting the server
+returns to Auto. `POST /v1/lighting` accepts `{"mode":"on"}`, `off`, or `auto`.
+
 Every sensor read contributes to a 30-second rolling average. Below 30 lux
 the fixture turns on; above 300 lux it turns off. Between those thresholds
 it retains its on/off state. While on, brightness increases linearly from
