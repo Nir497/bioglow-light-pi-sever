@@ -270,8 +270,15 @@ class PresenceEstimator:
         motion_count = sum(motion_flags)
         credible_ratio = credible_count / len(recent)
 
+        fast_distances = [
+            _frame_distance_cm(r) for t, r in recent
+            if t >= (now - 0.65) and self._is_credible(r)[2] and _frame_distance_cm(r) is not None
+        ]
         range_estimate_cm = None
-        if recent_distances:
+        if fast_distances:
+            range_estimate_cm = round(statistics.median(fast_distances))
+            self.last_range_cm = range_estimate_cm
+        elif recent_distances:
             range_estimate_cm = round(statistics.median(recent_distances))
             self.last_range_cm = range_estimate_cm
         elif self.confirmed and self.last_range_cm is not None:
@@ -476,7 +483,7 @@ class PresenceSensor:
                 import serial
                 with serial.Serial(str(port), 256000, bytesize=serial.EIGHTBITS,
                                    parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE,
-                                   timeout=0.2, exclusive=True, xonxoff=False,
+                                   timeout=0.04, exclusive=True, xonxoff=False,
                                    rtscts=False, dsrdtr=False) as connection:
                     parser = Parser()
                     with self.lock:
@@ -484,7 +491,8 @@ class PresenceSensor:
                         self.latest, self.received_at = None, None
                         self.estimator.reset()
                     while not self.stop_event.is_set():
-                        data = connection.read(256)
+                        waiting = getattr(connection, 'in_waiting', 0) or 0
+                        data = connection.read(max(23, min(256, waiting)))
                         for reading in parser.feed(data):
                             now = time.monotonic()
                             reading['timestamp'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')

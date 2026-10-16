@@ -101,7 +101,7 @@ class Service:
         # Radar is passive: this reads worker state without opening UART or sending commands.
         status, radar = self.presence_sensor.response()
         result["radar"] = {"http_status": status, "result": radar}
-        return {"status": "ok", "sources": result, "lighting": self.lighting.status(), "history": self.reading_history.all_recent(),
+        return {"status": "ok", "sources": result, "lighting": self.lighting.status(),
                 "collection": self.collection_schedule.status(),
                 "regions": [{"code": f"US-{code}", "name": name}
                             for code, name in birdcast_scraper.STATE_NAMES.items()]}

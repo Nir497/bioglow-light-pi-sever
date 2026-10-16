@@ -101,14 +101,17 @@ function scheduleRadarPoll() {
     updateRadarReading();
     scheduleRadarExpiry();
     scheduleRadarPoll();
-  },1000);
+  },200);
 }
 function updateRadarReading() {
   const reading = content.querySelector('[data-reading="radar"]');
   if (!reading) return;
+  const wasOpen = reading.querySelector('details.details')?.open;
   const wrapper = document.createElement('div');
   wrapper.innerHTML = sourceCard('radar',view()==='radar');
   const replacement = wrapper.querySelector('[data-reading="radar"]');
+  const detailsEl = replacement.querySelector('details.details');
+  if (detailsEl && wasOpen) detailsEl.open = true;
   reading.replaceWith(replacement);
 }
 function badge(source) {
