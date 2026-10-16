@@ -1,7 +1,7 @@
 'use strict';
 const names = {overview:'Overview',radar:'Radar',light:'Light',birdcast:'BirdCast',recordings:'Recordings'};
 const titles = {overview:'Station overview',radar:'Presence & movement',light:'Luminance & lighting',birdcast:'Migration outlook',recordings:'Sound library'};
-const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'The newest radar frame, with distances, energy scores, and connection status.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
+const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
 let histories = {};
 let lighting = {};
@@ -31,7 +31,7 @@ function updateAnimalSelector() {
 }
 const historyMetrics = {radar:'presence',light:'lux',birdcast:'birds_in_flight'};
 const graphMetrics = {
-  radar:[['presence','Presence state'],['moving_distance_cm','Moving distance (cm)'],['stationary_distance_cm','Stationary distance (cm)'],['moving_energy_score','Moving energy score'],['stationary_energy_score','Stationary energy score']],
+  radar:[['presence','Presence state'],['presence_state','Derived presence state'],['range_estimate_cm','Smoothed range estimate (cm)'],['detection_distance_cm','Detection distance (cm)'],['moving_distance_cm','Moving distance (cm)'],['stationary_distance_cm','Stationary distance (cm)'],['moving_energy_score','Moving energy score'],['stationary_energy_score','Stationary energy score'],['activity_level','Activity level (0–1)'],['presence_confidence','Presence confidence heuristic (0–1)']],
   light:[['lux','Luminance (lux)']],
   birdcast:[['birds_in_flight','Birds in flight'],['total_birds_crossed','Birds crossed'],['speed_mph','Speed (mph)'],['altitude_ft','Altitude (ft)']]
 };
@@ -67,8 +67,8 @@ function currentEntry(source) {
   const data = entry.result;
   const age = (data.age_seconds ?? 0) + (performance.now() - radarLoadedAt) / 1000;
   if (age <= data.stale_after_seconds) return entry;
-  const {presence,moving_distance_cm,stationary_distance_cm,moving_energy_score,stationary_energy_score,...status} = data;
-  return {http_status:503,result:{...status,fresh:false,age_seconds:age,status:'unavailable',
+  const {presence,moving_distance_cm,stationary_distance_cm,detection_distance_cm,raw_moving_distance_cm,raw_stationary_distance_cm,raw_detection_distance_cm,moving_energy_score,stationary_energy_score,range_estimate_cm,range_trend,activity_level,presence_confidence,gate_profile,window_summary,transition_reason,...status} = data;
+  return {http_status:503,result:{...status,fresh:false,sensor_healthy:false,presence_state:'UNKNOWN',presence_confirmed:false,age_seconds:age,status:'unavailable',
     error:{code:'presence_unavailable',message:'This radar frame is stale. Choose Read now for the newest available frame.'}}};
 }
 function scheduleRadarExpiry() {
@@ -128,14 +128,10 @@ function sourceCard(source, expanded = false) {
   const value = source === 'radar' ? (success ? escapeHtml(data.presence) : '—') : source === 'light' ? `${number(data.lux)} <small>lux</small>` : number(data.metrics?.birds_in_flight);
   const caption = source === 'radar' ? 'Presence in the detection area' : source === 'light' ? 'Latest measured illuminance' : 'Estimated birds in flight';
   const stamp = source === 'birdcast' ? data.retrieved_at : data.timestamp;
-  let body = `<div class="big-value">${value}</div><div class="value-caption">${caption}</div><div class="timestamp">${success ? `Measured ${time(stamp)}` : 'No current result'}${entry?.requested_at ? `<br>Last request ${time(entry.requested_at)}` : ''}</div>${resultError(source)}`;
+  const radarSummary = source === 'radar' ? renderRadarSummaryPill(entry, success, data) : '';
+  let body = `<div class="big-value">${value}</div><div class="value-caption">${caption}</div>${radarSummary}<div class="timestamp">${success ? `Measured ${time(stamp)}` : 'No current result'}${entry?.requested_at ? `<br>Last request ${time(entry.requested_at)}` : ''}</div>${resultError(source)}`;
   if (entry?.result.history_error) body += `<p class="error-message">${escapeHtml(entry.result.history_error)}</p>`;
-  if (expanded && source === 'radar') body += facts([
-    ['Moving distance',data.moving_distance_cm == null ? '—' : `${number(data.moving_distance_cm)} cm`],
-    ['Stationary distance',data.stationary_distance_cm == null ? '—' : `${number(data.stationary_distance_cm)} cm`],
-    ['Moving energy score',number(data.moving_energy_score)],['Stationary energy score',number(data.stationary_energy_score)],
-    ['Serial connected',entry ? (entry.result.serial_connected ? 'Yes' : 'No') : '—'],
-    ['Frame age',entry?.result.age_seconds == null ? '—' : `${number(entry.result.age_seconds)} s`]]) + '<p class="timestamp">Energy is a sensor score from 0–100, not a percentage or probability. Frames older than two seconds are unavailable.</p>';
+  if (expanded && source === 'radar') body += renderRadarExpanded(entry, success, data);
   if (expanded && source === 'birdcast') {
     const metrics = data.metrics || {};
     body += facts([['Birds crossed',number(metrics.total_birds_crossed)],['Direction',escapeHtml(metrics.direction || '—')],['Speed',metrics.speed_mph == null ? '—' : `${number(metrics.speed_mph)} mph`],['Altitude',metrics.altitude_ft == null ? '—' : `${number(metrics.altitude_ft)} ft`],['Region',escapeHtml(data.region?.name || data.region?.code || '—')],['Selected night',escapeHtml(data.selected_night || '—')]]);
@@ -147,8 +143,9 @@ function sourceCard(source, expanded = false) {
   if (expanded && source === 'light') body += facts([['Fixture','BioGlow · bioglow.local'],['Control mode',escapeHtml(lighting.mode || 'auto')],['Lighting status',escapeHtml(lighting.status || 'waiting')],['Commanded brightness',lighting.brightness == null ? '—' : `${number(lighting.brightness)} / 255`],['Target brightness',lighting.target_brightness == null ? '—' : `${number(lighting.target_brightness)} / 255`],['Smoothed luminance',lighting.smoothed_lux == null ? '—' : `${number(lighting.smoothed_lux)} lux`]]) + '<p class="timestamp">Automatic: on below 30 lux, off above 300 lux. Between thresholds, keep the current state. Readings are averaged over 30 seconds; brightness fades over 3 seconds.</p>' + (lighting.error ? `<p class="error-message">${escapeHtml(lighting.error)}</p>` : '');
   if (expanded && source === 'light') body += '<p class="timestamp">The server collects light every ten seconds. If the sensor is disconnected, reconnect it and choose Read now.</p>';
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
+  const topGraphic = expanded && source === 'radar' ? renderRadarLocatorGraphic(entry, success, data) : '';
   const control = source === 'birdcast' ? action('birdcast','Fetch BirdCast') : action(source,'Read now');
-  return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded && source === 'light' ? '<div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button></div><p class="timestamp">On tests full brightness. Manual On or Off stays active until you select Auto or restart the server.</p>' : ''}${expanded ? historyGraph(source) : ''}</article>`;
+  return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${topGraphic}${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded && source === 'light' ? '<div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button></div><p class="timestamp">On tests full brightness. Manual On or Off stays active until you select Auto or restart the server.</p>' : ''}${expanded ? historyGraph(source) : ''}</article>`;
 }
 function historyGraph(source) {
   const options = source === 'microphone' ? (historyInfo.microphone?.animals || []).map(animal=>[animal,animalLabel(animal)]) : graphMetrics[source];
@@ -157,13 +154,149 @@ function historyGraph(source) {
   const rangeControl = `<label>Time range <select data-history-range="${source}" aria-label="${source} time range">${rangeOptions.map(([key,title])=>`<option value="${key}" ${key===historyRanges[source]?'selected':''}>${title}</option>`).join('')}</select></label>`;
   return `<section class="reading-history" data-history="${source}"><div class="history-controls">${metricControl}${rangeControl}<button class="button secondary" data-history-refresh="${source}">Refresh graph</button></div>${source==='microphone' ? scoreExplanation : ''}<div data-chart="${source}">${historyPlot(source)}</div></section>`;
 }
+const radarStateLabels = {
+  EMPTY:'Empty (no occupancy)',
+  APPROACHING_CANDIDATE:'Approaching / candidate',
+  PRESENT_STILL:'Present (still)',
+  PRESENT_ACTIVE:'Present (active)',
+  DEPARTING_CANDIDATE:'Departing / hold',
+  UNKNOWN:'Unknown / unavailable'
+};
+function inferDerivedState(r) {
+  if (!r) return 'UNKNOWN';
+  if (r.presence_state) return r.presence_state;
+  if (r.presence === 'moving' || r.presence === 'both') return 'PRESENT_ACTIVE';
+  if (r.presence === 'stationary') return (r.stationary_energy_score ?? 50) >= 22 ? 'PRESENT_STILL' : 'EMPTY';
+  if (r.presence === 'none') return 'EMPTY';
+  return 'UNKNOWN';
+}
+function renderRadarLocatorGraphic(entry, success, data) {
+  const state = success ? inferDerivedState(data) : 'UNKNOWN';
+  const confirmed = success ? (data.presence_confirmed ?? ['PRESENT_ACTIVE','PRESENT_STILL','DEPARTING_CANDIDATE'].includes(state)) : false;
+  const rangeCm = success ? (data.range_estimate_cm ?? data.detection_distance_cm ?? data.moving_distance_cm ?? data.stationary_distance_cm) : null;
+  const movCm = success ? data.moving_distance_cm : null;
+  const statCm = success ? data.stationary_distance_cm : null;
+  const trend = success ? (data.range_trend || 'UNKNOWN') : 'UNKNOWN';
+  const activity = success ? (data.activity_level ?? (state === 'PRESENT_ACTIVE' ? 0.7 : 0.1)) : 0;
+  const gates = Array.isArray(data.gate_profile) && data.gate_profile.length ? data.gate_profile : Array.from({length:9},(_,g)=>{
+    const mov = success && movCm != null && Math.min(8, Math.floor(movCm / 75)) === g ? (data.moving_energy_score || 0) : 0;
+    const stat = success && statCm != null && Math.min(8, Math.floor(statCm / 75)) === g ? (data.stationary_energy_score || 0) : 0;
+    const active = rangeCm != null && Math.min(8, Math.floor(rangeCm / 75)) === g;
+    return {gate:g,label:`G${g}`,moving_energy:mov,stationary_energy:stat,active};
+  });
+  const originX = 56, endX = 641, spanW = endX - originX, centerY = 104, maxCm = 675;
+  const cmToX = cm => originX + Math.max(0, Math.min(maxCm, cm)) / maxCm * spanW;
+  const halfHAt = x => 16 + ((x - originX) / spanW) * 58;
+  const gateW = spanW / 9;
+  const gateShapes = gates.map((g, i) => {
+    const x0 = originX + i * gateW, x1 = x0 + gateW;
+    const h0 = halfHAt(x0), h1 = halfHAt(x1);
+    const energy = Math.max(g.moving_energy || 0, g.stationary_energy || 0);
+    const fillOpacity = g.active ? Math.max(0.22, energy / 180) : (energy > 0 ? Math.max(0.06, energy / 260) : 0.025);
+    const fill = g.active ? '#287c54' : (g.moving_energy || 0) > (g.stationary_energy || 0) ? '#287c54' : '#5b8a72';
+    const stroke = g.active ? '#287c54' : '#ccd8d0';
+    const strokeW = g.active ? 1.6 : 0.8;
+    const poly = `${x0.toFixed(1)},${(centerY - h0).toFixed(1)} ${x1.toFixed(1)},${(centerY - h1).toFixed(1)} ${x1.toFixed(1)},${(centerY + h1).toFixed(1)} ${x0.toFixed(1)},${(centerY + h0).toFixed(1)}`;
+    const midX = (x0 + x1) / 2;
+    const tickM = ((i + 1) * 0.75).toFixed(2).replace(/\.00$/, 'm').replace(/(\.\d)0$/, '$1m');
+    return `<g class="locator-gate ${g.active ? 'active' : ''}"><polygon points="${poly}" fill="${fill}" fill-opacity="${fillOpacity.toFixed(2)}" stroke="${stroke}" stroke-width="${strokeW}"/><text x="${midX.toFixed(1)}" y="185" text-anchor="middle" class="locator-gate-name">${escapeHtml(g.label)}</text><text x="${x1.toFixed(1)}" y="201" text-anchor="middle" class="locator-scale-tick">${(i + 1) * 0.75}m</text></g>`;
+  }).join('');
+
+  const hasTarget = success && rangeCm != null && state !== 'EMPTY' && state !== 'UNKNOWN';
+  let markers = '';
+  if (movCm != null && movCm > 0) {
+    const mx = cmToX(movCm);
+    markers += `<g class="locator-submarker" transform="translate(${mx.toFixed(1)},${centerY - 32})"><circle r="4.5" fill="#287c54"/><text y="-8" text-anchor="middle" class="locator-sub-label">M ${number(movCm)}cm</text></g>`;
+  }
+  if (statCm != null && statCm > 0) {
+    const sx = cmToX(statCm);
+    markers += `<g class="locator-submarker" transform="translate(${sx.toFixed(1)},${centerY + 32})"><circle r="4.5" fill="#5b8a72"/><text y="15" text-anchor="middle" class="locator-sub-label">S ${number(statCm)}cm</text></g>`;
+  }
+  if (hasTarget) {
+    const tx = cmToX(rangeCm);
+    const th = halfHAt(tx);
+    const color = confirmed ? '#1f6f4a' : '#c87a19';
+    const haloR = (13 + Math.min(1, Math.max(0, activity)) * 9).toFixed(1);
+    const labelX = Math.max(125, Math.min(565, tx));
+    const trendGlyph = trend === 'CLOSER' ? '← CLOSER' : trend === 'FARTHER' ? 'FARTHER →' : trend === 'STABLE' ? '• STABLE' : '';
+    const arrow = trend === 'CLOSER'
+      ? `<path d="M ${(tx - 12).toFixed(1)} ${centerY} L ${(tx - 28).toFixed(1)} ${centerY} M ${(tx - 22).toFixed(1)} ${centerY - 5} L ${(tx - 28).toFixed(1)} ${centerY} L ${(tx - 22).toFixed(1)} ${centerY + 5}" stroke="${color}" stroke-width="2.2" fill="none" stroke-linecap="round"/>`
+      : trend === 'FARTHER'
+      ? `<path d="M ${(tx + 12).toFixed(1)} ${centerY} L ${(tx + 28).toFixed(1)} ${centerY} M ${(tx + 22).toFixed(1)} ${centerY - 5} L ${(tx + 28).toFixed(1)} ${centerY} L ${(tx + 22).toFixed(1)} ${centerY + 5}" stroke="${color}" stroke-width="2.2" fill="none" stroke-linecap="round"/>`
+      : '';
+    markers += `<line x1="${originX}" y1="${centerY}" x2="${tx.toFixed(1)}" y2="${centerY}" stroke="${color}" stroke-width="2" stroke-dasharray="4 4"/><line x1="${tx.toFixed(1)}" y1="${(centerY - th).toFixed(1)}" x2="${tx.toFixed(1)}" y2="${(centerY + th).toFixed(1)}" stroke="${color}" stroke-width="2" stroke-opacity="0.55"/>${arrow}<g class="locator-target" data-estimated-range="${escapeHtml(rangeCm)}" transform="translate(${tx.toFixed(1)},${centerY})"><circle r="${haloR}" fill="${color}" fill-opacity="0.18"/><circle r="8" fill="${color}" stroke="#ffffff" stroke-width="2"/></g><g transform="translate(${labelX.toFixed(1)},22)"><rect x="-78" y="-14" width="156" height="22" rx="11" fill="${color}"/><text x="0" y="1" text-anchor="middle" class="locator-callout-text">~${number(rangeCm)} cm (${(rangeCm / 100).toFixed(2)} m)${trendGlyph ? ` · ${trendGlyph}` : ''}</text></g>`;
+  } else {
+    const emptyMsg = !success ? 'Sensor unavailable — position unknown' : 'No object detected in 0.00–6.75 m range';
+    markers += `<text x="${(originX + spanW / 2).toFixed(1)}" y="${centerY + 4}" text-anchor="middle" class="locator-empty-text">${escapeHtml(emptyMsg)}</text>`;
+  }
+  const activeGate = hasTarget ? `G${Math.min(8, Math.floor(rangeCm / 75))}` : null;
+  const statusSummary = hasTarget
+    ? `Estimated at ~${number(rangeCm)} cm (${(rangeCm / 100).toFixed(2)} m) in Gate ${activeGate}${trend !== 'UNKNOWN' ? ` · ${escapeHtml(trend)}` : ''}`
+    : (!success ? 'Position unavailable' : 'No object in detection range');
+  return `<section class="radar-locator" aria-label="Estimated object position"><div class="radar-locator-head"><div><h3>Estimated object position</h3><p class="timestamp" style="margin:2px 0 0">Radial distance along the LD2410C sensing cone (Gates G0–G8, 0.00–6.75 m · sensor does not measure left/right angle)</p></div><strong class="radar-locator-readout">${statusSummary}</strong></div><svg class="radar-locator-svg" viewBox="0 0 680 212" role="img" aria-label="Radar object range map: ${escapeHtml(statusSummary)}"><title>${escapeHtml(statusSummary)}</title><line x1="${originX}" y1="${centerY}" x2="${endX}" y2="${centerY}" stroke="#d5dfd8" stroke-width="1" stroke-dasharray="2 3"/>${gateShapes}<g transform="translate(${originX},${centerY})"><rect x="-38" y="-16" width="38" height="32" rx="7" fill="#172e21"/><circle cx="0" cy="0" r="5" fill="#287c54" stroke="#ffffff" stroke-width="1.5"/><text x="-19" y="4" text-anchor="middle" fill="#ffffff" font-size="9" font-weight="600">RADAR</text></g><text x="${originX}" y="201" text-anchor="middle" class="locator-scale-tick">0m</text>${markers}</svg></section>`;
+}
+function renderRadarSummaryPill(entry, success, data) {
+  const state = success ? inferDerivedState(data) : 'UNKNOWN';
+  const confirmed = success ? (data.presence_confirmed ?? ['PRESENT_ACTIVE','PRESENT_STILL','DEPARTING_CANDIDATE'].includes(state)) : false;
+  const rangeCm = success ? (data.range_estimate_cm ?? data.detection_distance_cm ?? data.moving_distance_cm ?? data.stationary_distance_cm) : null;
+  const trend = success ? (data.range_trend || 'UNKNOWN') : 'UNKNOWN';
+  const trendArrow = {CLOSER:'↘ closer',FARTHER:'↗ farther',STABLE:'→ stable'}[trend] || '';
+  const tone = !success ? 'unavailable' : confirmed ? 'confirmed' : state === 'APPROACHING_CANDIDATE' ? 'candidate' : 'empty';
+  return `<div class="radar-summary-strip"><span class="radar-pill ${tone}">${escapeHtml(state)}</span><span class="radar-confirm-tag">${!success ? 'Stale / offline' : confirmed ? 'Confirmed presence' : state === 'APPROACHING_CANDIDATE' ? 'Debouncing candidate' : 'Idle / unoccupied'}</span>${rangeCm != null ? `<span class="radar-range-tag">~${number(rangeCm)} cm${trendArrow ? ` · ${escapeHtml(trendArrow)}` : ''}</span>` : ''}</div>`;
+}
+function renderRadarExpanded(entry, success, data) {
+  const state = success ? inferDerivedState(data) : 'UNKNOWN';
+  const confirmed = success ? (data.presence_confirmed ?? ['PRESENT_ACTIVE','PRESENT_STILL','DEPARTING_CANDIDATE'].includes(state)) : false;
+  const rangeCm = success ? (data.range_estimate_cm ?? data.detection_distance_cm ?? data.moving_distance_cm ?? data.stationary_distance_cm) : null;
+  const trend = success ? (data.range_trend || 'UNKNOWN') : 'UNKNOWN';
+  const activity = success ? (data.activity_level ?? (state === 'PRESENT_ACTIVE' ? Math.min(1, (data.moving_energy_score || 0) / 85) : 0)) : null;
+  const confidence = success ? (data.presence_confidence ?? (confirmed ? 0.8 : 0.05)) : null;
+  const reason = success ? (data.transition_reason || `Derived from latest ${data.presence || 'radar'} report.`) : (entry?.result?.error?.message || 'Sensor stream unavailable; never treated as absence.');
+  const win = data.window_summary || {};
+  const gates = Array.isArray(data.gate_profile) && data.gate_profile.length ? data.gate_profile : Array.from({length:9},(_,g)=>{
+    const minCm = g * 75, maxCm = (g + 1) * 75;
+    const mov = success && data.moving_distance_cm != null && Math.min(8, Math.floor(data.moving_distance_cm / 75)) === g ? (data.moving_energy_score || 0) : 0;
+    const stat = success && data.stationary_distance_cm != null && Math.min(8, Math.floor(data.stationary_distance_cm / 75)) === g ? (data.stationary_energy_score || 0) : 0;
+    const active = rangeCm != null && Math.min(8, Math.floor(rangeCm / 75)) === g;
+    return {gate:g,label:`G${g}`,range_m:`${(g*0.75).toFixed(2)}–${((g+1)*0.75).toFixed(2)} m`,min_cm:minCm,max_cm:maxCm,moving_energy:mov,stationary_energy:stat,active};
+  });
+  const actPct = activity == null ? 0 : Math.round(Math.max(0, Math.min(1, activity)) * 100);
+  const confPct = confidence == null ? 0 : Math.round(Math.max(0, Math.min(1, confidence)) * 100);
+  const estimatorHtml = `<section class="radar-section" aria-label="Derived presence and activity estimator"><div class="radar-banner"><div><h3>${escapeHtml(radarStateLabels[state] || state)} <small>(${escapeHtml(state)})</small></h3><p class="radar-reason">${escapeHtml(reason)}</p></div><span class="badge ${!success ? 'unavailable' : confirmed ? '' : 'empty'}">${!success ? 'Sensor unhealthy' : confirmed ? 'Confirmed (debounced)' : 'Unconfirmed'}</span></div><div class="radar-meters"><div class="radar-meter-card"><div class="radar-meter-head"><span>Activity level</span><strong>${activity == null ? '—' : number(activity)} <small>/ 1.0</small></strong></div><div class="radar-bar-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${actPct}"><div class="radar-bar-fill motion" style="width:${actPct}%"></div></div><small>Smoothed moving energy above baseline</small></div><div class="radar-meter-card"><div class="radar-meter-head"><span>Presence confidence heuristic</span><strong>${confidence == null ? '—' : number(confidence)} <small>/ 1.0</small></strong></div><div class="radar-bar-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${confPct}"><div class="radar-bar-fill stationary" style="width:${confPct}%"></div></div><small>Sliding-window consistency heuristic, not probability</small></div></div>` + facts([
+    ['Derived presence state',escapeHtml(state)],
+    ['Presence confirmed',!success ? 'Unknown' : (confirmed ? 'Yes (debounced)' : 'No')],
+    ['Smoothed range estimate',rangeCm == null ? '—' : `${number(rangeCm)} cm (${number(rangeCm / 100)} m)`],
+    ['Range trend candidate',escapeHtml(trend)],
+    ['Smoothed energy (move / still)',win.smoothed_moving_energy == null ? '—' : `${number(win.smoothed_moving_energy)} / ${number(win.smoothed_stationary_energy)} (floor ${number(win.baseline_stationary_energy)})`],
+    ['Sliding window (8 s)',win.frame_count == null ? '—' : `${number(win.frame_count)} frames · ${number(win.frame_rate_hz)} Hz · ${number(Math.round((win.credible_frame_ratio || 0) * 100))}% credible`]
+  ]) + `</section>`;
+  const gatesHtml = `<section class="radar-section" aria-label="Radial distance gates"><div class="radar-gates-header"><div><h3>Radial distance gates (Gates 0–8 · 0.75 m bands)</h3><p class="timestamp" style="margin-top:4px">${win.gate_source === 'engineering' ? 'Direct per-gate energy from LD2410C engineering mode (0x01).' : 'Radial gate energy profile mapped from the 8-second sliding window (0.75 m resolution).'}</p></div><div class="radar-legend"><span><i class="dot motion"></i>Moving energy</span><span><i class="dot stationary"></i>Stationary energy</span></div></div><div class="radar-gates-grid">${gates.map(g=>`<div class="radar-gate-row ${g.active ? 'active' : ''}"><div class="radar-gate-label"><strong>${escapeHtml(g.label)}</strong><small>${escapeHtml(g.range_m)}</small></div><div class="radar-gate-bars"><div class="radar-gate-bar-line"><span class="bar-tag">M</span><div class="radar-bar-track"><div class="radar-bar-fill motion" style="width:${Math.min(100, g.moving_energy || 0)}%"></div></div><span class="bar-val">${number(g.moving_energy ?? 0)}</span></div><div class="radar-gate-bar-line"><span class="bar-tag">S</span><div class="radar-bar-track"><div class="radar-bar-fill stationary" style="width:${Math.min(100, g.stationary_energy || 0)}%"></div></div><span class="bar-val">${number(g.stationary_energy ?? 0)}</span></div></div></div>`).join('')}</div></section>`;
+  const rawHtml = `<section class="radar-section" aria-label="Raw UART frame and hardware health"><h3>Latest raw LD2410C UART frame & health</h3>` + facts([
+    ['Moving distance',data.moving_distance_cm == null ? '—' : `${number(data.moving_distance_cm)} cm`],
+    ['Stationary distance',data.stationary_distance_cm == null ? '—' : `${number(data.stationary_distance_cm)} cm`],
+    ['Detection distance',data.detection_distance_cm == null ? '—' : `${number(data.detection_distance_cm)} cm`],
+    ['Moving energy score',number(data.moving_energy_score)],
+    ['Stationary energy score',number(data.stationary_energy_score)],
+    ['Serial connected',entry ? (entry.result.serial_connected ? 'Yes' : 'No') : '—'],
+    ['Frame age',entry?.result.age_seconds == null ? '—' : `${number(entry.result.age_seconds)} s`],
+    ['UART frames (valid / bad)',entry?.result.valid_frames == null ? '—' : `${number(entry.result.valid_frames)} / ${number(entry.result.malformed_frames ?? 0)}`],
+    ['Serial port & mode',escapeHtml(`${entry?.result.serial_mapping || entry?.result.serial_port || '/dev/serial0'} · ${data.reporting_mode || 'normal'}`)]
+  ]) + '<p class="timestamp">Energy is a sensor score from 0–100, not a percentage or probability. Frames older than two seconds are unavailable. The LD2410C measures radial distance and motion/stationary energy bands—not room X/Y coordinates, posture, or headcount.</p></section>';
+  return estimatorHtml + gatesHtml + rawHtml;
+}
 function historyPlot(source) {
   const metric = source === 'microphone' ? selectedAnimal : historyMetrics[source];
   const entries = (histories[source] || []).filter(entry=>source !== 'birdcast' || entry.result.region?.code === region);
   const states = {none:0,moving:1,stationary:2,both:3};
+  const derivedStates = {EMPTY:0,APPROACHING_CANDIDATE:1,DEPARTING_CANDIDATE:2,PRESENT_STILL:3,PRESENT_ACTIVE:4};
   const points = entries.map(entry=>{
-    const value = source === 'radar' && metric === 'presence' ? states[entry.result.presence] :
-      source === 'birdcast' ? entry.result.metrics?.[metric] : source === 'microphone' ? entry.result.animals?.find(animal=>animal.scientific_name===metric)?.score : entry.result[metric];
+    let value;
+    if (source === 'radar' && metric === 'presence') value = states[entry.result.presence];
+    else if (source === 'radar' && metric === 'presence_state') value = derivedStates[inferDerivedState(entry.result)];
+    else if (source === 'radar' && metric === 'range_estimate_cm') value = entry.result.range_estimate_cm ?? entry.result.detection_distance_cm ?? entry.result.moving_distance_cm ?? entry.result.stationary_distance_cm;
+    else if (source === 'birdcast') value = entry.result.metrics?.[metric];
+    else if (source === 'microphone') value = entry.result.animals?.find(animal=>animal.scientific_name===metric)?.score;
+    else value = entry.result[metric];
     return {entry,x:Date.parse(source === 'microphone' ? entry.result.timestamp : entry.read_at),y:entry.http_status === 200 && typeof value === 'number' && Number.isFinite(value) ? value : null};
   }).filter(point=>Number.isFinite(point.x));
   const valid = points.filter(point=>point.y !== null);
@@ -172,9 +305,11 @@ function historyPlot(source) {
   if (!valid.length) return `<p>No saved ${escapeHtml(label.toLowerCase())} readings in this time range.</p>`;
   const info = historyInfo[source];
   const first = info ? info.start*1000 : points[0].x, last = info ? info.end*1000 : points[points.length-1].x;
-  const categorical = source === 'radar' && metric === 'presence';
+  const categorical = source === 'radar' && (metric === 'presence' || metric === 'presence_state');
+  const catNames = metric === 'presence_state' ? ['EMPTY','APPROACHING','DEPARTING','STILL','ACTIVE'] : ['none','moving','stationary','both'];
+  const catMax = catNames.length - 1;
   const low = categorical ? 0 : Math.min(0,...valid.map(point=>point.y));
-  const high = categorical ? 3 : Math.max(low+1,...valid.map(point=>point.y));
+  const high = categorical ? catMax : Math.max(low+1,...valid.map(point=>point.y));
   const x = point=>50+(last===first ? 250 : (point.x-first)/(last-first)*500);
   const y = point=>170-(point.y-low)/(high-low)*140;
   let previous = null;
@@ -182,10 +317,10 @@ function historyPlot(source) {
     if (point.y === null) { previous = null; return ''; }
     const line = previous ? `<path d="M ${x(previous)} ${y(previous)} ${categorical ? `H ${x(point)} V ${y(point)}` : `L ${x(point)} ${y(point)}`}"/>` : '';
     previous = point;
-    const value = categorical ? point.entry.result.presence : point.y;
+    const value = categorical ? (metric === 'presence_state' ? inferDerivedState(point.entry.result) : point.entry.result.presence) : point.y;
     return `${line}<circle cx="${x(point)}" cy="${y(point)}" r="3" tabindex="0"><title>${escapeHtml(value)} · Read ${time(point.entry.read_at)} · Measured ${time(point.entry.result.timestamp || point.entry.result.retrieved_at)}</title></circle>`;
   }).join('');
-  const ticks = categorical ? ['none','moving','stationary','both'].map((state,index)=>`<text x="45" y="${170-index/3*140}" text-anchor="end">${state}</text>`).join('') : `<text x="45" y="32" text-anchor="end">${number(high)}</text><text x="45" y="172" text-anchor="end">${number(low)}</text>`;
+  const ticks = categorical ? catNames.map((state,index)=>`<text x="45" y="${170-index/catMax*140}" text-anchor="end">${state}</text>`).join('') : `<text x="45" y="32" text-anchor="end">${number(high)}</text><text x="45" y="172" text-anchor="end">${number(low)}</text>`;
   return `<svg class="history-chart" viewBox="0 0 600 210" role="img" aria-label="${escapeHtml(label)} over ${source === 'microphone' ? 'recording' : 'read'} time"><title>${escapeHtml(label)} over time</title><path class="chart-axis" d="M 50 25 V 175 H 550"/>${ticks}<g class="chart-values">${marks}</g><text x="50" y="198">${escapeHtml(new Date(first).toLocaleString())}</text><text x="550" y="198" text-anchor="end">${escapeHtml(new Date(last).toLocaleString())}</text></svg><p class="timestamp">${valid.length} plotted readings${info ? ` from ${info.total} saved entries` : ''} · ${time(new Date(first).toISOString())} – ${time(new Date(last).toISOString())}. ${info?.sampled ? 'Last reading in each time bucket shown (up to 1,000 points).' : ''} Unavailable values leave gaps. Hover or focus a point for its value and timestamps.${source === 'microphone' ? ' Model scores are unverified suggestions, not confidence percentages. An unlisted animal has no score, not zero.' : ''}</p>`;
 }
 function updateHistoryPlot(source) {

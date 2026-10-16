@@ -681,3 +681,267 @@ select {
         display:block
     }
 }
+
+/* LD2410C Radar Estimator & Gate Styles */
+.radar-summary-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+}
+.radar-pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    letter-spacing: 0.3px;
+}
+.radar-pill.confirmed {
+    background: var(--soft);
+    color: var(--green);
+}
+.radar-pill.candidate {
+    background: #fff4df;
+    color: var(--amber);
+}
+.radar-pill.empty {
+    background: #eef1ed;
+    color: var(--muted);
+}
+.radar-pill.unavailable {
+    background: #fff1de;
+    color: var(--amber);
+}
+.radar-confirm-tag, .radar-range-tag {
+    font-size: 12px;
+    color: var(--muted);
+}
+.radar-range-tag {
+    font-weight: 600;
+    color: var(--ink);
+}
+.radar-section {
+    margin-top: 26px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+}
+.radar-section h3 {
+    font-size: 15px;
+    margin: 0 0 6px;
+}
+.radar-section h3 small {
+    font-weight: 400;
+    color: var(--muted);
+    font-size: 12px;
+}
+.radar-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    background: var(--bg);
+    padding: 16px 18px;
+    border-radius: 12px;
+}
+.radar-reason {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+}
+.radar-meters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+}
+.radar-meter-card {
+    background: var(--bg);
+    padding: 14px 16px;
+    border-radius: 10px;
+}
+.radar-meter-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+.radar-meter-head strong {
+    font-size: 16px;
+}
+.radar-meter-card small {
+    display: block;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+}
+.radar-bar-track {
+    width: 100%;
+    height: 8px;
+    background: #e2e8e4;
+    border-radius: 999px;
+    overflow: hidden;
+}
+.radar-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.25s ease;
+}
+.radar-bar-fill.motion {
+    background: var(--green);
+}
+.radar-bar-fill.stationary {
+    background: #5b8a72;
+}
+.radar-gates-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.radar-legend {
+    display: flex;
+    gap: 14px;
+    font-size: 11px;
+    color: var(--muted);
+}
+.radar-legend span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.radar-legend .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.radar-legend .dot.motion {
+    background: var(--green);
+}
+.radar-legend .dot.stationary {
+    background: #5b8a72;
+}
+.radar-gates-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+}
+.radar-gate-row {
+    background: var(--bg);
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+}
+.radar-gate-row.active {
+    border-color: var(--green);
+    background: #f1f7f3;
+}
+.radar-gate-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+}
+.radar-gate-label strong {
+    font-size: 13px;
+}
+.radar-gate-label small {
+    font-size: 11px;
+    color: var(--muted);
+}
+.radar-gate-bars {
+    display: grid;
+    gap: 6px;
+}
+.radar-gate-bar-line {
+    display: grid;
+    grid-template-columns: 14px 1fr 28px;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+}
+.bar-tag {
+    color: var(--muted);
+    font-weight: 600;
+}
+.bar-val {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+}
+@media(max-width: 1150px) {
+    .radar-gates-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+@media(max-width: 700px) {
+    .radar-meters, .radar-gates-grid {
+        grid-template-columns: 1fr;
+    }
+    .radar-banner {
+        flex-direction: column;
+    }
+}
+
+.radar-locator {
+    margin: 14px 0 22px;
+    padding: 16px 18px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+}
+.radar-locator-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.radar-locator-head h3 {
+    font-size: 14px;
+    margin: 0;
+}
+.radar-locator-readout {
+    font-size: 13px;
+    color: var(--green);
+    background: var(--soft);
+    padding: 5px 10px;
+    border-radius: 999px;
+}
+.radar-locator-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+}
+.locator-gate-name {
+    font-size: 10px;
+    font-weight: 600;
+    fill: var(--ink);
+}
+.locator-scale-tick {
+    font-size: 9px;
+    fill: var(--muted);
+}
+.locator-sub-label {
+    font-size: 9px;
+    font-weight: 600;
+    fill: var(--ink);
+}
+.locator-callout-text {
+    font-size: 10px;
+    font-weight: 600;
+    fill: #ffffff;
+}
+.locator-empty-text {
+    font-size: 12px;
+    fill: var(--muted);
+    font-weight: 500;
+}

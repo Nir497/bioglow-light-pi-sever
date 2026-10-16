@@ -43,8 +43,13 @@ setTimeout(async()=>{
   try {
     check(!document.querySelector('[data-history-metric]'),'Overview must not show graphs');
     location.hash='#radar';await pause(100);
+    check(document.querySelector('.radar-locator .locator-target')?.getAttribute('data-estimated-range')==='120','Top radar object position graphic missing target at 120 cm');
+    check(document.querySelector('.radar-banner').textContent.includes('PRESENT_ACTIVE'),'Derived presence state missing on Radar page');
+    check(document.querySelectorAll('.radar-gate-row').length===9,'Radar page must render all 9 radial distance gates (G0-G8)');
     const metric=document.querySelector('[data-history-metric="radar"]');
-    metric.focus();metric.value='moving_distance_cm';metric.dispatchEvent(new Event('change',{bubbles:true}));
+    metric.focus();metric.value='presence_state';metric.dispatchEvent(new Event('change',{bubbles:true}));
+    check(document.querySelector('[data-chart="radar"] svg').getAttribute('aria-label').includes('Derived presence state'),'Derived presence state graph failed');
+    metric.value='moving_distance_cm';metric.dispatchEvent(new Event('change',{bubbles:true}));
     check(document.querySelector('[data-chart="radar"] svg').getAttribute('aria-label').includes('Moving distance'),'Metric selection must change plot');
     await pause(1100);
     check(document.querySelector('[data-history-metric="radar"]')===metric,'Live refresh replaced graph selector');
