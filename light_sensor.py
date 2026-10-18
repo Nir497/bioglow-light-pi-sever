@@ -30,10 +30,22 @@ class LightSensor:
                     self._sensor.light_gain = self._sensor.ALS_GAIN_1_8
                     self._sensor.light_integration_time = self._sensor.ALS_100MS
                     time.sleep(0.2)  # Allow the first conversion to complete.
-                lux = float(self._sensor.lux)
-                if not math.isfinite(lux) or lux < 0:
-                    raise ValueError('Sensor returned an invalid lux value')
-                return {'lux': lux, 'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'), 'sensor': 'VEML7700'}
+                ambient = self._sensor.light
+                white = self._sensor.white
+                if any(type(value) is not int or not 0 <= value <= 65535 for value in (ambient, white)):
+                    raise ValueError('Sensor returned invalid raw light counts')
+                gain = float(self._sensor.gain_value())
+                integration_ms = self._sensor.integration_time_value()
+                resolution = float(self._sensor.resolution())
+                # Match the driver's lux property using this exact ALS sample,
+                # rather than reading the ambient register a second time.
+                lux = ambient * resolution
+                if not math.isfinite(lux) or lux < 0 or not math.isfinite(resolution) or resolution <= 0:
+                    raise ValueError('Sensor returned an invalid lux value or resolution')
+                return {'lux': lux, 'ambient_counts': ambient, 'white_counts': white,
+                        'gain': gain, 'integration_time_ms': integration_ms,
+                        'resolution_lux_per_count': resolution,
+                        'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'), 'sensor': 'VEML7700'}
             except Exception as exc:
                 self._sensor = None
                 if self._bus is not None:
@@ -48,7 +60,7 @@ class LightSensor:
         try:
             reading = self.read()
             if health:
-                return 200, {'status': 'ok', 'service': 'BioGlow BirdCast', 'sensor': reading['sensor'], 'sensor_connected': True, 'timestamp': reading['timestamp'], 'lux': reading['lux']}
+                return 200, {**reading, 'status': 'ok', 'service': 'BioGlow BirdCast', 'sensor_connected': True}
             return 200, reading
         except SensorError as exc:
             return 503, {'status': 'error', 'sensor': 'VEML7700', 'sensor_connected': False, 'error': {'code': 'sensor_unavailable', 'message': str(exc)}}

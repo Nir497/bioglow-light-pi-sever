@@ -32,7 +32,7 @@ function updateAnimalSelector() {
 const historyMetrics = {radar:'presence',light:'lux',birdcast:'birds_in_flight'};
 const graphMetrics = {
   radar:[['presence','Presence state'],['presence_state','Derived presence state'],['range_estimate_cm','Smoothed range estimate (cm)'],['detection_distance_cm','Detection distance (cm)'],['moving_distance_cm','Moving distance (cm)'],['stationary_distance_cm','Stationary distance (cm)'],['moving_energy_score','Moving energy score'],['stationary_energy_score','Stationary energy score'],['activity_level','Activity level (0–1)'],['presence_confidence','Presence confidence heuristic (0–1)']],
-  light:[['lux','Luminance (lux)']],
+  light:[['lux','Luminance (lux)'],['ambient_counts','Ambient light (raw counts)'],['white_counts','White channel (raw counts)']],
   birdcast:[['birds_in_flight','Birds in flight'],['total_birds_crossed','Birds crossed'],['speed_mph','Speed (mph)'],['altitude_ft','Altitude (ft)']]
 };
 let radarLoadedAt = performance.now(), radarExpiryTimer;
@@ -143,6 +143,13 @@ function sourceCard(source, expanded = false) {
       try { const url = new URL(data.source.url); if (url.protocol === 'https:' && url.hostname === 'dashboard.birdcast.org') body += `<p class="timestamp"><a href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">Open BirdCast source ↗</a></p>`; } catch {}
     }
   }
+  if (expanded && source === 'light') body += facts([
+    ['Ambient light (raw)',data.ambient_counts == null ? '—' : `${number(data.ambient_counts)} counts`],
+    ['White channel (raw)',data.white_counts == null ? '—' : `${number(data.white_counts)} counts`],
+    ['Sensor gain',data.gain == null ? '—' : `${escapeHtml(data.gain)}×`],
+    ['Integration time',data.integration_time_ms == null ? '—' : `${number(data.integration_time_ms)} ms`],
+    ['Resolution',data.resolution_lux_per_count == null ? '—' : `${escapeHtml(data.resolution_lux_per_count)} lux/count`]
+  ]) + '<p class="timestamp">Lux is calculated from the ambient channel. Ambient and white channels report raw 16-bit counts (0–65,535). A maximum count may indicate saturation. Channel reads are sequential.</p>';
   if (expanded && source === 'light') body += '<p class="timestamp">The server collects light every ten seconds. If the sensor is disconnected, reconnect it and choose Read now.</p>';
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
   const topGraphic = expanded && source === 'radar' ? renderRadarLocatorGraphic(entry, success, data) : '';

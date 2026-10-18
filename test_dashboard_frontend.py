@@ -99,9 +99,9 @@ async function main(){
   assert.equal(requests.filter(r=>r.path==='/v1/latest').length,4,'Navigation cancels radar polling on other pages');
   await new Promise(resolve=>setImmediate(resolve));
   vm.runInContext(`histories={
-    light:[{read_at:'2026-10-11T12:00:00Z',http_status:200,result:{lux:0}},
+    light:[{read_at:'2026-10-11T12:00:00Z',http_status:200,result:{lux:0,ambient_counts:0,white_counts:2}},
       {read_at:'2026-10-11T12:00:01Z',http_status:503,result:{}},
-      {read_at:'2026-10-11T12:00:02Z',http_status:200,result:{lux:42}}],
+      {read_at:'2026-10-11T12:00:02Z',http_status:200,result:{lux:42,ambient_counts:30,white_counts:60}}],
     radar:[{read_at:'2026-10-11T12:00:00Z',http_status:200,result:{presence:'none'}},
       {read_at:'2026-10-11T12:00:01Z',http_status:200,result:{presence:'both'}}],
     birdcast:[{read_at:'2026-10-11T12:00:00Z',http_status:200,result:{region:{code:'US-CA'},metrics:{birds_in_flight:123}}},
@@ -110,6 +110,20 @@ async function main(){
   const lightGraph=vm.runInContext("historyGraph('light')",context);
   assert.match(lightGraph,/2 plotted readings/);
   assert.match(lightGraph,/Luminance \(lux\) over read time/);
+  vm.runInContext("sources.light={http_status:200,result:{lux:0,ambient_counts:0,white_counts:42,gain:0.125,integration_time_ms:100,resolution_lux_per_count:0.5376}}",context);
+  const lightReading=vm.runInContext("sourceCard('light',true)",context);
+  assert.match(lightReading,/Ambient light \(raw\)/);
+  assert.match(lightReading,/0 counts/);
+  assert.match(lightReading,/42 counts/);
+  assert.match(lightReading,/0.125×/);
+  assert.match(lightReading,/100 ms/);
+  assert.match(lightReading,/0.5376 lux\/count/);
+  vm.runInContext("historyMetrics.light='ambient_counts'",context);
+  assert.match(vm.runInContext("historyPlot('light')",context),/Ambient light \(raw counts\)/);
+  vm.runInContext("historyMetrics.light='white_counts'",context);
+  assert.match(vm.runInContext("historyPlot('light')",context),/White channel \(raw counts\)/);
+  vm.runInContext("historyMetrics.light='lux'",context);
+
   assert.equal((lightGraph.match(/<circle /g)||[]).length,2,'Zero lux is a valid reading');
   assert.ok(!lightGraph.includes('<path d="M '),'Failed reads break plotted lines');
   const presenceGraph=vm.runInContext("historyGraph('radar')",context);

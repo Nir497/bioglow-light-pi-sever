@@ -19,7 +19,12 @@ the host firewall and network; the hostname is not a verified reachability claim
 
 The separate **WLED light** page (`/#lighting`) provides SP803E WLED-ESP32 USB
 power, brightness, and color controls plus coverage of the 144-pixel strip.
-The **Lux sensor** page (`/#light`) retains sensor readings and history.
+The **Lux sensor** page (`/#light`) displays calculated lux, raw ambient-light
+counts, and raw white-channel counts, along with gain, integration time, and
+lux-per-count resolution. Its graph selector includes all three light readings.
+Raw channels are 16-bit counts, not separate lux measurements. All fields are
+saved with scheduled reads; older history entries lack the added channels and
+appear as gaps when those channels are selected.
 The controller plugs into this server's Raspberry Pi; no WLED Wi-Fi connection
 or second server is needed. Manual settings stay active until Auto is selected
 (or the server restarts). See [LIGHTING.md](LIGHTING.md) for USB port selection

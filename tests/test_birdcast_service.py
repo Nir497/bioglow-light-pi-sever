@@ -43,11 +43,14 @@ class ServiceTests(unittest.TestCase):
 
     def test_lux_drives_lighting_and_latest_is_passive(self):
         self.service.lighting = MagicMock()
-        self.service.light_sensor.response = MagicMock(return_value=(200, {"lux": 12}))
+        self.service.light_sensor.response = MagicMock(return_value=(200, {"lux": 12, "ambient_counts": 24, "white_counts": 36}))
         self.service.light_reading()
         self.service.lighting.update.assert_called_once_with(12)
         self.service.lighting.status.return_value = {"brightness": 173}
-        self.assertEqual(self.service.latest()["lighting"]["brightness"], 173)
+        latest = self.service.latest()
+        self.assertEqual(latest["lighting"]["brightness"], 173)
+        self.assertEqual(latest["sources"]["light"]["result"]["ambient_counts"], 24)
+        self.assertEqual(self.service.reading_history.recent("light")[-1]["result"]["white_counts"], 36)
         self.service.light_sensor.response.assert_called_once()
         self.service.light_sensor.response.return_value = (503, {"error": "unavailable"})
         self.service.light_reading()
