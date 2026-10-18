@@ -155,6 +155,24 @@ page or screenshot. Desktop/mobile visual checks, live microphone playback, and 
 access from another device remain to be verified on the host.
 
 
+### Automatic distance brightness
+
+Auto (the startup default, API `{"mode":"auto"}`) controls all 192 LEDs using the
+dashboard color. At 1 m or closer brightness is 15% (38/255); between 1 and 6 m
+it rises linearly, reaching 100% (255/255) at 6 m or farther. At 3.5 m it is
+147/255. Changes fade over 0.3 seconds. No target, stale/unavailable radar, or an
+unusable filtered range requests immediate off. Startup requests off until fresh
+radar arrives. Controller failures can prevent a command from reaching the strip.
+
+Auto and Distance test share the half-second radar loop and filtered range below.
+The lighting page refreshes every half second and shows sampled distance, target
+and acknowledged brightness, and separate sensor/controller errors. Lux continues
+to be collected, displayed, and logged without controlling brightness.
+Color changes preserve Auto; manual brightness is disabled in Auto. On restores
+saved manual brightness. Shutdown requests off for both radar-controlled modes.
+USB acknowledgments verify full-strip coverage, color, and brightness, clear
+competing segments, and preserve controller power limits.
+
 ### Distance test lighting mode
 
 Select **WLED light → Distance test** to activate testing and open its dedicated
@@ -168,8 +186,7 @@ even with the browser closed; sensor history keeps its normal 10-second cadence.
 LED 1 lights at 1 m or closer; LED 192 lights at 6 m or farther.
 Between 1–6 m, distance maps linearly onto the strip, constrained to LEDs 2–191
 so rounding cannot light an endpoint before its threshold (API indices 0–191). The dot stays amber (`#ffa028`) at 25% brightness
-(64/255). This development mode tests position; distance-based brightness is
-not enabled yet.
+(64/255). This development mode tests position independently of Auto brightness.
 
 The LED and radar map use the same `range_estimate_cm` and the exact same sampled
 frame while testing. Raw moving/stationary distances remain visible as diagnostics;
@@ -198,7 +215,7 @@ command from reaching the strip.
 
 On, Off, and Auto exit the test. On/Auto restore full-strip lighting; appearance
 controls retain their normal settings and are disabled during testing. Test mode
-is not restored after restart. Shutdown attempts to turn the test light off.
+is not restored after restart. Shutdown attempts to turn radar-controlled lights off.
 
 `POST /v1/lighting` accepts `{"mode":"distance_test"}`. Lighting status includes
 `distance_cm`, zero-based `led_index`, `sample_interval_seconds`, `test_state`
@@ -206,9 +223,11 @@ is not restored after restart. Shutdown attempts to turn the test light off.
 `test_color`, `distance_source`, `radar_timestamp`, `confirmed_led_index`,
 `confirmed_distance_cm`, `confirmed_radar_timestamp`, and an optional `sensor_error`
 while this mode is active. `/v1/latest` pairs the lighting target with its sampled
-radar entry; it does not read a second, newer frame during distance testing.
+radar entry; it does not read a second, newer frame during Auto or distance testing.
 
 For hardware validation, enable the mode, walk from under 1 m toward 6 m or farther, stand
 still, then leave. Confirm exactly one LED moves along the strip, departure turns
 it off after the radar's delay, and On restores the entire strip. Automated tests
 use synthetic radar readings and mocked controller acknowledgments.
+
+For Auto hardware validation, approach, move away, stand still, and leave the detection area. Verify whole-strip brightness, selected color, and off after the radar absence delay.

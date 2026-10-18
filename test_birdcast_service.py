@@ -61,7 +61,28 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.service.reading_history.recent("radar"), [])
         self.service.lighting.stop()
 
-    def test_lux_drives_lighting_and_latest_is_passive(self):
+    def test_auto_uses_sampled_radar_and_color_handler_preserves_mode(self):
+        light = self.service.lighting
+        light.transport = MagicMock()
+        light._background = False
+        light.set_mode("auto")
+        light.update_distance(200, {"fresh": True, "presence": "stationary", "range_estimate_cm": 350})
+        self.service.presence_sensor.response = MagicMock()
+        latest = self.service.latest()
+        self.assertEqual(latest["lighting"]["target_brightness"], 147)
+        self.assertEqual(latest["sources"]["radar"]["result"]["range_estimate_cm"],
+                         latest["lighting"]["distance_cm"])
+        self.service.presence_sensor.response.assert_not_called()
+        handler = object.__new__(make_handler(self.service))
+        handler.path = "/v1/lighting"
+        handler._send = MagicMock()
+        handler._body = MagicMock(return_value={"color": "#112233"})
+        handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[1]["lighting"]["mode"], "auto")
+        self.assertEqual(light.status()["brightness"], 147)
+        light.stop()
+
+    def test_lux_collection_and_latest_are_passive(self):
         self.service.lighting = MagicMock()
         self.service.light_sensor.response = MagicMock(return_value=(200, {"lux": 12, "ambient_counts": 24, "white_counts": 36}))
         self.service.light_reading()

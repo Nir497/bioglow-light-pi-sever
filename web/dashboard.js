@@ -170,6 +170,7 @@ function lightingDevice() {
 }
 function lightingSummary() {
   const base = `${lighting.mode || 'auto'} · ${lighting.status || 'waiting'}`;
+  if (lighting.mode === 'auto') return `${base} · Distance ${lighting.distance_cm == null ? '—' : lighting.distance_cm + ' cm'} · Target ${lighting.target_brightness ?? '—'}/255 · Acknowledged ${lighting.brightness ?? '—'}/255`;
   if (lighting.mode !== 'distance_test') return base;
   const unavailable = currentEntry('radar')?.http_status === 503;
   const detail = unavailable ? 'Radar unavailable' : lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · Target LED ${lighting.led_index + 1} / 192`;
@@ -197,14 +198,14 @@ function lightingControls() {
     <form data-lighting-settings>
       <fieldset data-lighting-appearance ${lighting.mode === 'distance_test' ? 'disabled' : ''}>
       <label for="wled-brightness">Brightness <output id="wled-brightness-value" for="wled-brightness">${Math.round(brightness / 255 * 100)}%</output></label>
-      <input id="wled-brightness" name="brightness" type="range" min="1" max="255" value="${brightness}" aria-describedby="wled-manual-help">
+      <input id="wled-brightness" name="brightness" ${lighting.mode === 'auto' ? 'disabled' : ''} type="range" min="1" max="255" value="${brightness}" aria-describedby="wled-manual-help">
       <label for="wled-color">Color</label>
       <input id="wled-color" name="color" type="color" value="${color}">
       <button class="button secondary" type="submit">Apply color &amp; brightness</button>
       </fieldset>
     </form>
     <p class="timestamp">Distance test: LED 1 at 1 m or closer; LED 192 at 6 m or farther. Between 1–6 m, the dot moves along LEDs 2–191 at 25% amber. No target turns lights off; the radar’s own absence delay still applies. Stale readings turn lights off and show an error.</p>
-    <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Select Auto to let lux readings control brightness again.</p>
+    <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Auto uses distance for all 192 LEDs: 15% at 1 m or closer, rising to 100% at 6 m. No target or unavailable radar turns lights off. Color changes preserve Auto.</p>
     <p class="timestamp">Commands go from this server to the USB controller. Status shows whether WLED acknowledged the command. At 100%, both master and segment brightness are 255/255. WLED’s configured power limits and global brightness factor can still reduce physical output.</p>
   </section>`;
 }
@@ -217,6 +218,8 @@ function syncLightingControls() {
   if (summary) summary.textContent = lightingSummary();
   const appearance = content.querySelector('[data-lighting-appearance]');
   if (appearance) appearance.disabled = lighting.mode === 'distance_test';
+  const slider = content.querySelector('[name="brightness"]');
+  if (slider) slider.disabled = lighting.mode === 'auto';
   const form = content.querySelector('[data-lighting-settings]');
   if (!form || form.dataset.dirty === 'true' || form.contains(document.activeElement)) return;
   const brightness = form.querySelector('[name="brightness"]');
@@ -626,7 +629,7 @@ function scheduleCollectionPoll() {
       }
     } catch(error) { if(generation===collectionGeneration)notice(error.message,true); }
     if(generation===collectionGeneration)scheduleCollectionPoll();
-  },view()==='lighting' ? 1000 : 10000);
+  },view()==='lighting' ? 500 : 10000);
 }
 function render() {
   const current = view();
@@ -701,6 +704,7 @@ async function setLightingMode(mode, settings = {}) {
     syncLightingControls();
     pending.delete('lighting');
     buttons.forEach(button=>button.disabled=false);
+    syncLightingControls();
   }
 }
 content.addEventListener('input', event=>{
@@ -713,7 +717,7 @@ content.addEventListener('submit', event=>{
   const form = event.target.closest('[data-lighting-settings]');
   if (!form) return;
   event.preventDefault();
-  setLightingMode(null, {brightness:Number(form.querySelector('[name="brightness"]').value),color:form.querySelector('[name="color"]').value});
+  setLightingMode(null, {...(lighting.mode === 'auto' ? {} : {brightness:Number(form.querySelector('[name="brightness"]').value)}),color:form.querySelector('[name="color"]').value});
 });
 content.addEventListener('click',event=>{
   const maximum = event.target.closest('[data-lighting-max]');
