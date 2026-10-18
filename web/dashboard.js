@@ -143,12 +143,42 @@ function sourceCard(source, expanded = false) {
       try { const url = new URL(data.source.url); if (url.protocol === 'https:' && url.hostname === 'dashboard.birdcast.org') body += `<p class="timestamp"><a href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">Open BirdCast source ↗</a></p>`; } catch {}
     }
   }
-  if (expanded && source === 'light') body += facts([['Fixture',escapeHtml(`BioGlow · ${lighting.hostname || 'bioglow.local'}`)],['Control mode',escapeHtml(lighting.mode || 'auto')],['Lighting status',escapeHtml(lighting.status || 'waiting')],['Commanded brightness',lighting.brightness == null ? '—' : `${number(lighting.brightness)} / 255`],['Target brightness',lighting.target_brightness == null ? '—' : `${number(lighting.target_brightness)} / 255`],['Smoothed luminance',lighting.smoothed_lux == null ? '—' : `${number(lighting.smoothed_lux)} lux`]]) + '<p class="timestamp">Automatic: on below 30 lux, off above 300 lux. Between thresholds, keep the current state. Readings are averaged over 30 seconds; brightness fades over 3 seconds.</p>' + (lighting.error ? `<p class="error-message">${escapeHtml(lighting.error)}</p>` : '');
+  if (expanded && source === 'light') body += facts([['Fixture',escapeHtml(lighting.connection === 'usb' ? 'WLED · USB' : `BioGlow · ${lighting.hostname || 'bioglow.local'}`)],['Control mode',escapeHtml(lighting.mode || 'auto')],['Lighting status',escapeHtml(lighting.status || 'waiting')],['Commanded brightness',lighting.brightness == null ? '—' : `${number(lighting.brightness)} / 255`],['Target brightness',lighting.target_brightness == null ? '—' : `${number(lighting.target_brightness)} / 255`],['Smoothed luminance',lighting.smoothed_lux == null ? '—' : `${number(lighting.smoothed_lux)} lux`]]) + '<p class="timestamp">Automatic: on below 30 lux, off above 300 lux. Between thresholds, keep the current state. Readings are averaged over 30 seconds; brightness fades over 3 seconds.</p>' + (lighting.error ? `<p class="error-message">${escapeHtml(lighting.error)}</p>` : '');
   if (expanded && source === 'light') body += '<p class="timestamp">The server collects light every ten seconds. If the sensor is disconnected, reconnect it and choose Read now.</p>';
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
   const topGraphic = expanded && source === 'radar' ? renderRadarLocatorGraphic(entry, success, data) : '';
   const control = source === 'birdcast' ? action('birdcast','Fetch BirdCast') : action(source,'Read now');
-  return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${topGraphic}${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded && source === 'light' ? '<div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button></div><p class="timestamp">On tests full brightness. Manual On or Off stays active until you select Auto or restart the server.</p>' : ''}${expanded ? historyGraph(source) : ''}</article>`;
+  return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${topGraphic}${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded && source === 'light' ? lightingControls() : ''}${expanded ? historyGraph(source) : ''}</article>`;
+}
+function lightingControls() {
+  const brightness = lighting.manual_brightness ?? 255;
+  const color = /^#[0-9a-f]{6}$/i.test(lighting.color || '') ? lighting.color : '#ffa028';
+  return `<section class="lighting-controls" aria-label="WLED lighting controls">
+    <h3>WLED controller · USB</h3>
+    <p class="timestamp" data-lighting-summary>${escapeHtml(lighting.mode || 'auto')} · ${escapeHtml(lighting.status || 'waiting')}</p>
+    <div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button></div>
+    <form data-lighting-settings>
+      <label for="wled-brightness">Brightness <output id="wled-brightness-value" for="wled-brightness">${Math.round(brightness / 255 * 100)}%</output></label>
+      <input id="wled-brightness" name="brightness" type="range" min="1" max="255" value="${brightness}" aria-describedby="wled-manual-help">
+      <label for="wled-color">Color</label>
+      <input id="wled-color" name="color" type="color" value="${color}">
+      <button class="button secondary" type="submit">Apply color &amp; brightness</button>
+    </form>
+    <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Select Auto to let lux readings control brightness again.</p>
+    <p class="timestamp">Commands go from this server to the USB controller. Status shows whether WLED acknowledged the command.</p>
+  </section>`;
+}
+function syncLightingControls() {
+  const summary = content.querySelector('[data-lighting-summary]');
+  if (summary) summary.textContent = `${lighting.mode || 'auto'} · ${lighting.status || 'waiting'}`;
+  const form = content.querySelector('[data-lighting-settings]');
+  if (!form || form.dataset.dirty === 'true' || form.contains(document.activeElement)) return;
+  const brightness = form.querySelector('[name="brightness"]');
+  const color = form.querySelector('[name="color"]');
+  if (brightness) brightness.value = lighting.manual_brightness ?? 255;
+  if (color && lighting.color) color.value = lighting.color;
+  const output = form.querySelector('output');
+  if (output) output.textContent = `${Math.round((lighting.manual_brightness ?? 255) / 255 * 100)}%`;
 }
 function historyGraph(source) {
   const options = source === 'microphone' ? (historyInfo.microphone?.animals || []).map(animal=>[animal,animalLabel(animal)]) : graphMetrics[source];
@@ -526,6 +556,7 @@ function scheduleCollectionPoll() {
       if (generation!==collectionGeneration) return;
       collection = latest.collection || collection;
       lighting = latest.lighting || {};
+      syncLightingControls();
       sources.light = latest.sources.light;
       const reading = content.querySelector('[data-reading="light"]');
       if (reading && sources.light) {
@@ -588,15 +619,18 @@ async function run(source) {
     notice(error.message,true);
   } finally { pending.delete(source); render(); }
 }
-async function setLightingMode(mode) {
+async function setLightingMode(mode, settings = {}) {
   if (pending.has('lighting')) return;
   pending.add('lighting');
-  const buttons = content.querySelectorAll('[data-lighting-mode]');
+  const buttons = content.querySelectorAll('[data-lighting-mode], [data-lighting-settings] button, [data-lighting-settings] input');
   buttons.forEach(button=>button.disabled=true);
   try {
-    const data = await api('/v1/lighting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
+    const data = await api('/v1/lighting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mode ? {...settings,mode} : settings)});
     lighting = data.lighting;
-    notice(mode === 'auto' ? 'Automatic lighting restored.' : `Manual ${mode} selected.`);
+    notice('Lighting settings saved.');
+    const form = content.querySelector('[data-lighting-settings]');
+    if (form && (settings.color || settings.brightness)) form.dataset.dirty = 'false';
+    syncLightingControls();
   } catch(error) { notice(error.message,true); }
   finally {
     await loadCache().catch(()=>{});
@@ -606,10 +640,23 @@ async function setLightingMode(mode) {
       wrapper.innerHTML = sourceCard('light',true);
       reading.replaceWith(wrapper.querySelector('[data-reading="light"]'));
     }
+    syncLightingControls();
     pending.delete('lighting');
     buttons.forEach(button=>button.disabled=false);
   }
 }
+content.addEventListener('input', event=>{
+  const form = event.target.closest('[data-lighting-settings]');
+  if (!form) return;
+  form.dataset.dirty = 'true';
+  if (event.target.name === 'brightness') form.querySelector('output').textContent = `${Math.round(Number(event.target.value) / 255 * 100)}%`;
+});
+content.addEventListener('submit', event=>{
+  const form = event.target.closest('[data-lighting-settings]');
+  if (!form) return;
+  event.preventDefault();
+  setLightingMode(null, {brightness:Number(form.querySelector('[name="brightness"]').value),color:form.querySelector('[name="color"]').value});
+});
 content.addEventListener('click',event=>{
   const lightingButton = event.target.closest('[data-lighting-mode]');
   if (lightingButton) { setLightingMode(lightingButton.dataset.lightingMode); return; }

@@ -26,7 +26,7 @@ function element() {
     classList:{toggle(name,on){if(on)classes.add(name);else classes.delete(name);return on;},contains(name){return classes.has(name);},remove(name){classes.delete(name);}},
     addEventListener(name,fn){this.listeners ??= {};this.listeners[name]=fn;},
     setAttribute(){},removeAttribute(){},focus(){},
-    querySelector(selector){queried.push(selector);return {html:this.innerHTML,replaceWith(node){replacement=node.html;}};},
+    querySelector(selector){queried.push(selector);return {html:this.innerHTML,querySelector:()=>null,replaceWith(node){replacement=node.html;}};},
     get firstElementChild(){return {html:this.innerHTML};}};
 }
 const document = {
@@ -185,6 +185,42 @@ async function main(){
   await pendingPoll.fn();
   assert.equal(requests.length,countBeforeNavigation,'Navigation cancels polling for hidden recordings');
   assert.ok(cancelledTimers.has(timers.indexOf(pendingPoll)+1));
+  const brightnessInput={value:'80'}, colorInput={value:'#112233'}, output={textContent:''};
+  const form={dataset:{dirty:'true'},contains:()=>false,querySelector:selector=>selector==='[name="brightness"]' ? brightnessInput : selector==='[name="color"]' ? colorInput : output};
+  const summary={textContent:''};
+  page.querySelector=selector=>selector==='[data-lighting-settings]' ? form : selector==='[data-lighting-summary]' ? summary : null;
+  page.querySelectorAll=()=>[];
+  vm.runInContext("lighting={connection:'usb',mode:'on',status:'ok',manual_brightness:120,color:'#abcdef'}",context);
+  vm.runInContext('syncLightingControls()',context);
+  assert.equal(brightnessInput.value,'80','Polling preserves unapplied edits');
+  form.dataset.dirty='false';
+  form.contains=()=>true;
+  vm.runInContext('syncLightingControls()',context);
+  assert.equal(brightnessInput.value,'80','Polling preserves focused controls');
+  form.contains=()=>false;
+  vm.runInContext('syncLightingControls()',context);
+  assert.equal(brightnessInput.value,120);
+  assert.equal(colorInput.value,'#abcdef');
+  assert.match(vm.runInContext('lightingControls()',context),/type="color"/);
+  assert.match(vm.runInContext('lightingControls()',context),/type="range"/);
+  assert.match(vm.runInContext('lightingControls()',context),/WLED controller · USB/);
+  const originalFetch=context.fetch;
+  context.fetch=async(path,options)=>{
+    if(path==='/v1/lighting') {
+      requests.push({path,options});
+      data.lighting={connection:'usb',mode:'on',status:'pending',manual_brightness:80,color:'#112233'};
+      return {ok:true,json:async()=>({lighting:data.lighting})};
+    }
+    return originalFetch(path,options);
+  };
+  brightnessInput.value='80';colorInput.value='#112233';
+  let prevented=false;
+  page.listeners.submit({preventDefault(){prevented=true;},target:{closest:()=>form}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(prevented);
+  assert.deepEqual(JSON.parse(requests.findLast(r=>r.path==='/v1/lighting').options.body),{brightness:80,color:'#112233'});
+  assert.equal(vm.runInContext('lighting.mode',context),'on');
+  assert.equal(form.dataset.dirty,'false');
   delayLatest=2500;
   await vm.runInContext('loadCache()',context);
   assert.equal(vm.runInContext("currentEntry('radar').http_status",context),503,'Network delay must count toward radar freshness');

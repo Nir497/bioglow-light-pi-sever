@@ -64,6 +64,38 @@ class LightingTests(unittest.TestCase):
             self.assertIn('Cannot resolve', light._request(0))
             self.opener.assert_not_called()
 
+    def test_manual_color_brightness_survive_sampling_and_power_cycle(self):
+        usb = MagicMock()
+        light = LightingControl(transport=usb)
+        state = light.configure(brightness=80, color='#00FF44')
+        self.assertEqual(state['mode'], 'on')
+        self.assertEqual(state['brightness'], 80)
+        params = usb.send.call_args.args[0]
+        self.assertEqual(params['seg'][0]['col'], [[0, 255, 68, 0]])
+        light.update(600)
+        self.assertEqual(light.status()['brightness'], 80)
+        light.update(None)
+        self.assertEqual(light.status()['brightness'], 80)
+        light.set_mode('off')
+        light.configure(color='#001122', brightness=42)
+        self.assertFalse(light.status()['on'])
+        light.set_mode('on')
+        self.assertEqual(light.status()['brightness'], 42)
+        light.set_mode('auto')
+        self.assertEqual(light.status()['mode'], 'auto')
+        light.update(600)
+        self.assertEqual(light.status()['brightness'], 0)
+
+    def test_invalid_manual_settings_are_atomic(self):
+        for settings in ({'brightness':True}, {'brightness':0}, {'brightness':256},
+                         {'brightness':2.5}, {'color':'red'}, {'color':'#aabbccdd'},
+                         {'brightness':80, 'color':'invalid'}, {'mode':False}):
+            before = self.light.status()
+            with self.assertRaises(ValueError):
+                self.light.configure(**settings)
+            self.assertEqual(self.light.status(), before)
+        self.opener.assert_not_called()
+
     def test_hysteresis_and_brightness(self):
         self.assertEqual(self.read(0)['brightness'], 255)
         self.assertEqual(self.read(100)['brightness'], 50)

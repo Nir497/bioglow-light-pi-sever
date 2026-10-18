@@ -24,6 +24,7 @@ from animal_names import AnimalNames
 from collection_schedule import CollectionSchedule
 from light_sensor import LightSensor
 from lighting_control import LightingControl
+from wled_serial import WLEDSerial
 from presence import PresenceSensor
 from reading_history import ReadingHistory
 from recording_store import RecordingError, RecordingNotFound, RecordingStore
@@ -52,7 +53,7 @@ class Service:
                  animal_analysis: bool = True):
         self.root = root.resolve()
         self.light_sensor = LightSensor()
-        self.lighting = LightingControl(background=True)
+        self.lighting = LightingControl(background=True, transport=WLEDSerial())
         self.presence_sensor = PresenceSensor()
         self.reading_history = ReadingHistory(self.root)
         self.animal_names = AnimalNames(self.root)
@@ -320,9 +321,12 @@ def make_handler(service: Service):
             if self.path == "/v1/lighting":
                 try:
                     body = self._body()
-                    if set(body) != {"mode"} or not isinstance(body["mode"], str):
-                        raise ValueError('Request must contain mode: on, off, or auto.')
-                    lighting = service.lighting.set_mode(body["mode"])
+                    if not body or set(body) - {"mode", "brightness", "color"} or any(value is None for value in body.values()):
+                        raise ValueError('Provide mode (on/off/auto), brightness (1–255), or color (#RRGGBB).')
+                    if set(body) == {"mode"}:
+                        lighting = service.lighting.set_mode(body["mode"])
+                    else:
+                        lighting = service.lighting.configure(**body)
                     self._send(503 if lighting["status"] == "controller_unavailable" else 200,
                                {"status": "ok" if lighting["status"] != "controller_unavailable" else "error",
                                 "lighting": lighting})

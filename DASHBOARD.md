@@ -17,6 +17,12 @@ it can view readings, download audio, fetch BirdCast, and record microphone audi
 No internet hosting or router forwarding is required. LAN reachability depends on
 the host firewall and network; the hostname is not a verified reachability claim.
 
+The Light page also provides WLED USB power, brightness, and color controls.
+The controller plugs into this server's Raspberry Pi; no WLED Wi-Fi connection
+or second server is needed. Manual settings stay active until Auto is selected
+(or the server restarts). See [LIGHTING.md](LIGHTING.md) for USB port selection
+and API details.
+
 The sidebar provides Overview, Radar, Light, BirdCast, and Recordings. Opening a
 page or refreshing the view loads saved results and the recording library, without
 starting a microphone capture, light measurement, or BirdCast fetch. Choose

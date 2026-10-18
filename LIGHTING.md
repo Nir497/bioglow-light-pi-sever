@@ -1,50 +1,71 @@
-# Automatic BioGlow lighting
+# WLED lighting on the existing dashboard
 
-The existing `birdcast_service.py` owns automatic lighting independently of
-dashboard clients. The Light page shows luminance and lighting together.
-Run the existing server without starting `bioglow_light/server.py` separately.
+`birdcast_service.py` serves the dashboard and controls the ESP WLED controller
+plugged into the Raspberry Pi by USB. Keep the existing server on port 8000;
+no Wi-Fi connection, second server, or separate bridge is required.
 
-On the Light page, **On** selects full brightness (255), **Off** switches
-the fixture off, and **Auto** restores lux control immediately using the
-latest smoothed reading. Manual selection is shared by all clients and
-survives scheduled reads, including sensor failures. Restarting the server
-returns to Auto. `POST /v1/lighting` accepts `{"mode":"on"}`, `off`, or `auto`.
+Open **Light** for the controls:
 
-Every sensor read contributes to a 30-second rolling average. Below 30 lux
-the fixture turns on; above 300 lux it turns off. Between those thresholds
-it retains its on/off state. While on, brightness increases linearly from
-50 at 30 lux to 255 at zero lux, with a three-second fade. Startup in the
-middle band defaults to off. Unavailable lux retains the last output.
-Place the sensor away from the fixture's direct light to avoid feedback.
+- **On** restores the chosen manual brightness; **Off** switches off.
+- Choose a color and brightness, then **Apply color & brightness**. Applying
+  settings selects manual control, retaining Off if already selected.
+- **Auto** restores lux control using the latest smoothed measurement.
 
-The implementation uses the base project's warm color recipe and ESP32 LAN
-control architecture. The live controller at `bioglow.local` runs WLED
-0.14.4 and reports 100 RGB pixels, rather than the archived project's
-ESPHome 144-pixel RGBW setup. No firmware replacement or LED-count change
-is needed. `lighting_control.py` uses WLED's `/json/state` API and keeps the
-configured segment geometry. Segment 0 uses solid warm RGB (255,160,40),
-with a white channel value for RGBW configurations. Brightness is 0-255.
+Manual settings survive scheduled sensor reads, including lux sensor failures.
+All dashboard clients share the server's settings. Restarting the server returns
+to Auto with full manual brightness and warm orange as the initial color.
+Polling preserves unapplied edits and focused controls.
 
-Commands suppress outgoing sync notifications and override incoming live
-streams until the fixture reboots. Each valid reading reasserts the command,
-including after a restart. Failed requests are shown on the dashboard and
-retried on the next valid read. Displayed brightness is the last acknowledged
-command, not physical feedback. `/v1/latest` exposes lighting state without
-reading lux or sending fixture commands.
+## USB connection
 
-The fixture display name is **BioGlow** and its mDNS hostname is **bioglow**,
-available at `http://bioglow.local/`. These are fixture settings; the Pi keeps
-its existing hostname and dashboard port 8000.
+The server uses the existing pinned `pyserial` dependency at 115200 baud and
+WLED's JSON-over-serial interface. With exactly one USB serial device visible,
+it selects that port and requests WLED identification before sending commands.
+It does not select the radar's GPIO UART. If several USB serial devices exist,
+set `BIOGLOW_WLED_PORT` to the WLED device's stable `/dev/serial/by-id/...` path
+in the server environment, then restart the existing service.
 
-Protocol reference: https://kno.wled.ge/interfaces/json-api/
+The Pi must expose the USB controller's serial port and the server user must
+have access to it. Use a data-capable USB cable. The connection is held open with
+exclusive access and reset/boot control lines deasserted. Unplugging or failed
+acknowledgements closes the connection; subsequent commands or scheduled reads
+retry discovery. No firmware, GPIO, LED count, or segment geometry is changed.
+WLED must have serial JSON support available on its configured serial pins.
 
-Controller commands run in one background worker with a single pending target;
-slow or unreachable lighting never blocks lux sampling or `/v1/latest`.
-The API reports `pending` until the controller acknowledges a command.
-LAN requests bypass HTTP proxies. Resolution caches successful IPv4 addresses,
-invalidates them on failure, and queries the system Avahi service through the installed `busctl` client if
-normal DNS cannot resolve the mDNS name. The optional `avahi-utils` package
-is not required. Avahi must be running, or set `BIOGLOW_LIGHT_HOST` to the fixture's reserved LAN IP in the
-server environment. Restart the dashboard service after changing its environment.
-Controller failures are labeled separately and do not invalidate lux readings.
-History graph queries parse each log once per request.
+Commands set solid RGB on segment 0, with white channel zero so the selected
+RGB color is preserved. They suppress sync notifications and override incoming
+live streams. WLED's response must acknowledge power, brightness when on, and
+color before the server reports success. This is controller feedback, not
+measurement of physical light output.
+
+## API and automatic behavior
+
+`POST /v1/lighting` accepts one or more fields:
+
+```json
+{"mode":"on","brightness":128,"color":"#2288ff"}
+```
+
+`mode` is `on`, `off`, or `auto`; `brightness` is an integer 1–255; `color`
+is `#RRGGBB`. Invalid requests are rejected before settings change. Use Off
+for zero output; On remembers the manual brightness. Color/brightness without
+a mode select manual control, preserving an existing Off state.
+
+Commands run in one background worker with a single pending command. Slow or
+unreachable lighting never blocks lux sampling or `/v1/latest`. The API reports
+`pending` until WLED acknowledges, `ok` on success, and `controller_unavailable`
+on failure. `/v1/latest` exposes cached lighting state without USB traffic.
+
+Every lux read contributes to a 30-second rolling average. Below 30 lux the
+fixture turns on; above 300 lux it turns off. Between those thresholds it
+retains its on/off state. While on, automatic brightness increases from 50 at
+30 lux to 255 at zero lux, with a three-second fade. Startup in the middle band
+defaults to off. Unavailable lux retains the last output in Auto. Place the lux
+sensor away from the fixture's direct light to avoid feedback.
+
+`LightingControl` retains its optional HTTP transport for existing integrations;
+the dashboard server now explicitly selects USB and never resolves
+`bioglow.local` to control this device.
+
+Protocol references: [WLED serial](https://kno.wled.ge/interfaces/serial/) and
+[WLED JSON API](https://kno.wled.ge/interfaces/json-api/).

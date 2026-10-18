@@ -22,6 +22,25 @@ class ServiceTests(unittest.TestCase):
         self.root = Path(directory.name)
         self.service = Service(self.root, self.root / "config.json", runner=lambda region: self.snapshot)
 
+    def test_usb_lighting_settings_handler_without_sockets(self):
+        handler = object.__new__(make_handler(self.service))
+        handler.path = '/v1/lighting'
+        handler._send = MagicMock()
+        self.service.lighting.transport = MagicMock()
+        self.service.lighting._background = False
+        handler._body = MagicMock(return_value={'brightness': 80, 'color': '#112233'})
+        handler.do_POST()
+        status, payload = handler._send.call_args.args
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['lighting']['mode'], 'on')
+        params = self.service.lighting.transport.send.call_args.args[0]
+        self.assertEqual(params['bri'], 80)
+        self.assertEqual(params['seg'][0]['col'], [[17, 34, 51, 0]])
+        for invalid in ({}, {'color': None}, {'brightness': True}, {'brightness': 256}, {'unknown': 1}):
+            handler._body.return_value = invalid
+            handler.do_POST()
+            self.assertEqual(handler._send.call_args.args[0], 400)
+
     def test_lux_drives_lighting_and_latest_is_passive(self):
         self.service.lighting = MagicMock()
         self.service.light_sensor.response = MagicMock(return_value=(200, {"lux": 12}))

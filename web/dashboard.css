@@ -945,3 +945,10 @@ select {
     fill: var(--muted);
     font-weight: 500;
 }
+
+.lighting-controls { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line, #ddd); }
+.lighting-controls form { display: grid; gap: .75rem; max-width: 28rem; margin-top: 1rem; }
+.lighting-controls label { display: flex; justify-content: space-between; gap: 1rem; font-weight: 600; }
+.lighting-controls input[type="range"] { width: 100%; min-height: 2.5rem; accent-color: var(--accent, #248477); }
+.lighting-controls input[type="color"] { width: 100%; height: 3rem; padding: .2rem; cursor: pointer; }
+.lighting-controls .card-actions { flex-wrap: wrap; }

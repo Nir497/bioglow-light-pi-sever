@@ -3,6 +3,7 @@ import json
 import ipaddress
 import math
 import os
+import re
 import socket
 import subprocess
 import threading
@@ -12,7 +13,8 @@ from urllib.request import Request, urlopen, build_opener, ProxyHandler
 
 
 class LightingControl:
-    def __init__(self, host="bioglow.local", opener=urlopen, clock=time.monotonic, background=False):
+    def __init__(self, host="bioglow.local", opener=urlopen, clock=time.monotonic, background=False, transport=None):
+        self.transport = transport
         self.host = os.environ.get("BIOGLOW_LIGHT_HOST", host)
         self._opener = build_opener(ProxyHandler({})).open if opener is urlopen else opener
         self._clock = clock
@@ -28,6 +30,8 @@ class LightingControl:
         self._auto_target = None
         self._state = {"name": "BioGlow", "hostname": self.host, "brightness": None,
                        "target_brightness": None, "status": "waiting", "mode": "auto",
+                       "connection": "usb" if transport else "wifi",
+                       "manual_brightness": 255, "color": "#ffa028", "on": None,
                        "on_below_lux": 30, "off_above_lux": 300}
 
     def status(self):
@@ -35,11 +39,26 @@ class LightingControl:
             return dict(self._state)
 
     def set_mode(self, mode):
-        if mode not in ("on", "off", "auto"):
+        return self.configure(mode=mode)
+
+    def configure(self, mode=None, brightness=None, color=None):
+        if mode is not None and mode not in ("on", "off", "auto"):
             raise ValueError('mode must be "on", "off", or "auto"')
+        if brightness is not None and (type(brightness) is not int or not 1 <= brightness <= 255):
+            raise ValueError("brightness must be an integer from 1 to 255")
+        if color is not None and (not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
+            raise ValueError("color must be a hex RGB value such as #ff8000")
+        if mode is None and brightness is None and color is None:
+            raise ValueError("Provide mode, brightness, or color")
         with self._lock:
+            if brightness is not None:
+                self._state["manual_brightness"] = brightness
+            if color is not None:
+                self._state["color"] = color.lower()
+            if mode is None:
+                mode = "off" if self._state["mode"] == "off" else "on"
             self._state["mode"] = mode
-            target = self._auto_target if mode == "auto" else (255 if mode == "on" else 0)
+            target = self._auto_target if mode == "auto" else (self._state["manual_brightness"] if mode == "on" else 0)
             if target is None:
                 self._state.update(status="waiting", target_brightness=None)
                 self._state.pop("error", None)
@@ -55,7 +74,7 @@ class LightingControl:
             if lux is None or not isinstance(lux, (int, float)) or not math.isfinite(lux) or lux < 0:
                 self._auto_target = None
                 if self._state["mode"] != "auto":
-                    self._send(255 if self._state["mode"] == "on" else 0)
+                    self._send(self._state["manual_brightness"] if self._state["mode"] == "on" else 0)
                     return
                 self._state.update(status="sensor_unavailable", error="Lux unavailable; retaining last brightness.")
                 return
@@ -69,7 +88,7 @@ class LightingControl:
             self._auto_target = target
             self._state.update(smoothed_lux=average)
             if self._state["mode"] != "auto":
-                target = 255 if self._state["mode"] == "on" else 0
+                target = self._state["manual_brightness"] if self._state["mode"] == "on" else 0
             self._send(target)
 
     def stop(self):
@@ -78,22 +97,27 @@ class LightingControl:
             self._condition.notify_all()
         if self._worker:
             self._worker.join(timeout=6)
+        if self.transport and (self._worker is None or not self._worker.is_alive()):
+            self.transport.close()
 
     def _work(self):
         while True:
             with self._condition:
                 self._condition.wait_for(lambda: self._stopped or self._pending is not None)
                 if self._stopped:
+                    if self.transport:
+                        self.transport.close()
                     return
-                target, self._pending = self._pending, None
-            error = self._request(target)
+                command, self._pending = self._pending, None
+                target, color = command
+            error = self._request(target, color)
             with self._lock:
                 self._apply_result(target, error)
 
     def _send(self, target):
         self._state["target_brightness"] = target
         if self._background:
-            self._pending = target
+            self._pending = (target, self._state["color"])
             self._state["status"] = "pending"
             if self._worker is None:
                 self._worker = threading.Thread(target=self._work, daemon=True, name="lighting-control")
@@ -101,16 +125,19 @@ class LightingControl:
             self._condition.notify()
         else:
             self._state["status"] = "pending"
-            self._apply_result(target, self._request(target))
+            self._apply_result(target, self._request(target, self._state["color"]))
 
-    def _request(self, target):
+    def _request(self, target, color="#ffa028"):
         # Reassert each sample so a fixture restart or another stream cannot
         # silently leave the physical output out of sync with the server.
         params = {"on": bool(target), "bri": target, "transition": 30,
                   "lor": 2, "live": False, "udpn": {"nn": True},
                   "seg": [{"id": 0, "on": True, "bri": 255, "fx": 0,
-                           "col": [[255, 160, 40, 255]]}]}
+                           "col": [[int(color[index:index + 2], 16) for index in (1, 3, 5)] + [0]]}]}
         try:
+            if self.transport:
+                self.transport.send(params)
+                return None
             host = self.host
             if self._background:
                 if self._address is None:
@@ -147,11 +174,12 @@ class LightingControl:
             return None
         except Exception as exc:
             self._address = None
-            return f"BioGlow lighting controller ({self.host}) unavailable: {exc}. Lux measurements continue."
+            return f"WLED controller ({'USB' if self.transport else self.host}) unavailable: {exc}. Lux measurements continue."
 
     def _apply_result(self, target, error):
         if error is None:
             self._state["brightness"] = target
+            self._state["on"] = bool(target)
         if self._pending is not None or self._state["status"] in ("waiting", "sensor_unavailable"):
             return
         if error is None:
