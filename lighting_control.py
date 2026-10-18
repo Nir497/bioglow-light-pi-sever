@@ -161,7 +161,16 @@ class LightingControl:
                 if distance is None or not math.isfinite(distance) or distance <= 0:
                     distance = None
                     error = "Radar target has no usable distance; requesting lights off."
-            index = None if distance is None else round(max(0, min(1, (distance - 30) / 270)) * 191)
+            if distance is None:
+                index = None
+            elif distance <= 100:
+                index = 0
+            elif distance >= 600:
+                index = 191
+            else:
+                # Reserve the end LEDs for their distance thresholds, even
+                # when rounding a nearby distance would reach an endpoint.
+                index = max(1, min(190, round((distance - 100) / 500 * 191)))
             self._state.update(distance_cm=distance, led_index=index,
                                test_state="sensor_unavailable" if error else "no_target" if index is None else "tracking")
             if error:

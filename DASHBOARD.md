@@ -165,8 +165,9 @@ the lights. Use **Start distance test** or **Off · stop test** on that page.
 
 The mode tests the LD2410C distance sensor with one LED. The server checks the existing radar receiver every 0.5 seconds,
 even with the browser closed; sensor history keeps its normal 10-second cadence.
-Distances of 30–300 cm map linearly onto LEDs 1–192 (API indices 0–191),
-clamping outside that range. The dot stays amber (`#ffa028`) at 25% brightness
+LED 1 lights at 1 m or closer; LED 192 lights at 6 m or farther.
+Between 1–6 m, distance maps linearly onto the strip, constrained to LEDs 2–191
+so rounding cannot light an endpoint before its threshold (API indices 0–191). The dot stays amber (`#ffa028`) at 25% brightness
 (64/255). This development mode tests position; distance-based brightness is
 not enabled yet.
 
@@ -185,7 +186,7 @@ is not restored after restart. Shutdown attempts to turn the test light off.
 (`waiting`, `tracking`, `no_target`, or `sensor_unavailable`), `test_brightness`,
 `test_color`, and an optional `sensor_error` while this mode is active.
 
-For hardware validation, enable the mode, walk from 30 cm toward 3 m, stand
+For hardware validation, enable the mode, walk from under 1 m toward 6 m or farther, stand
 still, then leave. Confirm exactly one LED moves along the strip, departure turns
 it off after the radar's delay, and On restores the entire strip. Automated tests
 use synthetic radar readings and mocked controller acknowledgments.

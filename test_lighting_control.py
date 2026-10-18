@@ -162,7 +162,7 @@ class DistanceLightingTests(unittest.TestCase):
                     stationary_distance_cm=distance, **extra)
 
     def test_mapping_and_fixed_appearance(self):
-        for distance, index in ((1, 0), (30, 0), (165, 96), (300, 191), (700, 191)):
+        for distance, index in ((1, 0), (99, 0), (100, 0), (101, 1), (350, 96), (599, 190), (600, 191), (700, 191)):
             with self.subTest(distance=distance):
                 self.light.update_distance(200, self.reading(distance))
                 state = self.light.status()
