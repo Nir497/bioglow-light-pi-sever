@@ -153,12 +153,13 @@ class DistanceLightingTests(unittest.TestCase):
     def setUp(self):
         self.transport = MagicMock()
         self.transport.send.return_value = {}
-        self.light = LightingControl(transport=self.transport)
+        self.now = 0
+        self.light = LightingControl(transport=self.transport, clock=lambda: self.now)
         self.light.set_mode("distance_test")
         self.addCleanup(self.light.stop)
 
     def reading(self, distance=100, presence="moving", **extra):
-        return dict(fresh=True, presence=presence, moving_distance_cm=distance,
+        return dict(fresh=True, presence=presence, range_estimate_cm=distance, moving_distance_cm=distance,
                     stationary_distance_cm=distance, **extra)
 
     def test_mapping_and_fixed_appearance(self):
@@ -173,10 +174,10 @@ class DistanceLightingTests(unittest.TestCase):
                 self.assertEqual(command["seg"][0]["col"], [[255, 160, 40, 0]])
                 self.assertEqual((command["seg"][0]["start"], command["seg"][0]["stop"]), (index, index+1))
 
-    def test_target_selection(self):
-        for presence, expected in (("moving", 80), ("stationary", 200), ("both", 80)):
-            self.light.update_distance(200, dict(fresh=True, presence=presence,
-                                               moving_distance_cm=80, stationary_distance_cm=200))
+    def test_target_selection_uses_filtered_range_not_raw_channels(self):
+        for presence, expected in (("moving", 350), ("stationary", 350), ("both", 350)):
+            self.light.update_distance(200, dict(fresh=True, presence=presence, range_estimate_cm=350,
+                                               moving_distance_cm=600, stationary_distance_cm=200))
             self.assertEqual(self.light.status()["distance_cm"], expected)
 
     def test_no_target_errors_and_recovery(self):
@@ -222,6 +223,7 @@ class DistanceLightingTests(unittest.TestCase):
         self.assertNotIn("start", command["seg"][0])
 
     def test_controller_error_separate_from_sensor_error(self):
+        self.light.update_distance(200, self.reading(350))
         self.transport.send.side_effect = OSError("USB disconnected")
         self.light.update_distance(503, {})
         state = self.light.status()
@@ -229,8 +231,78 @@ class DistanceLightingTests(unittest.TestCase):
         self.assertIn("sensor_error", state)
         self.assertIn("USB disconnected", state["error"])
 
+    def test_unchanged_output_is_deduplicated_and_periodically_reasserted(self):
+        self.light.update_distance(200, self.reading(350))
+        sent = self.transport.send.call_count
+        for _ in range(3):
+            self.now += 0.5
+            self.light.update_distance(200, self.reading(350))
+        self.assertEqual(self.transport.send.call_count, sent)
+        self.now += 0.5
+        self.light.update_distance(200, self.reading(350))
+        self.assertEqual(self.transport.send.call_count, sent + 1)
+        self.light.update_distance(200, self.reading(presence="none"))
+        self.assertFalse(self.transport.send.call_args.args[0]['on'])
+
+    def test_snapshot_is_atomic_copied_and_expires(self):
+        reading = self.reading(350, timestamp="sample-1", age_seconds=0.1, stale_after_seconds=2)
+        self.light.update_distance(200, reading)
+        reading["range_estimate_cm"] = 650
+        status = self.light.status()
+        self.assertEqual(status['distance_cm'], status['radar_snapshot']['result']['range_estimate_cm'])
+        self.assertEqual(status['confirmed_led_index'], status['led_index'])
+        self.assertEqual(status['confirmed_radar_timestamp'], 'sample-1')
+        status['radar_snapshot']['result']['range_estimate_cm'] = 700
+        self.assertEqual(self.light.status()['distance_cm'], 350)
+        self.now += 3
+        status = self.light.status()
+        self.assertEqual(status['radar_snapshot']['http_status'], 503)
+        self.assertIsNone(status['distance_cm'])
+        self.assertIsNone(status['led_index'])
+        self.assertEqual(status['confirmed_distance_cm'], 350, 'Keep last acknowledged output explicitly historical')
+
+    def test_filtered_null_does_not_fall_back_to_raw_distance(self):
+        self.light.update_distance(200, self.reading(350))
+        self.light.update_distance(200, dict(fresh=True, presence='moving', range_estimate_cm=None,
+                                           moving_distance_cm=650))
+        self.assertIsNone(self.light.status()['led_index'])
+        self.assertFalse(self.transport.send.call_args.args[0]['on'])
+
+    def test_delayed_acknowledgment_keeps_target_and_confirmed_separate(self):
+        entered, release, final_ack = threading.Event(), threading.Event(), threading.Event()
+        calls = []
+        def send(command):
+            calls.append(command)
+            if len(calls) == 2:
+                entered.set()
+                release.wait(2)
+            if len(calls) == 3:
+                final_ack.set()
+            return {}
+        transport = MagicMock()
+        transport.send.side_effect = send
+        light = LightingControl(transport=transport, background=True)
+        try:
+            light.set_mode('distance_test')
+            # Wait for the initial off command to finish without a hardware sleep.
+            with light._condition:
+                light._condition.wait_for(lambda: light._state['status'] == 'ok', timeout=1)
+            light.update_distance(200, self.reading(350, timestamp='near'))
+            self.assertTrue(entered.wait(1))
+            light.update_distance(200, self.reading(650, timestamp='far'))
+            status = light.status()
+            self.assertEqual(status['led_index'], 191)
+            self.assertIsNone(status['confirmed_led_index'])
+            release.set()
+            self.assertTrue(final_ack.wait(2))
+        finally:
+            release.set()
+            light.stop()
+        self.assertEqual(calls[2]['seg'][0]['start'], 191)
+
     def test_sampling_interval_and_shutdown_off(self):
         import time
+        self.light._clock = time.monotonic
         sampled = threading.Event()
         times = []
         def read():

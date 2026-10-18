@@ -146,3 +146,25 @@ Manufacturer's product page lists v1.09, but that PDF link returned 404:
 https://www.hlktech.com/en/Goods-239.html
 pyserial source checked:
 https://raw.githubusercontent.com/pyserial/pyserial/master/serial/serialposix.py
+
+
+## Shared filtered range for radar and lighting
+
+`range_estimate_cm` is the common range used by the radar map and distance-test
+lighting. It follows a consistent moving/stationary channel, applies a 0.65-second
+median and 5 cm deadband, and rejects jumps over 100 cm until they persist for
+at least 0.8 seconds across three frames. The deadband allows crossings at the
+100 cm and 600 cm LED endpoints. `range_filter_state` reports `tracking`,
+`rejecting_jump`, `weak_signal`, or `no_target`.
+
+A fresh raw no-target report clears range immediately. A stream gap over two
+seconds resets range tracking; disconnected/stale responses still contain no
+current distance. The debounced occupancy state may hold presence briefly even
+when the current range is empty. Raw moving, stationary and detection distances
+remain available for diagnostics and never replace an explicitly unavailable
+filtered range on the dashboard.
+
+During distance testing, `/v1/latest` returns the same sampled radar frame used
+to compute the LED target. Lighting reports its source frame timestamp and
+separates target from controller-confirmed position. Sensor sampling/history
+cadence remains unchanged.

@@ -126,6 +126,66 @@ class Tests(unittest.TestCase):
         self.assertEqual(snap['presence_state'], 'EMPTY')
         self.assertFalse(snap['presence_confirmed'])
 
+    def test_shared_range_rejects_middle_end_bounce_but_accepts_real_move(self):
+        est = PresenceEstimator()
+        now = 0.0
+        def sample(distance, state=1):
+            nonlocal now
+            now += 0.1
+            return est.update(Parser().feed(frame(state, mov_d=distance, stat_d=distance,
+                                                   mov_e=70, stat_e=70, det_d=distance))[0], now=now)
+        for _ in range(10):
+            snap = sample(350)
+        for i in range(60):
+            snap = sample(650 if i % 2 else 350)
+            self.assertEqual(snap['range_estimate_cm'], 350)
+        for _ in range(12):
+            snap = sample(650)
+        self.assertEqual(snap['range_estimate_cm'], 650)
+        self.assertEqual(snap['range_filter_state'], 'tracking')
+
+    def test_range_continuity_between_channels_noise_and_no_target(self):
+        est = PresenceEstimator()
+        for i in range(40):
+            distance = 350 + (i % 5) - 2
+            snap = est.update(Parser().feed(frame(3, mov_d=650, stat_d=distance,
+                                                   mov_e=80, stat_e=80))[0], now=i / 10)
+            self.assertLess(abs(snap['range_estimate_cm'] - 350), 5)
+        snap = est.update(Parser().feed(frame(0, mov_e=0, stat_e=0))[0], now=4)
+        self.assertIsNone(snap['range_estimate_cm'])
+        snap = est.update(Parser().feed(frame(1, mov_d=650))[0], now=4.1)
+        self.assertEqual(snap['range_estimate_cm'], 650)
+        snap = est.update(Parser().feed(frame(1, mov_d=100))[0], now=8)
+        self.assertEqual(snap['range_estimate_cm'], 100, 'A stale gap must reset range tracking')
+
+    def test_real_approach_remains_responsive(self):
+        est = PresenceEstimator()
+        for i, distance in enumerate(range(650, 95, -5)):
+            snap = est.update(Parser().feed(frame(1, mov_d=distance))[0], now=i / 10)
+            self.assertLessEqual(abs(snap['range_estimate_cm'] - distance), 25)
+
+    def test_deadband_does_not_pin_distance_on_wrong_side_of_endpoints(self):
+        for before, after in ((598, 600), (102, 100), (600, 598), (100, 102)):
+            est = PresenceEstimator()
+            for i in range(20):
+                distance = before if i < 10 else after
+                snap = est.update(Parser().feed(frame(1, mov_d=distance))[0], now=i / 10)
+            self.assertEqual(snap['range_estimate_cm'], after)
+
+    def test_weak_motion_does_not_create_a_far_target(self):
+        est = PresenceEstimator()
+        for i in range(20):
+            snap = est.update(Parser().feed(frame(1, mov_d=650, mov_e=2))[0], now=i / 10)
+        self.assertIsNone(snap['range_estimate_cm'])
+
+    def test_frame_features_classified_once_per_evaluation(self):
+        est = PresenceEstimator()
+        for i in range(20):
+            est.update(Parser().feed(frame())[0], now=i / 10)
+        with patch.object(est, '_is_credible', wraps=est._is_credible) as classify:
+            est.evaluate(now=2)
+        self.assertEqual(classify.call_count, len(est.samples))
+
     def test_fresh_stale_disconnected(self):
         s = PresenceSensor()
         self.assertEqual(s.response()[0], 503)

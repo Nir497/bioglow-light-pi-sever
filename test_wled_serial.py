@@ -244,7 +244,7 @@ class WLEDSerialTests(unittest.TestCase):
         self.params["seg"][0].update(start=95, stop=96)
         single = json.loads(json.dumps(self.reply))
         single["state"]["seg"][0].update(start=95, stop=96)
-        self.connection.read_until.side_effect = [json.dumps(item).encode() for item in (self.reply, single, single, self.reply)]
+        self.connection.read_until.side_effect = [json.dumps(item).encode() for item in (self.reply, single, self.reply)]
         result = light.send(self.params)
         self.assertEqual(result["covered_leds"], 1)
         self.assertFalse(result["full_strip_confirmed"])
@@ -270,3 +270,46 @@ class WLEDSerialTests(unittest.TestCase):
         WLEDSerial(port="test").send(self.params)
         command = json.loads(self.connection.write.call_args.args[0])
         self.assertEqual(command["seg"][1], {"id": 2, "stop": 0})
+
+    def test_rapid_commands_use_one_roundtrip_and_periodic_refresh(self):
+        now = [0.0]
+        light = WLEDSerial(port='test', clock=lambda: now[0])
+        light.send(self.params)
+        first_writes = self.connection.write.call_count
+        light.send(self.params)
+        self.assertEqual(self.connection.write.call_count - first_writes, 1)
+        now[0] = 5
+        light.send(self.params)
+        writes = [json.loads(call.args[0]) for call in self.connection.write.call_args_list]
+        self.assertEqual(sum(command == {'v': True} for command in writes), 2)
+        light.close()
+        self.assertIsNone(light._current)
+
+    def test_config_change_in_ack_invalidates_cached_state(self):
+        light = WLEDSerial(port='test')
+        light.send(self.params)
+        changed = json.loads(json.dumps(self.reply))
+        changed['info']['leds']['count'] = 100
+        self.connection.read_until.return_value = json.dumps(changed).encode()
+        with self.assertRaisesRegex(OSError, 'count changed'):
+            light.send(self.params)
+        self.assertIsNone(light.connection)
+        self.assertIsNone(light._current)
+
+    def test_state_only_ack_preserves_discovery_metadata(self):
+        state_only = {'state': self.reply['state']}
+        self.connection.read_until.side_effect = [json.dumps(item).encode() for item in
+                                                 (self.reply, state_only, state_only)]
+        light = WLEDSerial(port='test')
+        light.send(self.params)
+        result = light.send(self.params)
+        self.assertEqual(result['led_count'], 192)
+        self.assertEqual(self.connection.write.call_count, 3)
+
+    def test_partial_info_ack_preserves_led_count(self):
+        partial = {'state': self.reply['state'], 'info': {'leds': {'pwr': 100}}}
+        self.connection.read_until.side_effect = [json.dumps(item).encode() for item in
+                                                 (self.reply, partial, partial)]
+        light = WLEDSerial(port='test')
+        light.send(self.params)
+        self.assertEqual(light.send(self.params)['led_count'], 192)

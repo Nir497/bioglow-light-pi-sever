@@ -171,6 +171,25 @@ so rounding cannot light an endpoint before its threshold (API indices 0–191).
 (64/255). This development mode tests position; distance-based brightness is
 not enabled yet.
 
+The LED and radar map use the same `range_estimate_cm` and the exact same sampled
+frame while testing. Raw moving/stationary distances remain visible as diagnostics;
+they do not independently move the LED. The page labels the **Target LED** and the
+last controller-**Confirmed** LED separately, so slow USB acknowledgments are visible.
+
+The shared radar range follows the nearest consistent moving/stationary channel,
+uses a 0.65-second median and a 5 cm deadband, and requires a jump over 1 m to
+persist for at least 0.8 seconds and three frames before accepting it. Alternating
+near/far spikes therefore retain the current range; sustained relocation still
+changes it. A gap over two seconds resets tracking. Weak signals without usable
+range do not fall back to raw distances in the UI or LED code.
+
+Unchanged LED commands are skipped for up to two seconds, with periodic reassertion
+and immediate updates when the target changes or becomes unavailable. USB commands
+still require an acknowledgment; discovery/configuration queries are reused for five
+seconds and invalidated on connection errors or reported configuration changes.
+Radar estimation classifies each frame once per evaluation and publishes its result
+under a short lock; the half-second lighting loop uses monotonic deadlines.
+
 The first fresh no-target report turns the strip off. The radar's configured
 absence delay still applies. Stale/unavailable readings or a target with no usable
 distance request lights off and show a separate sensor error; fresh readings
@@ -184,7 +203,10 @@ is not restored after restart. Shutdown attempts to turn the test light off.
 `POST /v1/lighting` accepts `{"mode":"distance_test"}`. Lighting status includes
 `distance_cm`, zero-based `led_index`, `sample_interval_seconds`, `test_state`
 (`waiting`, `tracking`, `no_target`, or `sensor_unavailable`), `test_brightness`,
-`test_color`, and an optional `sensor_error` while this mode is active.
+`test_color`, `distance_source`, `radar_timestamp`, `confirmed_led_index`,
+`confirmed_distance_cm`, `confirmed_radar_timestamp`, and an optional `sensor_error`
+while this mode is active. `/v1/latest` pairs the lighting target with its sampled
+radar entry; it does not read a second, newer frame during distance testing.
 
 For hardware validation, enable the mode, walk from under 1 m toward 6 m or farther, stand
 still, then leave. Confirm exactly one LED moves along the strip, departure turns

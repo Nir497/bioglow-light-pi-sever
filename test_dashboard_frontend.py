@@ -260,9 +260,17 @@ async function main(){
   assert.deepEqual(JSON.parse(requests.findLast(r=>r.path==='/v1/lighting').options.body),{brightness:255,color:'#112233',mode:'on'});
   assert.equal(vm.runInContext('lighting.manual_brightness',context),255);
   assert.match(vm.runInContext('lightingControls()',context),/Full brightness · 100%/);
-  vm.runInContext("lighting.mode='distance_test';lighting.distance_cm=350;lighting.led_index=96;lighting.test_state='tracking'",context);
+  vm.runInContext("sources.radar={http_status:200,result:{fresh:true,age_seconds:0,stale_after_seconds:2}};radarLoadedAt=performance.now();lighting.mode='distance_test';lighting.distance_cm=350;lighting.led_index=96;lighting.test_state='tracking'",context);
   assert.match(vm.runInContext('lightingControls()',context),/data-lighting-appearance disabled/);
-  assert.match(vm.runInContext('lightingSummary()',context),/350 cm · LED 97 \/ 192/);
+  assert.match(vm.runInContext('lightingSummary()',context),/350 cm · Target LED 97 \/ 192/);
+  vm.runInContext("lighting.confirmed_led_index=20;lighting.on=true",context);
+  assert.match(vm.runInContext('lightingSummary()',context),/Confirmed: LED 21/);
+  assert.equal(vm.runInContext("radarRange({range_estimate_cm:null,moving_distance_cm:650})",context),null);
+  assert.equal(vm.runInContext("radarRange({range_estimate_cm:350,moving_distance_cm:650})",context),350);
+  vm.runInContext("sources.radar.http_status=503",context);
+  assert.match(vm.runInContext('lightingSummary()',context),/Radar unavailable/);
+  vm.runInContext("sources.radar.http_status=200",context);
+
   vm.runInContext("lighting.led_index=null;lighting.test_state='sensor_unavailable';lighting.sensor_error='Radar unavailable'",context);
   assert.match(vm.runInContext('lightingControls()',context),/Radar unavailable/);
   assert.match(vm.runInContext('lightingSummary()',context),/sensor unavailable/);

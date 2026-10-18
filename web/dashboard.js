@@ -110,10 +110,14 @@ function scheduleRadarPoll() {
 function updateRadarReading() {
   const reading = content.querySelector('[data-reading="radar"]');
   if (!reading) return;
+  const entry = currentEntry('radar');
+  const key = JSON.stringify([entry?.http_status, entry?.result?.timestamp, entry?.result?.valid_frames, view(), entry?.result?.error]);
+  if (reading.dataset?.radarSnapshot === key) return;
   const wasOpen = reading.querySelector('details.details')?.open;
   const wrapper = document.createElement('div');
   wrapper.innerHTML = sourceCard('radar',['radar','distance-test'].includes(view()));
   const replacement = wrapper.querySelector('[data-reading="radar"]');
+  if (replacement.dataset) replacement.dataset.radarSnapshot = key;
   const detailsEl = replacement.querySelector('details.details');
   if (detailsEl && wasOpen) detailsEl.open = true;
   reading.replaceWith(replacement);
@@ -167,11 +171,14 @@ function lightingDevice() {
 function lightingSummary() {
   const base = `${lighting.mode || 'auto'} · ${lighting.status || 'waiting'}`;
   if (lighting.mode !== 'distance_test') return base;
-  const detail = lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · LED ${lighting.led_index + 1} / 192`;
-  return `${base} · ${detail} · 25% amber · every 0.5 s`;
+  const unavailable = currentEntry('radar')?.http_status === 503;
+  const detail = unavailable ? 'Radar unavailable' : lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · Target LED ${lighting.led_index + 1} / 192`;
+  const confirmed = lighting.on === false ? 'Off' : lighting.confirmed_led_index == null ? 'Awaiting acknowledgment' : `LED ${lighting.confirmed_led_index + 1}`;
+  return `${base} · ${detail} · Confirmed: ${confirmed} · 25% amber · every 0.5 s`;
 }
 function distanceTestPage() {
   return `<article class="card"><h2>Single-LED test</h2><p class="timestamp" data-lighting-summary>${escapeHtml(lightingSummary())}</p>
+    <p>The LED target and radar map use the same filtered range and sampled frame. Confirmed shows the last controller acknowledgment; pending output may lag the target.</p>
     <p>LED 1: 1 m or closer. LED 192: 6 m or farther. Distances between move the dot along LEDs 2–191. One amber LED stays at 25% brightness. No target turns the strip off; the radar’s absence delay still applies.</p>
     <div class="card-actions"><button class="button" data-lighting-mode="distance_test">Start distance test</button><button class="button secondary" data-lighting-mode="off">Off · stop test</button><a class="section-link" href="#lighting">Lighting controls ↗</a></div>
     <p class="error-message" data-lighting-error ${(lighting.error || lighting.sensor_error) ? '' : 'hidden'}>${escapeHtml([lighting.error, lighting.sensor_error].filter(Boolean).join(' '))}</p>
@@ -242,10 +249,15 @@ function inferDerivedState(r) {
   if (r.presence === 'none') return 'EMPTY';
   return 'UNKNOWN';
 }
+function radarRange(data) {
+  // A filtered null is unavailable, not permission to substitute a raw channel.
+  return Object.hasOwn(data, 'range_estimate_cm') ? data.range_estimate_cm :
+    data.detection_distance_cm ?? data.moving_distance_cm ?? data.stationary_distance_cm ?? null;
+}
 function renderRadarLocatorGraphic(entry, success, data) {
   const state = success ? inferDerivedState(data) : 'UNKNOWN';
   const confirmed = success ? (data.presence_confirmed ?? ['PRESENT_ACTIVE','PRESENT_STILL','DEPARTING_CANDIDATE'].includes(state)) : false;
-  const rangeCm = success ? (data.range_estimate_cm ?? data.detection_distance_cm ?? data.moving_distance_cm ?? data.stationary_distance_cm) : null;
+  const rangeCm = success ? radarRange(data) : null;
   const movCm = success ? data.moving_distance_cm : null;
   const statCm = success ? data.stationary_distance_cm : null;
   const trend = success ? (data.range_trend || 'UNKNOWN') : 'UNKNOWN';
@@ -310,7 +322,7 @@ function renderRadarLocatorGraphic(entry, success, data) {
 function renderRadarSummaryPill(entry, success, data) {
   const state = success ? inferDerivedState(data) : 'UNKNOWN';
   const confirmed = success ? (data.presence_confirmed ?? ['PRESENT_ACTIVE','PRESENT_STILL','DEPARTING_CANDIDATE'].includes(state)) : false;
-  const rangeCm = success ? (data.range_estimate_cm ?? data.detection_distance_cm ?? data.moving_distance_cm ?? data.stationary_distance_cm) : null;
+  const rangeCm = success ? radarRange(data) : null;
   const trend = success ? (data.range_trend || 'UNKNOWN') : 'UNKNOWN';
   const trendArrow = {CLOSER:'↘ closer',FARTHER:'↗ farther',STABLE:'→ stable'}[trend] || '';
   const tone = !success ? 'unavailable' : confirmed ? 'confirmed' : state === 'APPROACHING_CANDIDATE' ? 'candidate' : 'empty';
@@ -319,7 +331,7 @@ function renderRadarSummaryPill(entry, success, data) {
 function renderRadarExpanded(entry, success, data) {
   const state = success ? inferDerivedState(data) : 'UNKNOWN';
   const confirmed = success ? (data.presence_confirmed ?? ['PRESENT_ACTIVE','PRESENT_STILL','DEPARTING_CANDIDATE'].includes(state)) : false;
-  const rangeCm = success ? (data.range_estimate_cm ?? data.detection_distance_cm ?? data.moving_distance_cm ?? data.stationary_distance_cm) : null;
+  const rangeCm = success ? radarRange(data) : null;
   const trend = success ? (data.range_trend || 'UNKNOWN') : 'UNKNOWN';
   const activity = success ? (data.activity_level ?? (state === 'PRESENT_ACTIVE' ? Math.min(1, (data.moving_energy_score || 0) / 85) : 0)) : null;
   const confidence = success ? (data.presence_confidence ?? (confirmed ? 0.8 : 0.05)) : null;
@@ -338,6 +350,8 @@ function renderRadarExpanded(entry, success, data) {
     ['Derived presence state',escapeHtml(state)],
     ['Presence confirmed',!success ? 'Unknown' : (confirmed ? 'Yes (debounced)' : 'No')],
     ['Smoothed range estimate',rangeCm == null ? '—' : `${number(rangeCm)} cm (${number(rangeCm / 100)} m)`],
+    ['Range filter',escapeHtml(data.range_filter_state || 'Not reported')],
+    ['Radar sample timestamp',time(data.timestamp)],
     ['Range trend candidate',escapeHtml(trend)],
     ['Smoothed energy (move / still)',win.smoothed_moving_energy == null ? '—' : `${number(win.smoothed_moving_energy)} / ${number(win.smoothed_stationary_energy)} (floor ${number(win.baseline_stationary_energy)})`],
     ['Sliding window (8 s)',win.frame_count == null ? '—' : `${number(win.frame_count)} frames · ${number(win.frame_rate_hz)} Hz · ${number(Math.round((win.credible_frame_ratio || 0) * 100))}% credible`]
@@ -365,7 +379,7 @@ function historyPlot(source) {
     let value;
     if (source === 'radar' && metric === 'presence') value = states[entry.result.presence];
     else if (source === 'radar' && metric === 'presence_state') value = derivedStates[inferDerivedState(entry.result)];
-    else if (source === 'radar' && metric === 'range_estimate_cm') value = entry.result.range_estimate_cm ?? entry.result.detection_distance_cm ?? entry.result.moving_distance_cm ?? entry.result.stationary_distance_cm;
+    else if (source === 'radar' && metric === 'range_estimate_cm') value = radarRange(entry.result);
     else if (source === 'birdcast') value = entry.result.metrics?.[metric];
     else if (source === 'microphone') value = entry.result.animals?.find(animal=>animal.scientific_name===metric)?.score;
     else value = entry.result[metric];
@@ -677,6 +691,7 @@ async function setLightingMode(mode, settings = {}) {
   } catch(error) { notice(error.message,true); }
   finally {
     await loadCache().catch(()=>{});
+    updateRadarReading();
     const reading = content.querySelector('[data-reading="light"]');
     if (reading) {
       const wrapper = document.createElement('div');

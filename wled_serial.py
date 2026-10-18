@@ -13,11 +13,14 @@ class SerialReplyTimeout(OSError):
 
 
 class WLEDSerial:
-    def __init__(self, port=None, baudrate=115200, led_count=192):
+    def __init__(self, port=None, baudrate=115200, led_count=192, clock=time.monotonic):
         self.port = port or os.environ.get("BIOGLOW_WLED_PORT")
         self.baudrate = baudrate
         self.connection = None
         self.led_count = led_count
+        self._clock = clock
+        self._current = None
+        self._queried_at = None
         self.device_info = {"model": "SP803E", "expected_led_count": led_count, "length_ft": 3.2}
 
     def _read_reply(self):
@@ -99,11 +102,16 @@ class WLEDSerial:
                 if reply.get("info", {}).get("brand") != "WLED":
                     raise OSError("The selected USB serial device did not identify as WLED")
                 current = reply
-            # Query before each command: LED count and segment layout may have
-            # changed in WLED since the preceding command.
+                self._queried_at = self._clock()
+            # Reuse the last acknowledged state during rapid updates. Refresh
+            # configuration every five seconds and after every reconnect/error.
             if current is None:
-                self.connection.reset_input_buffer()
-                current = self._query()
+                if self._current is not None and self._queried_at is not None and self._clock() - self._queried_at < 5:
+                    current = self._current
+                else:
+                    self.connection.reset_input_buffer()
+                    current = self._query()
+                    self._queried_at = self._clock()
             info = current.get("info", {})
             count = info.get("leds", {}).get("count")
             if type(count) is not int or not 1 <= count <= 65535:
@@ -135,6 +143,9 @@ class WLEDSerial:
             command.update(mainseg=0, pl=-1, nl={"on": False}, v=True)
             self._write(command)
             acknowledged = self._read_reply()
+            reported_count = acknowledged.get("info", {}).get("leds", {}).get("count", count)
+            if reported_count != count:
+                raise OSError("WLED LED count changed during the command; refreshing configuration")
             state = acknowledged["state"]
             if state.get("on") != params["on"] or (params["on"] and state.get("bri") != params["bri"]):
                 raise OSError("WLED did not acknowledge the requested power and brightness")
@@ -159,12 +170,18 @@ class WLEDSerial:
                 confirmed_white=reported_color[3], confirmed_brightness=state.get("bri"),
                 confirmed_on=state.get("on"), segment_brightness=segment["bri"],
                 current_limit_ma=power.get("maxpwr"), estimated_current_ma=power.get("pwr"))
+            ack_info = acknowledged.get("info", {})
+            cached_info = {**info, **ack_info}
+            cached_info["leds"] = {**info.get("leds", {}), **ack_info.get("leds", {})}
+            self._current = {"state": copy.deepcopy(state), "info": cached_info}
             return dict(self.device_info)
         except Exception:
             self.close()
             raise
 
     def close(self):
+        self._current = None
+        self._queried_at = None
         if self.connection is not None:
             try:
                 self.connection.close()

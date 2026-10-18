@@ -19,10 +19,18 @@ const recordingId='a'.repeat(32);
 let browserRecordings=[{recording_id:recordingId,created_at:now,byte_length:960044,
   download_path:'/v1/recordings/'+recordingId,analysis:{state:'completed',candidates:[{scientific_name:'Buteo jamaicensis',score:7.5}]}}];
 let browserCollection={enabled:false,recording:false,duration_seconds:5,interval_seconds:120};
+let browserLighting={mode:'off',status:'ok',on:false};
 window.fetch=async(path,options={})=>{
   browserRequests.push(path);
   let body;
-  if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},collection:browserCollection,regions:[{code:'US-CA',name:'California'}]};
+  if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},lighting:browserLighting,collection:browserCollection,regions:[{code:'US-CA',name:'California'}]};
+  else if(path==='/v1/lighting'){
+    browserLighting={mode:JSON.parse(options.body).mode,status:'ok',on:true,distance_cm:350,
+      led_index:96,confirmed_led_index:96,test_state:'tracking'};
+    Object.assign(reading,{range_estimate_cm:350,moving_distance_cm:650,stationary_distance_cm:350,
+      timestamp:new Date().toISOString()});
+    body={lighting:browserLighting};
+  }
   else if(path==='/v1/recording-schedule'){browserCollection.enabled=JSON.parse(options.body).enabled;body={collection:browserCollection};}
   else if(path==='/v1/recordings')body={recordings:browserRecordings};
   else if(path==='/v1/recordings/'+recordingId && options.method==='DELETE'){browserRecordings=[];body={deleted:true};}
@@ -87,6 +95,20 @@ setTimeout(async()=>{
     check(browserRecordings.length===0,'Confirmed deletion did not call DELETE');
     check(!document.querySelector('[data-recording]'),'Deleted recording remains visible');
     check(document.querySelector('#content').textContent.includes('Your first recording starts here'),'Empty recording library missing');
+    location.hash='#distance-test';await pause(100);
+    const startTest=document.querySelector('[data-lighting-mode="distance_test"]');
+    check(startTest,'Dev test start button missing');
+    startTest.click();await pause(150);
+    check(document.querySelector('[data-lighting-summary]').textContent.includes('350 cm · Target LED 97'),'LED target range missing');
+    check(document.querySelector('[data-lighting-summary]').textContent.includes('Confirmed: LED 97'),'Confirmed output missing');
+    check(document.querySelector('[data-estimated-range]').dataset.estimatedRange==='350','Radar and LED use different ranges');
+    Object.assign(reading,{range_estimate_cm:null,timestamp:new Date().toISOString()});
+    Object.assign(browserLighting,{distance_cm:null,led_index:null,confirmed_led_index:null,on:false,
+      test_state:'sensor_unavailable',sensor_error:'No usable filtered range'});
+    await pause(650);
+    check(!document.querySelector('[data-estimated-range]'),'Filtered null fell back to raw 650 cm');
+    check(document.querySelector('[data-lighting-error]').textContent.includes('No usable filtered range'),'Sensor error not shown');
+    check(document.querySelector('[data-lighting-mode="distance_test"]')===startTest,'Polling replaced the dev controls');
     document.body.dataset.browserCheck='passed';
   }catch(error){document.body.dataset.browserCheck='failed: '+error.message;}
 },50);

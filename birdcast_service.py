@@ -100,9 +100,14 @@ class Service:
         with self._latest_lock:
             result = copy.deepcopy(self._latest)
         # Radar is passive: this reads worker state without opening UART or sending commands.
-        status, radar = self.presence_sensor.response()
-        result["radar"] = {"http_status": status, "result": radar}
-        return {"status": "ok", "sources": result, "lighting": self.lighting.status(),
+        lighting = self.lighting.status()
+        sampled_radar = lighting.pop("radar_snapshot", None)
+        if isinstance(sampled_radar, dict):
+            result["radar"] = sampled_radar
+        else:
+            status, radar = self.presence_sensor.response()
+            result["radar"] = {"http_status": status, "result": radar}
+        return {"status": "ok", "sources": result, "lighting": lighting,
                 "collection": self.collection_schedule.status(),
                 "regions": [{"code": f"US-{code}", "name": name}
                             for code, name in birdcast_scraper.STATE_NAMES.items()]}

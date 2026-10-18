@@ -7,6 +7,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+import math
 import statistics
 import threading
 import time
@@ -130,6 +131,10 @@ class Parser:
         return readings
 
 
+def _valid_distance(value):
+    return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+
 def _frame_distance_cm(reading):
     state = reading.get('target_state')
     if state is None:
@@ -137,15 +142,80 @@ def _frame_distance_cm(reading):
     mov_d = reading.get('moving_distance_cm')
     stat_d = reading.get('stationary_distance_cm')
     det_d = reading.get('detection_distance_cm')
-    if (state & 1) and isinstance(mov_d, (int, float)) and mov_d > 0:
-        if (state & 2) and isinstance(stat_d, (int, float)) and stat_d > 0 and abs(mov_d - stat_d) <= 60:
+    if (state & 1) and _valid_distance(mov_d):
+        if (state & 2) and _valid_distance(stat_d) and abs(mov_d - stat_d) <= 60:
             return round((mov_d + stat_d) / 2)
         return int(mov_d)
-    if (state & 2) and isinstance(stat_d, (int, float)) and stat_d > 0:
+    if (state & 2) and _valid_distance(stat_d):
         return int(stat_d)
-    if state > 0 and isinstance(det_d, (int, float)) and det_d > 0:
+    if state > 0 and _valid_distance(det_d):
         return int(det_d)
     return None
+
+
+class StableRange:
+    """One range for the UI and lights, updated only by distinct UART frames."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.samples = deque()
+        self.value = None
+        self.last_seen = None
+        self.last_valid = None
+        self.candidate = None
+        self.candidate_since = None
+        self.candidate_count = 0
+        self.filter_state = 'no_target'
+
+    def update(self, reading, now, has_motion, has_still):
+        if self.last_seen is not None and now - self.last_seen > 2:
+            self.reset()
+        self.last_seen = now
+        if reading.get('presence') == 'none':
+            self.reset()
+            return None
+        candidates = []
+        for active, key in ((has_motion, 'moving_distance_cm'), (has_still, 'stationary_distance_cm')):
+            value = reading.get(key)
+            if active and _valid_distance(value):
+                candidates.append(value)
+        if not candidates:
+            self.candidate = None
+            self.candidate_count = 0
+            if self.last_valid is None or now - self.last_valid > 0.65:
+                self.value = None
+                self.samples.clear()
+            self.filter_state = 'weak_signal'
+            return self.value
+        # Keep tracking the same range when moving/stationary channels disagree.
+        distance = min(candidates) if self.value is None else min(candidates, key=lambda d: abs(d - self.value))
+        if len(candidates) == 2 and abs(candidates[0] - candidates[1]) <= 60:
+            distance = statistics.fmean(candidates)
+        self.last_valid = now
+        if self.value is not None and abs(distance - self.value) > 100:
+            if self.candidate is None or abs(distance - self.candidate) > 60:
+                self.candidate, self.candidate_since, self.candidate_count = distance, now, 1
+            else:
+                self.candidate_count += 1
+            if self.candidate_count < 3 or now - self.candidate_since < 0.8:
+                self.filter_state = 'rejecting_jump'
+                return self.value
+            self.samples.clear()
+        self.candidate = None
+        self.candidate_count = 0
+        self.samples.append((now, distance))
+        while self.samples and now - self.samples[0][0] > 0.65:
+            self.samples.popleft()
+        filtered = round(statistics.median(d for _, d in self.samples))
+        # Five-centimetre deadband suppresses LED chatter from small range noise.
+        crosses_endpoint = self.value is not None and (
+            (self.value <= 100 < filtered) or (filtered <= 100 < self.value)
+            or (self.value < 600 <= filtered) or (filtered < 600 <= self.value))
+        if self.value is None or abs(filtered - self.value) >= 5 or crosses_endpoint:
+            self.value = filtered
+        self.filter_state = 'tracking'
+        return self.value
 
 
 class PresenceEstimator:
@@ -162,6 +232,7 @@ class PresenceEstimator:
         self.confirmed = False
         self.last_confirmed_at = None
         self.last_range_cm = None
+        self.range_filter = StableRange()
 
     def reset(self):
         self.samples.clear()
@@ -169,6 +240,7 @@ class PresenceEstimator:
         self.confirmed = False
         self.last_confirmed_at = None
         self.last_range_cm = None
+        self.range_filter.reset()
 
     def _is_credible(self, reading):
         state = reading.get('target_state')
@@ -177,7 +249,8 @@ class PresenceEstimator:
         mov_e = reading.get('moving_energy_score') or 0
         stat_e = reading.get('stationary_energy_score') or 0
         stat_threshold = max(22.0, min(65.0, self.baseline_stationary_energy + 12.0))
-        has_motion = bool(state & 1) and (mov_e >= 15 or reading.get('moving_distance_cm') is not None)
+        valid_motion = reading['_valid_motion_distance'] if '_valid_motion_distance' in reading else _valid_distance(reading.get('moving_distance_cm'))
+        has_motion = bool(state & 1) and mov_e >= 15 and valid_motion
         has_still = bool(state & 2) and stat_e >= stat_threshold
         if state == 2 and len(self.samples) <= 1 and stat_e > 0:
             has_still = True
@@ -195,11 +268,18 @@ class PresenceEstimator:
         if state == 0 and mov_e == 0:
             self.baseline_stationary_energy = (0.92 * self.baseline_stationary_energy) + (0.08 * stat_e)
 
-        self.samples.append((now, dict(reading)))
+        sample = dict(reading)
+        # Immutable frame properties are decoded once at ingestion, not once
+        # per window pass. Credibility still uses the current energy baseline.
+        sample['_frame_distance_cm'] = _frame_distance_cm(reading)
+        sample['_valid_motion_distance'] = _valid_distance(reading.get('moving_distance_cm'))
+        self.samples.append((now, sample))
         cutoff = now - self.window_seconds
         while self.samples and self.samples[0][0] < cutoff:
             self.samples.popleft()
 
+        has_motion, has_still, _ = self._is_credible(reading)
+        self.last_range_cm = self.range_filter.update(reading, now, has_motion, has_still)
         return self.evaluate(now=now)
 
     def evaluate(self, now=None, fallback_reading=None):
@@ -234,6 +314,11 @@ class PresenceEstimator:
                 },
             }
 
+        # Compute frame features once instead of rescanning and reclassifying
+        # the same frames for confirmation, trend and range independently.
+        features = [(t, r, *self._is_credible(r),
+                     r['_frame_distance_cm'] if '_frame_distance_cm' in r else _frame_distance_cm(r))
+                    for t, r in window]
         recent_cutoff = now - self.recent_seconds
         recent = [(t, r) for t, r in window if t >= recent_cutoff] or window[-min(len(window), 5):]
 
@@ -244,45 +329,14 @@ class PresenceEstimator:
         smoothed_mov = round(statistics.fmean(mov_energies), 1)
         smoothed_stat = round(statistics.fmean(stat_energies), 1)
 
-        motion_flags = []
-        still_flags = []
-        credible_flags = []
-        recent_distances = []
-        for _, r in recent:
-            has_m, has_s, cred = self._is_credible(r)
-            motion_flags.append(has_m)
-            still_flags.append(has_s)
-            credible_flags.append(cred)
-            if cred:
-                d = _frame_distance_cm(r)
-                if d is not None:
-                    recent_distances.append(d)
-
-        all_credible_distances = []
-        for t, r in window:
-            _, _, cred = self._is_credible(r)
-            if cred:
-                d = _frame_distance_cm(r)
-                if d is not None:
-                    all_credible_distances.append((t, d))
-
-        credible_count = sum(credible_flags)
-        motion_count = sum(motion_flags)
-        credible_ratio = credible_count / len(recent)
-
-        fast_distances = [
-            _frame_distance_cm(r) for t, r in recent
-            if t >= (now - 0.65) and self._is_credible(r)[2] and _frame_distance_cm(r) is not None
-        ]
-        range_estimate_cm = None
-        if fast_distances:
-            range_estimate_cm = round(statistics.median(fast_distances))
-            self.last_range_cm = range_estimate_cm
-        elif recent_distances:
-            range_estimate_cm = round(statistics.median(recent_distances))
-            self.last_range_cm = range_estimate_cm
-        elif self.confirmed and self.last_range_cm is not None:
-            range_estimate_cm = self.last_range_cm
+        recent_features = [f for f in features if f[0] >= recent_cutoff] or features[-min(len(features), 5):]
+        credible_count = sum(f[4] for f in recent_features)
+        motion_count = sum(f[2] for f in recent_features)
+        credible_ratio = credible_count / len(recent_features)
+        all_credible_distances = [(t, d) for t, _, _, _, credible, d in features if credible and d is not None]
+        range_estimate_cm = self.last_range_cm
+        if not self.samples and fallback_reading is not None:
+            range_estimate_cm = _frame_distance_cm(fallback_reading)
 
         range_trend = 'UNKNOWN'
         if len(all_credible_distances) >= 4 and (all_credible_distances[-1][0] - all_credible_distances[0][0]) >= 0.6:
@@ -373,6 +427,7 @@ class PresenceEstimator:
             'presence_state': self.state,
             'activity_level': activity_level,
             'range_estimate_cm': range_estimate_cm,
+            'range_filter_state': self.range_filter.filter_state,
             'range_trend': range_trend,
             'presence_confidence': presence_confidence,
             'transition_reason': reason,
@@ -496,9 +551,9 @@ class PresenceSensor:
                         for reading in parser.feed(data):
                             now = time.monotonic()
                             reading['timestamp'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                            derived = self.estimator.update(reading, now=now)
+                            reading.update(derived)
                             with self.lock:
-                                derived = self.estimator.update(reading, now=now)
-                                reading.update(derived)
                                 self.latest = reading
                                 self.received_at = now
                                 self.valid_frames += 1

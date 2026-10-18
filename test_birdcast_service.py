@@ -51,9 +51,13 @@ class ServiceTests(unittest.TestCase):
         handler.do_POST()
         self.assertEqual(handler._send.call_args.args[0], 200)
         self.assertEqual(handler._send.call_args.args[1]["lighting"]["mode"], "distance_test")
-        self.service.lighting.update_distance(200, {"fresh": True, "presence": "moving", "moving_distance_cm": 600})
+        self.service.lighting.update_distance(200, {"fresh": True, "presence": "moving", "moving_distance_cm": 600, "range_estimate_cm": 600})
         self.service.presence_sensor.response = MagicMock(return_value=(200, {"fresh": True}))
-        self.assertEqual(self.service.latest()["lighting"]["led_index"], 191)
+        latest = self.service.latest()
+        self.assertEqual(latest["lighting"]["led_index"], 191)
+        self.assertEqual(latest["sources"]["radar"]["result"]["range_estimate_cm"],
+                         latest["lighting"]["distance_cm"])
+        self.service.presence_sensor.response.assert_not_called()
         self.assertEqual(self.service.reading_history.recent("radar"), [])
         self.service.lighting.stop()
 
