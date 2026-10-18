@@ -210,8 +210,8 @@ async function main(){
   const beforeWledPoll=page.innerHTML;
   await wledPoll.fn();
   assert.equal(page.innerHTML,beforeWledPoll,'Status updates preserve controller controls');
-  vm.runInContext("lighting={device:{led_count:144,covered_leds:144,firmware:'0.14.4'}}",context);
-  assert.match(vm.runInContext('lightingDevice()',context),/144 \/ 144 pixels/);
+  vm.runInContext("lighting={device:{led_count:192,covered_leds:192,firmware:'0.14.4'}}",context);
+  assert.match(vm.runInContext('lightingDevice()',context),/192 \/ 192 pixels/);
   const brightnessInput={value:'80'}, colorInput={value:'#112233'}, output={textContent:''};
   const form={dataset:{dirty:'true'},contains:()=>false,querySelector:selector=>selector==='[name="brightness"]' ? brightnessInput : selector==='[name="color"]' ? colorInput : output};
   const summary={textContent:''};

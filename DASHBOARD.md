@@ -18,7 +18,7 @@ No internet hosting or router forwarding is required. LAN reachability depends o
 the host firewall and network; the hostname is not a verified reachability claim.
 
 The separate **WLED light** page (`/#lighting`) provides SP803E WLED-ESP32 USB
-power, brightness, and color controls plus coverage of the 144-pixel strip.
+power, brightness, and color controls plus coverage of the 192-pixel strip.
 The **Lux sensor** page (`/#light`) displays calculated lux, raw ambient-light
 counts, and raw white-channel counts, along with gain, integration time, and
 lux-per-count resolution. Its graph selector includes all three light readings.

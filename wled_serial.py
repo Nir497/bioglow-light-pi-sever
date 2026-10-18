@@ -13,7 +13,7 @@ class SerialReplyTimeout(OSError):
 
 
 class WLEDSerial:
-    def __init__(self, port=None, baudrate=115200, led_count=144):
+    def __init__(self, port=None, baudrate=115200, led_count=192):
         self.port = port or os.environ.get("BIOGLOW_WLED_PORT")
         self.baudrate = baudrate
         self.connection = None
