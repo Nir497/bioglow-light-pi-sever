@@ -170,7 +170,7 @@ function lightingDevice() {
 }
 function lightingSummary() {
   const base = `${lighting.mode || 'auto'} · ${lighting.status || 'waiting'}`;
-  if (lighting.mode === 'auto') return `${base} · Distance ${lighting.distance_cm == null ? '—' : lighting.distance_cm + ' cm'} · Target ${lighting.target_brightness ?? '—'}/255 · Acknowledged ${lighting.brightness ?? '—'}/255`;
+  if (lighting.mode === 'auto') return `${base} · Distance ${lighting.distance_cm == null ? '—' : lighting.distance_cm + ' cm'} · Target ${lighting.target_brightness ?? '—'}/255 · Acknowledged ${lighting.brightness ?? '—'}/255 · Sample ${lighting.sample_age_seconds == null ? 'waiting' : lighting.sample_age_seconds.toFixed(1) + ' s ago'} · Ack ${lighting.ack_age_seconds == null ? 'waiting' : lighting.ack_age_seconds.toFixed(1) + ' s ago'}`;
   if (lighting.mode !== 'distance_test') return base;
   const unavailable = currentEntry('radar')?.http_status === 503;
   const detail = unavailable ? 'Radar unavailable' : lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · Target LED ${lighting.led_index + 1} / 192`;

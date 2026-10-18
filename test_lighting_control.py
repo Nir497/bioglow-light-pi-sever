@@ -394,6 +394,93 @@ class AutoLightingTests(unittest.TestCase):
         finally:
             light.stop()
 
+    def test_output_retries_failure_without_another_sensor_submission(self):
+        now = [0]
+        transport = MagicMock()
+        transport.send.side_effect = [OSError("disconnected"), {}]
+        light = LightingControl(transport=transport, background=True, clock=lambda: now[0])
+        try:
+            light.update_distance(200, self.reading(350))
+            with light._condition:
+                self.assertTrue(light._condition.wait_for(
+                    lambda: light._state["status"] == "controller_unavailable", timeout=1))
+                now[0] = 0.6
+                light._condition.notify_all()
+                self.assertTrue(light._condition.wait_for(
+                    lambda: light._state["brightness"] == 147, timeout=2))
+            self.assertEqual(transport.send.call_count, 2)
+            self.assertNotIn("error", light.status())
+        finally:
+            transport.send.side_effect = None
+            light.stop()
+
+    def test_output_watchdog_turns_off_when_sampling_stops(self):
+        now = [0]
+        transport = MagicMock()
+        transport.send.return_value = {}
+        light = LightingControl(transport=transport, background=True, clock=lambda: now[0])
+        try:
+            light.update_distance(200, self.reading(600))
+            with light._condition:
+                self.assertTrue(light._condition.wait_for(
+                    lambda: light._state["brightness"] == 255, timeout=1))
+                now[0] = 3
+                light._condition.notify_all()
+                self.assertTrue(light._condition.wait_for(
+                    lambda: light._state["brightness"] == 0, timeout=2))
+            self.assertIn("sampling stopped", light.status()["sensor_error"])
+            self.assertEqual(transport.send.call_args.args[0]["transition"], 0)
+            self.assertEqual(light.status()["sample_age_seconds"], 3)
+        finally:
+            light.stop()
+
+    def test_malformed_sensor_frame_does_not_kill_sampling(self):
+        recovered = threading.Event()
+        transport = MagicMock()
+        def send(command):
+            if command["bri"] == 38:
+                recovered.set()
+            return {}
+        transport.send.side_effect = send
+        light = LightingControl(transport=transport, background=True)
+        frames = iter((None, {"fresh":True, "age_seconds":"invalid"}, self.reading(100)))
+        try:
+            light.start_distance_sampling(lambda: (200, next(frames, self.reading(100))))
+            self.assertTrue(recovered.wait(3))
+            self.assertTrue(light.status()["radar_loop_running"])
+            self.assertNotIn("sensor_error", light.status())
+        finally:
+            light.stop()
+
+    def test_sampling_continues_while_controller_is_slow(self):
+        entered, release, sampled = threading.Event(), threading.Event(), threading.Event()
+        transport = MagicMock()
+        calls = [0]
+        def read():
+            calls[0] += 1
+            if calls[0] >= 3:
+                sampled.set()
+            return 200, self.reading(100 if calls[0] == 1 else 600)
+        def send(command):
+            if command["bri"] == 38:
+                entered.set()
+                release.wait(3)
+            return {}
+        transport.send.side_effect = send
+        light = LightingControl(transport=transport, background=True)
+        try:
+            light.start_distance_sampling(read)
+            self.assertTrue(entered.wait(1))
+            self.assertTrue(sampled.wait(2))
+            self.assertEqual(light.status()["target_brightness"], 255)
+            release.set()
+            with light._condition:
+                self.assertTrue(light._condition.wait_for(
+                    lambda: light._state["brightness"] == 255, timeout=2))
+        finally:
+            release.set()
+            light.stop()
+
     def test_queued_auto_commands_coalesce_and_acknowledge_latest_sample(self):
         entered, release = threading.Event(), threading.Event()
         transport = MagicMock()

@@ -27,6 +27,8 @@ class LightingControl:
         self._lock = threading.Lock()
         self._condition = threading.Condition(self._lock)
         self._pending = None
+        self._desired = None
+        self._last_ack_at = None
         self._stopped = False
         self._background = background
         self._worker = None
@@ -51,6 +53,11 @@ class LightingControl:
     def status(self):
         with self._lock:
             result = {**self._state, "device": dict(self._device_info)}
+            result["radar_loop_running"] = bool(self._radar_worker and self._radar_worker.is_alive())
+            result["sample_age_seconds"] = (None if self._radar_sampled_at is None
+                                            else max(0, self._clock() - self._radar_sampled_at))
+            result["ack_age_seconds"] = (None if self._last_ack_at is None
+                                         else max(0, self._clock() - self._last_ack_at))
             if self._state["mode"] in ("auto", "distance_test") and self._radar_snapshot is not None:
                 radar = copy.deepcopy(self._radar_snapshot)
                 age = (radar["result"].get("age_seconds") or 0) + max(0, self._clock() - self._radar_sampled_at)
@@ -61,7 +68,7 @@ class LightingControl:
                         "timestamp": radar["result"].get("timestamp"), "age_seconds": age,
                         "error": {"code": "presence_unavailable", "message": "Sampled radar frame is stale."}}}
                     result.update(distance_cm=None, led_index=None, test_state="sensor_unavailable",
-                                  sensor_error="Sampled radar frame is stale; awaiting fresh sensor data.")
+                                  sensor_error=result.get("sensor_error") or "Sampled radar frame is stale; awaiting fresh sensor data.")
                 result["radar_snapshot"] = radar
             return result
 
@@ -153,9 +160,12 @@ class LightingControl:
             if active:
                 try:
                     status, reading = self._presence_reader()
+                    if not isinstance(reading, dict):
+                        raise ValueError("Radar returned an invalid reading")
+                    self.update_distance(status, reading, revision)
                 except Exception as exc:
-                    status, reading = 503, {"error": str(exc)}
-                self.update_distance(status, reading, revision)
+                    # A bad frame must not silently terminate automatic control.
+                    self.update_distance(503, {"error": str(exc)}, revision)
             deadline += 0.5
             now = self._clock()
             if deadline <= now:
@@ -223,16 +233,40 @@ class LightingControl:
             self.transport.close()
 
     def _work(self):
+        last_attempt = None
+        retry = False
         while True:
             with self._condition:
-                self._condition.wait_for(lambda: self._stopped or self._pending is not None)
+                self._condition.wait_for(lambda: self._stopped or self._pending is not None, timeout=0.5)
                 if self._stopped:
                     test_active = self._state["mode"] in ("auto", "distance_test")
                     break
+                radar_active = self._state["mode"] in ("auto", "distance_test")
+                if (radar_active and self._radar_sampled_at is not None
+                        and ((self._radar_snapshot["result"].get("age_seconds") or 0)
+                             + self._clock() - self._radar_sampled_at
+                             > self._radar_snapshot["result"].get("stale_after_seconds", 2))
+                        and self._state["target_brightness"]):
+                    # Independent watchdog: the output worker fails dark even
+                    # if the sensor reader hangs or its sampling thread stops.
+                    self._auto_target = 0
+                    self._state.update(distance_cm=None, led_index=None,
+                                       test_state="sensor_unavailable",
+                                       sensor_error="Radar sampling stopped; requesting lights off.")
+                    self._send(0, instant=True)
+                if self._pending is None:
+                    interval = 0.5 if retry else 2
+                    if (not radar_active or self._desired is None
+                            or (last_attempt is not None and self._clock() - last_attempt < interval)):
+                        continue
+                    self._pending = self._desired
+                    self._state["status"] = "pending"
                 command, self._pending = self._pending, None
                 target, color, led_index, instant, revision, sample = command
             error = self._request(target, color, led_index, instant)
             with self._lock:
+                last_attempt = self._clock()
+                retry = error is not None
                 if revision == self._revision:
                     self._apply_result(target, error, sample)
                 self._condition.notify_all()
@@ -247,6 +281,10 @@ class LightingControl:
         color = color or self._state["color"]
         signature = (target, color, led_index)
         now = self._clock()
+        sample = {"confirmed_led_index": led_index if target else None,
+                  "confirmed_distance_cm": self._state.get("distance_cm") if target else None,
+                  "confirmed_radar_timestamp": self._state.get("radar_timestamp")}
+        self._desired = (target, color, led_index, instant, self._revision, sample)
         if (self._state["mode"] in ("auto", "distance_test")
                 and signature == self._last_distance_command
                 and self._state["status"] != "controller_unavailable"
@@ -255,12 +293,9 @@ class LightingControl:
         if self._state["mode"] in ("auto", "distance_test"):
             self._last_distance_command, self._last_distance_sent_at = signature, now
         self._state["target_brightness"] = target
-        sample = {"confirmed_led_index": led_index if target else None,
-                  "confirmed_distance_cm": self._state.get("distance_cm") if target else None,
-                  "confirmed_radar_timestamp": self._state.get("radar_timestamp")}
         self._state["status"] = "pending"
         if self._background:
-            self._pending = (target, color, led_index, instant, self._revision, sample)
+            self._pending = self._desired
             if self._worker is None:
                 self._worker = threading.Thread(target=self._work, daemon=True, name="lighting-control")
                 self._worker.start()
@@ -328,6 +363,7 @@ class LightingControl:
 
     def _apply_result(self, target, error, sample=None):
         if error is None:
+            self._last_ack_at = self._clock()
             self._state["brightness"] = target
             self._state["on"] = bool(target)
             if target == 0 and self._state["mode"] in ("auto", "distance_test"):

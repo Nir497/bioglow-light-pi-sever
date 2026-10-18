@@ -231,3 +231,14 @@ it off after the radar's delay, and On restores the entire strip. Automated test
 use synthetic radar readings and mocked controller acknowledgments.
 
 For Auto hardware validation, approach, move away, stand still, and leave the detection area. Verify whole-strip brightness, selected color, and off after the radar absence delay.
+
+Auto output delivery retains the latest desired command independently of radar
+sampling. The output worker retries failed commands every 0.5 seconds after a
+request completes and reasserts acknowledged output every two seconds. A separate
+output watchdog requests immediate off if radar sampling stops for over two
+seconds; malformed readings report a sensor error without terminating sampling.
+Slow USB acknowledgments do not block the radar sampling thread. Status includes
+`radar_loop_running`, `sample_age_seconds`, and `ack_age_seconds`; the lighting
+page displays sample and acknowledgment ages. Delivery still depends on a working
+controller connection; a blocked request must finish or time out before off can
+be sent.
