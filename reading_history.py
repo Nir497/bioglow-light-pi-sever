@@ -62,7 +62,8 @@ class ReadingHistory:
                 if math.isfinite(timestamp) and start <= timestamp <= end:
                     yield timestamp, entry
 
-        for timestamp, entry in points():
+        selected = list(points())
+        for timestamp, entry in selected:
             earliest = min(earliest, timestamp)
             count += 1
             for animal in entry["result"].get("animals", []) or []:
@@ -70,12 +71,12 @@ class ReadingHistory:
                     animals.add(animal["scientific_name"])
         start = earliest if seconds is None else start
         if count <= max_points:
-            return {"entries": [entry for _, entry in sorted(points(), key=lambda item: item[0])],
+            return {"entries": [entry for _, entry in sorted(selected, key=lambda item: item[0])],
                     "total": count, "sampled": False, "animals": sorted(animals),
                     "range": window, "start": start if count else end, "end": end}
         buckets = {}
         # Keep the last reading in each time bucket, bounding browser payloads.
-        for timestamp, entry in points():
+        for timestamp, entry in selected:
             bucket = min(max_points - 1, int((timestamp - start) / max(1, end - start) * max_points))
             if bucket not in buckets or timestamp >= buckets[bucket][0]:
                 buckets[bucket] = (timestamp, entry)

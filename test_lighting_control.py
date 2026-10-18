@@ -1,6 +1,8 @@
 import unittest
 import json
-from unittest.mock import MagicMock
+import threading
+import socket
+from unittest.mock import MagicMock, patch
 
 from lighting_control import LightingControl
 
@@ -16,6 +18,36 @@ class LightingTests(unittest.TestCase):
         self.now += 31
         self.light.update(value)
         return self.light.status()
+
+    def test_background_controller_does_not_block_sensor_or_status(self):
+        entered, release = threading.Event(), threading.Event()
+        def slow_controller(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            raise OSError('offline')
+        light = LightingControl(opener=slow_controller, background=True)
+        try:
+            with patch('lighting_control.socket.gethostbyname', return_value='192.0.2.1'):
+                light.update(0)
+                self.assertTrue(entered.wait(1))
+                self.assertEqual(light.status()['status'], 'pending')
+                light.set_mode('off')
+                self.assertEqual(light.status()['target_brightness'], 0)
+                light.update(500)
+                self.assertEqual(light.status()['mode'], 'off')
+                release.set()
+        finally:
+            release.set()
+            light.stop()
+
+    def test_mdns_fallback(self):
+        light = LightingControl(opener=self.opener, background=True)
+        with patch('lighting_control.socket.gethostbyname', side_effect=socket.gaierror('DNS')), patch('lighting_control.subprocess.run') as resolve:
+            resolve.return_value.stdout = 'bioglow.local\t192.0.2.1\n'
+            self.assertIsNone(light._request(0))
+            self.assertIn('192.0.2.1/json/state', self.opener.call_args.args[0].full_url)
+            self.assertIsNone(light._request(0))
+            self.assertEqual(resolve.call_count, 1)
 
     def test_hysteresis_and_brightness(self):
         self.assertEqual(self.read(0)['brightness'], 255)

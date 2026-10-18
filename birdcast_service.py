@@ -52,7 +52,7 @@ class Service:
                  animal_analysis: bool = True):
         self.root = root.resolve()
         self.light_sensor = LightSensor()
-        self.lighting = LightingControl()
+        self.lighting = LightingControl(background=True)
         self.presence_sensor = PresenceSensor()
         self.reading_history = ReadingHistory(self.root)
         self.animal_names = AnimalNames(self.root)
@@ -517,6 +517,7 @@ def main(argv=None) -> int:
         return 0
     finally:
         service.collection_schedule.stop()
+        service.lighting.stop()
         service.animal_analysis.stop()
         service.presence_sensor.stop()
         server.server_close()

@@ -37,3 +37,14 @@ available at `http://bioglow.local/`. These are fixture settings; the Pi keeps
 its existing hostname and dashboard port 8000.
 
 Protocol reference: https://kno.wled.ge/interfaces/json-api/
+
+Controller commands run in one background worker with a single pending target;
+slow or unreachable lighting never blocks lux sampling or `/v1/latest`.
+The API reports `pending` until the controller acknowledges a command.
+LAN requests bypass HTTP proxies. Resolution caches successful IPv4 addresses,
+invalidates them on failure, and tries `avahi-resolve-host-name` if normal DNS
+cannot resolve the mDNS name. Install the system Avahi utilities for this
+fallback, or set `BIOGLOW_LIGHT_HOST` to the fixture's reserved LAN IP in the
+server environment. Restart the dashboard service after changing its environment.
+Controller failures are labeled separately and do not invalidate lux readings.
+History graph queries parse each log once per request.
