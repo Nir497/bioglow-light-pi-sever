@@ -25,6 +25,8 @@ class LightingControl:
         self._background = background
         self._worker = None
         self._address = None
+        device_info = getattr(transport, "device_info", None)
+        self._device_info = dict(device_info) if isinstance(device_info, dict) else {}
         self._samples = deque()
         self._on = False
         self._auto_target = None
@@ -36,7 +38,7 @@ class LightingControl:
 
     def status(self):
         with self._lock:
-            return dict(self._state)
+            return {**self._state, "device": dict(self._device_info)}
 
     def set_mode(self, mode):
         return self.configure(mode=mode)
@@ -136,7 +138,9 @@ class LightingControl:
                            "col": [[int(color[index:index + 2], 16) for index in (1, 3, 5)] + [0]]}]}
         try:
             if self.transport:
-                self.transport.send(params)
+                device = self.transport.send(params)
+                if isinstance(device, dict):
+                    self._device_info = device
                 return None
             host = self.host
             if self._background:
@@ -174,6 +178,9 @@ class LightingControl:
             return None
         except Exception as exc:
             self._address = None
+            device_info = getattr(self.transport, "device_info", None)
+            if isinstance(device_info, dict):
+                self._device_info = dict(device_info)
             return f"WLED controller ({'USB' if self.transport else self.host}) unavailable: {exc}. Lux measurements continue."
 
     def _apply_result(self, target, error):

@@ -17,13 +17,15 @@ it can view readings, download audio, fetch BirdCast, and record microphone audi
 No internet hosting or router forwarding is required. LAN reachability depends on
 the host firewall and network; the hostname is not a verified reachability claim.
 
-The Light page also provides WLED USB power, brightness, and color controls.
+The separate **WLED light** page (`/#lighting`) provides SP803E WLED-ESP32 USB
+power, brightness, and color controls plus coverage of the 144-pixel strip.
+The **Lux sensor** page (`/#light`) retains sensor readings and history.
 The controller plugs into this server's Raspberry Pi; no WLED Wi-Fi connection
 or second server is needed. Manual settings stay active until Auto is selected
 (or the server restarts). See [LIGHTING.md](LIGHTING.md) for USB port selection
 and API details.
 
-The sidebar provides Overview, Radar, Light, BirdCast, and Recordings. Opening a
+The sidebar provides Overview, Radar, Lux sensor, WLED light, BirdCast, and Recordings. Opening a
 page or refreshing the view loads saved results and the recording library, without
 starting a microphone capture, light measurement, or BirdCast fetch. Choose
 **Read now**, **Fetch BirdCast**, or **Record 5 seconds** to request new data.

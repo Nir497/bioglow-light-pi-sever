@@ -31,7 +31,7 @@ function element() {
 }
 const document = {
   querySelector(selector){if(!nodes.has(selector))nodes.set(selector,element());return nodes.get(selector);},
-  querySelectorAll(){return ['overview','radar','light','birdcast','recordings'].map(name=>Object.assign(element(),{dataset:{view:name}}));},
+  querySelectorAll(){return ['overview','radar','light','lighting','birdcast','recordings'].map(name=>Object.assign(element(),{dataset:{view:name}}));},
   createElement:element,addEventListener(){},
 };
 const data = {status:'ok',sources:{radar:{http_status:200,result:{fresh:true,presence:'moving',
@@ -185,6 +185,19 @@ async function main(){
   await pendingPoll.fn();
   assert.equal(requests.length,countBeforeNavigation,'Navigation cancels polling for hidden recordings');
   assert.ok(cancelledTimers.has(timers.indexOf(pendingPoll)+1));
+  context.location.hash='#lighting';windowEvents.hashchange();
+  assert.equal(document.querySelector('#page-title').textContent,'WLED strip lighting');
+  assert.match(page.innerHTML,/data-lighting-settings/);
+  assert.ok(!page.innerHTML.includes('data-history-metric'),'Controller page contains no sensor graph');
+  assert.ok(!page.innerHTML.includes('data-action="light"'),'Controller page contains no lux read action');
+  assert.ok(!vm.runInContext("sourceCard('light',true)",context).includes('data-lighting-settings'),'Lux page contains no fixture controls');
+  const wledPoll=timers.findLast(timer=>timer.delay===1000);
+  assert.ok(wledPoll,'Controller page polls cached acknowledgements once per second');
+  const beforeWledPoll=page.innerHTML;
+  await wledPoll.fn();
+  assert.equal(page.innerHTML,beforeWledPoll,'Status updates preserve controller controls');
+  vm.runInContext("lighting={device:{led_count:144,covered_leds:144,firmware:'0.14.4'}}",context);
+  assert.match(vm.runInContext('lightingDevice()',context),/144 \/ 144 pixels/);
   const brightnessInput={value:'80'}, colorInput={value:'#112233'}, output={textContent:''};
   const form={dataset:{dirty:'true'},contains:()=>false,querySelector:selector=>selector==='[name="brightness"]' ? brightnessInput : selector==='[name="color"]' ? colorInput : output};
   const summary={textContent:''};
@@ -203,12 +216,12 @@ async function main(){
   assert.equal(colorInput.value,'#abcdef');
   assert.match(vm.runInContext('lightingControls()',context),/type="color"/);
   assert.match(vm.runInContext('lightingControls()',context),/type="range"/);
-  assert.match(vm.runInContext('lightingControls()',context),/WLED controller · USB/);
+  assert.match(vm.runInContext('lightingControls()',context),/SP803E · WLED-ESP32 · USB/);
   const originalFetch=context.fetch;
   context.fetch=async(path,options)=>{
     if(path==='/v1/lighting') {
       requests.push({path,options});
-      data.lighting={connection:'usb',mode:'on',status:'pending',manual_brightness:80,color:'#112233'};
+      data.lighting={connection:'usb',mode:JSON.parse(options.body).mode || 'on',status:'pending',manual_brightness:80,color:'#112233'};
       return {ok:true,json:async()=>({lighting:data.lighting})};
     }
     return originalFetch(path,options);
@@ -221,6 +234,12 @@ async function main(){
   assert.deepEqual(JSON.parse(requests.findLast(r=>r.path==='/v1/lighting').options.body),{brightness:80,color:'#112233'});
   assert.equal(vm.runInContext('lighting.mode',context),'on');
   assert.equal(form.dataset.dirty,'false');
+  for (const mode of ['off','on','auto']) {
+    await vm.runInContext(`setLightingMode('${mode}')`,context);
+    assert.deepEqual(JSON.parse(requests.findLast(r=>r.path==='/v1/lighting').options.body),{mode});
+    assert.equal(vm.runInContext('lighting.mode',context),mode);
+  }
+
   delayLatest=2500;
   await vm.runInContext('loadCache()',context);
   assert.equal(vm.runInContext("currentEntry('radar').http_status",context),503,'Network delay must count toward radar freshness');

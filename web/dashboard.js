@@ -1,7 +1,7 @@
 'use strict';
-const names = {overview:'Overview',radar:'Radar',light:'Light',birdcast:'BirdCast',recordings:'Recordings'};
-const titles = {overview:'Station overview',radar:'Presence & movement',light:'Luminance & lighting',birdcast:'Migration outlook',recordings:'Sound library'};
-const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
+const names = {overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',birdcast:'BirdCast',recordings:'Recordings'};
+const titles = {overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library'};
+const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
 let histories = {};
 let lighting = {};
@@ -143,20 +143,25 @@ function sourceCard(source, expanded = false) {
       try { const url = new URL(data.source.url); if (url.protocol === 'https:' && url.hostname === 'dashboard.birdcast.org') body += `<p class="timestamp"><a href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">Open BirdCast source ↗</a></p>`; } catch {}
     }
   }
-  if (expanded && source === 'light') body += facts([['Fixture',escapeHtml(lighting.connection === 'usb' ? 'WLED · USB' : `BioGlow · ${lighting.hostname || 'bioglow.local'}`)],['Control mode',escapeHtml(lighting.mode || 'auto')],['Lighting status',escapeHtml(lighting.status || 'waiting')],['Commanded brightness',lighting.brightness == null ? '—' : `${number(lighting.brightness)} / 255`],['Target brightness',lighting.target_brightness == null ? '—' : `${number(lighting.target_brightness)} / 255`],['Smoothed luminance',lighting.smoothed_lux == null ? '—' : `${number(lighting.smoothed_lux)} lux`]]) + '<p class="timestamp">Automatic: on below 30 lux, off above 300 lux. Between thresholds, keep the current state. Readings are averaged over 30 seconds; brightness fades over 3 seconds.</p>' + (lighting.error ? `<p class="error-message">${escapeHtml(lighting.error)}</p>` : '');
   if (expanded && source === 'light') body += '<p class="timestamp">The server collects light every ten seconds. If the sensor is disconnected, reconnect it and choose Read now.</p>';
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
   const topGraphic = expanded && source === 'radar' ? renderRadarLocatorGraphic(entry, success, data) : '';
   const control = source === 'birdcast' ? action('birdcast','Fetch BirdCast') : action(source,'Read now');
-  return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${topGraphic}${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded && source === 'light' ? lightingControls() : ''}${expanded ? historyGraph(source) : ''}</article>`;
+  return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${topGraphic}${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded ? historyGraph(source) : ''}</article>`;
+}
+function lightingDevice() {
+  const device = lighting.device || {};
+  return facts([['Strip length','3.2 ft · 144 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 144)} pixels`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Commands cover pixels 1–144 with a solid color and no spacing. WLED must be configured for at least 144 pixels; a shorter configured output is reported as an error.</p>';
 }
 function lightingControls() {
   const brightness = lighting.manual_brightness ?? 255;
   const color = /^#[0-9a-f]{6}$/i.test(lighting.color || '') ? lighting.color : '#ffa028';
   return `<section class="lighting-controls" aria-label="WLED lighting controls">
-    <h3>WLED controller · USB</h3>
+    <h2>SP803E · WLED-ESP32 · USB</h2>
     <p class="timestamp" data-lighting-summary>${escapeHtml(lighting.mode || 'auto')} · ${escapeHtml(lighting.status || 'waiting')}</p>
     <div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button></div>
+    <div data-lighting-device>${lightingDevice()}</div>
+    <p class="error-message" data-lighting-error ${lighting.error ? '' : 'hidden'}>${escapeHtml(lighting.error || '')}</p>
     <form data-lighting-settings>
       <label for="wled-brightness">Brightness <output id="wled-brightness-value" for="wled-brightness">${Math.round(brightness / 255 * 100)}%</output></label>
       <input id="wled-brightness" name="brightness" type="range" min="1" max="255" value="${brightness}" aria-describedby="wled-manual-help">
@@ -169,6 +174,10 @@ function lightingControls() {
   </section>`;
 }
 function syncLightingControls() {
+  const device = content.querySelector('[data-lighting-device]');
+  if (device) device.innerHTML = lightingDevice();
+  const error = content.querySelector('[data-lighting-error]');
+  if (error) { error.textContent = lighting.error || ''; error.hidden = !lighting.error; }
   const summary = content.querySelector('[data-lighting-summary]');
   if (summary) summary.textContent = `${lighting.mode || 'auto'} · ${lighting.status || 'waiting'}`;
   const form = content.querySelector('[data-lighting-settings]');
@@ -572,7 +581,7 @@ function scheduleCollectionPoll() {
       }
     } catch(error) { if(generation===collectionGeneration)notice(error.message,true); }
     if(generation===collectionGeneration)scheduleCollectionPoll();
-  },10000);
+  },view()==='lighting' ? 1000 : 10000);
 }
 function render() {
   const current = view();
@@ -581,6 +590,7 @@ function render() {
   document.querySelector('#page-description').textContent = descriptions[current];
   document.querySelectorAll('[data-view]').forEach(link => { if(link.dataset.view === current) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current'); });
   if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div><div data-recording-library>${library(3)}</div>`;
+  else if (current === 'lighting') content.innerHTML = `<article class="card">${lightingControls()}</article>`;
   else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div><div data-recording-library>${library()}</div>`;
   else {
     const selector = current === 'birdcast' ? `<div class="selector"><label for="region">US region</label><select id="region">${regions.map(item=>`<option value="${escapeHtml(item.code)}" ${item.code === region ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></div>` : '';
@@ -637,7 +647,7 @@ async function setLightingMode(mode, settings = {}) {
     const reading = content.querySelector('[data-reading="light"]');
     if (reading) {
       const wrapper = document.createElement('div');
-      wrapper.innerHTML = sourceCard('light',true);
+      wrapper.innerHTML = sourceCard('light',view()==='light');
       reading.replaceWith(wrapper.querySelector('[data-reading="light"]'));
     }
     syncLightingControls();
