@@ -368,6 +368,32 @@ class AutoLightingTests(unittest.TestCase):
         self.light.set_mode("on")
         self.assertEqual(self.light.status()["brightness"], 255)
 
+    def test_auto_continuously_updates_without_dashboard_requests(self):
+        transport = MagicMock()
+        transport.send.return_value = {}
+        light = LightingControl(transport=transport)
+        readings = iter((100, 350, 600, None, 100))
+        targets = []
+        finished = threading.Event()
+        def read():
+            distance = next(readings, 100)
+            return 200, self.reading(distance, presence="none" if distance is None else "moving")
+        def send(command):
+            # The initial startup command requests off before the first sample.
+            if light._radar_snapshot is not None:
+                targets.append(command["bri"])
+                if len(targets) >= 5:
+                    finished.set()
+            return {}
+        transport.send.side_effect = send
+        try:
+            light.start_distance_sampling(read)
+            self.assertTrue(finished.wait(4))
+            self.assertEqual(targets[:5], [38, 147, 255, 0, 38])
+            self.assertEqual(light.status()["mode"], "auto")
+        finally:
+            light.stop()
+
     def test_queued_auto_commands_coalesce_and_acknowledge_latest_sample(self):
         entered, release = threading.Event(), threading.Event()
         transport = MagicMock()
