@@ -149,5 +149,131 @@ class LightingTests(unittest.TestCase):
         self.assertIn('bioglow.local/json/state', request.full_url)
 
 
+class DistanceLightingTests(unittest.TestCase):
+    def setUp(self):
+        self.transport = MagicMock()
+        self.transport.send.return_value = {}
+        self.light = LightingControl(transport=self.transport)
+        self.light.set_mode("distance_test")
+        self.addCleanup(self.light.stop)
+
+    def reading(self, distance=100, presence="moving", **extra):
+        return dict(fresh=True, presence=presence, moving_distance_cm=distance,
+                    stationary_distance_cm=distance, **extra)
+
+    def test_mapping_and_fixed_appearance(self):
+        for distance, index in ((1, 0), (30, 0), (165, 96), (300, 191), (700, 191)):
+            with self.subTest(distance=distance):
+                self.light.update_distance(200, self.reading(distance))
+                state = self.light.status()
+                self.assertEqual(state["led_index"], index)
+                command = self.transport.send.call_args.args[0]
+                self.assertEqual(command["bri"], 64)
+                self.assertEqual(command["transition"], 0)
+                self.assertEqual(command["seg"][0]["col"], [[255, 160, 40, 0]])
+                self.assertEqual((command["seg"][0]["start"], command["seg"][0]["stop"]), (index, index+1))
+
+    def test_target_selection(self):
+        for presence, expected in (("moving", 80), ("stationary", 200), ("both", 80)):
+            self.light.update_distance(200, dict(fresh=True, presence=presence,
+                                               moving_distance_cm=80, stationary_distance_cm=200))
+            self.assertEqual(self.light.status()["distance_cm"], expected)
+
+    def test_no_target_errors_and_recovery(self):
+        self.light.update_distance(200, self.reading(presence="none"))
+        self.assertEqual(self.light.status()["test_state"], "no_target")
+        self.assertNotIn("sensor_error", self.light.status())
+        for status, reading in ((503, {}), (200, {"fresh": False}), (200, self.reading(None))):
+            self.light.update_distance(status, reading)
+            state = self.light.status()
+            self.assertEqual(state["test_state"], "sensor_unavailable")
+            self.assertIn("sensor_error", state)
+            self.assertFalse(self.transport.send.call_args.args[0]["on"])
+        self.light.update_distance(200, self.reading())
+        self.assertEqual(self.light.status()["test_state"], "tracking")
+        self.assertNotIn("sensor_error", self.light.status())
+
+    def test_lux_and_obsolete_radar_cannot_override_mode(self):
+        self.transport.reset_mock()
+        self.light.update(0)
+        self.assertFalse(self.transport.send.called)
+        revision = self.light._revision
+        self.light.set_mode("off")
+        self.transport.reset_mock()
+        self.light.update_distance(200, self.reading(), revision)
+        self.assertFalse(self.transport.send.called)
+
+    def test_appearance_retained_and_normal_coverage_restored(self):
+        with self.assertRaises(ValueError):
+            self.light.configure(brightness=100)
+        self.light.update_distance(200, self.reading())
+        self.light.set_mode("on")
+        command = self.transport.send.call_args.args[0]
+        self.assertNotIn("start", command["seg"][0])
+        self.assertEqual(command["bri"], 255)
+        self.assertNotIn("led_index", self.light.status())
+
+    def test_auto_uses_lux_collected_during_test(self):
+        self.light.update_distance(200, self.reading())
+        self.light.update(0)
+        self.light.set_mode("auto")
+        command = self.transport.send.call_args.args[0]
+        self.assertEqual(command["bri"], 255)
+        self.assertNotIn("start", command["seg"][0])
+
+    def test_controller_error_separate_from_sensor_error(self):
+        self.transport.send.side_effect = OSError("USB disconnected")
+        self.light.update_distance(503, {})
+        state = self.light.status()
+        self.assertEqual(state["status"], "controller_unavailable")
+        self.assertIn("sensor_error", state)
+        self.assertIn("USB disconnected", state["error"])
+
+    def test_sampling_interval_and_shutdown_off(self):
+        import time
+        sampled = threading.Event()
+        times = []
+        def read():
+            times.append(time.monotonic())
+            if len(times) >= 3:
+                sampled.set()
+            return 200, self.reading()
+        self.light.start_distance_sampling(read)
+        self.assertTrue(sampled.wait(2))
+        self.light.stop()
+        self.assertTrue(all(0.45 <= b-a < 0.9 for a, b in zip(times, times[1:])))
+        self.assertFalse(self.transport.send.call_args.args[0]["on"])
+        self.transport.close.assert_called()
+
+    def test_inflight_command_cannot_override_newer_mode_status(self):
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        commands = []
+        def send(command):
+            commands.append(command)
+            if len(commands) == 1:
+                entered.set()
+                release.wait(2)
+            else:
+                finished.set()
+            return {}
+        transport = MagicMock()
+        transport.send.side_effect = send
+        light = LightingControl(transport=transport, background=True)
+        try:
+            light.set_mode("distance_test")
+            self.assertTrue(entered.wait(1))
+            light.update_distance(200, self.reading())
+            light.set_mode("on")
+            release.set()
+            self.assertTrue(finished.wait(2))
+        finally:
+            release.set()
+            light.stop()
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[-1]["bri"], 255)
+        self.assertNotIn("start", commands[-1]["seg"][0])
+        self.assertEqual(light.status()["mode"], "on")
+
+
 if __name__ == '__main__':
     unittest.main()

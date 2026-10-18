@@ -1,4 +1,4 @@
-"""Server-owned lux control for the BioGlow WLED fixture."""
+"""Server-owned lux and development distance control for the BioGlow fixture."""
 import json
 import ipaddress
 import math
@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from collections import deque
+from presence import _frame_distance_cm
 from urllib.request import Request, urlopen, build_opener, ProxyHandler
 
 
@@ -24,6 +25,10 @@ class LightingControl:
         self._stopped = False
         self._background = background
         self._worker = None
+        self._radar_worker = None
+        self._radar_stop = threading.Event()
+        self._presence_reader = None
+        self._revision = 0
         self._address = None
         device_info = getattr(transport, "device_info", None)
         self._device_info = dict(device_info) if isinstance(device_info, dict) else {}
@@ -44,8 +49,8 @@ class LightingControl:
         return self.configure(mode=mode)
 
     def configure(self, mode=None, brightness=None, color=None):
-        if mode is not None and mode not in ("on", "off", "auto"):
-            raise ValueError('mode must be "on", "off", or "auto"')
+        if mode is not None and mode not in ("on", "off", "auto", "distance_test"):
+            raise ValueError('mode must be "on", "off", "auto", or "distance_test"')
         if brightness is not None and (type(brightness) is not int or not 1 <= brightness <= 255):
             raise ValueError("brightness must be an integer from 1 to 255")
         if color is not None and (not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
@@ -53,6 +58,11 @@ class LightingControl:
         if mode is None and brightness is None and color is None:
             raise ValueError("Provide mode, brightness, or color")
         with self._lock:
+            if self._stopped:
+                raise ValueError("Lighting control has stopped")
+            if self._state["mode"] == "distance_test" and mode is None:
+                raise ValueError("Select On, Off, or Auto before changing appearance")
+            previous_mode = self._state["mode"]
             if brightness is not None:
                 self._state["manual_brightness"] = brightness
             if color is not None:
@@ -60,7 +70,20 @@ class LightingControl:
             if mode is None:
                 mode = "off" if self._state["mode"] == "off" else "on"
             self._state["mode"] = mode
+            self._revision += 1
+            self._pending = None
+            self._state.pop("sensor_error", None)
+            self._state.pop("error", None)
+            if mode == "distance_test":
+                self._state.update(distance_cm=None, led_index=None, sample_interval_seconds=0.5,
+                                   test_state="waiting", test_brightness=64, test_color="#ffa028")
+                self._send(0, color="#ffa028", instant=True)
+                return dict(self._state)
+            for key in ("distance_cm", "led_index", "test_state", "test_brightness", "test_color", "sample_interval_seconds"):
+                self._state.pop(key, None)
             target = self._auto_target if mode == "auto" else (self._state["manual_brightness"] if mode == "on" else 0)
+            if target is None and previous_mode == "distance_test":
+                self._send(0)
             if target is None:
                 self._state.update(status="waiting", target_brightness=None)
                 self._state.pop("error", None)
@@ -70,11 +93,16 @@ class LightingControl:
 
     def update(self, lux):
         with self._lock:
+            if self._stopped:
+                return
+            distance_test = self._state["mode"] == "distance_test"
             now = self._clock()
             while self._samples and now - self._samples[0][0] >= 30:
                 self._samples.popleft()
             if lux is None or not isinstance(lux, (int, float)) or not math.isfinite(lux) or lux < 0:
                 self._auto_target = None
+                if distance_test:
+                    return
                 if self._state["mode"] != "auto":
                     self._send(self._state["manual_brightness"] if self._state["mode"] == "on" else 0)
                     return
@@ -89,16 +117,75 @@ class LightingControl:
             target = round(50 + 205 * max(0, 1 - average / 30)) if self._on else 0
             self._auto_target = target
             self._state.update(smoothed_lux=average)
+            if distance_test:
+                return
             if self._state["mode"] != "auto":
                 target = self._state["manual_brightness"] if self._state["mode"] == "on" else 0
             self._send(target)
 
+    def start_distance_sampling(self, presence_reader):
+        """Sample the existing UART receiver; never open a second sensor connection."""
+        with self._lock:
+            if self._radar_worker is not None or self._stopped:
+                return
+            self._presence_reader = presence_reader
+            self._radar_worker = threading.Thread(target=self._sample_radar, daemon=True,
+                                                  name="distance-light-sampling")
+            self._radar_worker.start()
+
+    def _sample_radar(self):
+        while not self._radar_stop.is_set():
+            with self._lock:
+                active = self._state["mode"] == "distance_test"
+                revision = self._revision
+            if active:
+                try:
+                    status, reading = self._presence_reader()
+                except Exception as exc:
+                    status, reading = 503, {"error": str(exc)}
+                self.update_distance(status, reading, revision)
+            self._radar_stop.wait(0.5)
+
+    def update_distance(self, status, reading, revision=None):
+        with self._lock:
+            if self._stopped or self._state["mode"] != "distance_test":
+                return
+            if revision is not None and revision != self._revision:
+                return
+            error = None
+            distance = None
+            if status != 200 or not reading.get("fresh", False):
+                error = "Radar unavailable or stale; requesting lights off."
+            elif reading.get("presence") != "none":
+                distance = _frame_distance_cm(reading)
+                if distance is None or not math.isfinite(distance) or distance <= 0:
+                    distance = None
+                    error = "Radar target has no usable distance; requesting lights off."
+            index = None if distance is None else round(max(0, min(1, (distance - 30) / 270)) * 191)
+            self._state.update(distance_cm=distance, led_index=index,
+                               test_state="sensor_unavailable" if error else "no_target" if index is None else "tracking")
+            if error:
+                self._state["sensor_error"] = error
+            else:
+                self._state.pop("sensor_error", None)
+            self._send(64 if index is not None else 0, color="#ffa028", led_index=index, instant=True)
+
     def stop(self):
+        with self._lock:
+            if self._stopped:
+                return
+        self._radar_stop.set()
+        if self._radar_worker:
+            self._radar_worker.join(timeout=1)
         with self._condition:
+            test_active = self._state["mode"] == "distance_test"
             self._stopped = True
+            self._pending = None
             self._condition.notify_all()
         if self._worker:
-            self._worker.join(timeout=6)
+            self._worker.join(timeout=12)
+        elif test_active:
+            self._apply_result(0, self._request(0, instant=True))
         if self.transport and (self._worker is None or not self._worker.is_alive()):
             self.transport.close()
 
@@ -107,35 +194,45 @@ class LightingControl:
             with self._condition:
                 self._condition.wait_for(lambda: self._stopped or self._pending is not None)
                 if self._stopped:
-                    if self.transport:
-                        self.transport.close()
-                    return
+                    test_active = self._state["mode"] == "distance_test"
+                    break
                 command, self._pending = self._pending, None
-                target, color = command
-            error = self._request(target, color)
+                target, color, led_index, instant, revision = command
+            error = self._request(target, color, led_index, instant)
             with self._lock:
-                self._apply_result(target, error)
+                if revision == self._revision:
+                    self._apply_result(target, error)
+        if test_active:
+            error = self._request(0, instant=True)
+            with self._lock:
+                self._apply_result(0, error)
+        if self.transport:
+            self.transport.close()
 
-    def _send(self, target):
+    def _send(self, target, color=None, led_index=None, instant=False):
         self._state["target_brightness"] = target
+        color = color or self._state["color"]
+        self._state["status"] = "pending"
         if self._background:
-            self._pending = (target, self._state["color"])
-            self._state["status"] = "pending"
+            self._pending = (target, color, led_index, instant, self._revision)
             if self._worker is None:
                 self._worker = threading.Thread(target=self._work, daemon=True, name="lighting-control")
                 self._worker.start()
             self._condition.notify()
         else:
-            self._state["status"] = "pending"
-            self._apply_result(target, self._request(target, self._state["color"]))
+            self._apply_result(target, self._request(target, color, led_index, instant))
 
-    def _request(self, target, color="#ffa028"):
+    def _request(self, target, color="#ffa028", led_index=None, instant=False):
         # Reassert each sample so a fixture restart or another stream cannot
         # silently leave the physical output out of sync with the server.
         params = {"on": bool(target), "bri": target, "transition": 30,
                   "lor": 2, "live": False, "udpn": {"nn": True},
                   "seg": [{"id": 0, "on": True, "bri": 255, "fx": 0, "pal": 0,
                            "col": [[int(color[index:index + 2], 16) for index in (1, 3, 5)] + [0]]}]}
+        if instant:
+            params["transition"] = 0
+        if led_index is not None:
+            params["seg"][0].update(start=led_index, stop=led_index + 1)
         try:
             if self.transport:
                 device = self.transport.send(params)
@@ -187,10 +284,11 @@ class LightingControl:
         if error is None:
             self._state["brightness"] = target
             self._state["on"] = bool(target)
+        if error is not None:
+            self._state.update(status="controller_unavailable", error=error)
+            return
         if self._pending is not None or self._state["status"] in ("waiting", "sensor_unavailable"):
             return
         if error is None:
             self._state.update(status="ok")
             self._state.pop("error", None)
-        else:
-            self._state.update(status="controller_unavailable", error=error)

@@ -153,3 +153,34 @@ navigation, safe text rendering, and local radar expiry, not browser layout or m
 playback. Headless Chromium attempts in this session timed out without producing a
 page or screenshot. Desktop/mobile visual checks, live microphone playback, and LAN
 access from another device remain to be verified on the host.
+
+
+### Distance test lighting mode
+
+Select **WLED light → Distance test** to test the LD2410C distance sensor with
+one LED. The server checks the existing radar receiver every 0.5 seconds,
+even with the browser closed; sensor history keeps its normal 10-second cadence.
+Distances of 30–300 cm map linearly onto LEDs 1–192 (API indices 0–191),
+clamping outside that range. The dot stays amber (`#ffa028`) at 25% brightness
+(64/255). This development mode tests position; distance-based brightness is
+not enabled yet.
+
+The first fresh no-target report turns the strip off. The radar's configured
+absence delay still applies. Stale/unavailable readings or a target with no usable
+distance request lights off and show a separate sensor error; fresh readings
+resume tracking. Controller failures appear separately and may prevent an off
+command from reaching the strip.
+
+On, Off, and Auto exit the test. On/Auto restore full-strip lighting; appearance
+controls retain their normal settings and are disabled during testing. Test mode
+is not restored after restart. Shutdown attempts to turn the test light off.
+
+`POST /v1/lighting` accepts `{"mode":"distance_test"}`. Lighting status includes
+`distance_cm`, zero-based `led_index`, `sample_interval_seconds`, `test_state`
+(`waiting`, `tracking`, `no_target`, or `sensor_unavailable`), `test_brightness`,
+`test_color`, and an optional `sensor_error` while this mode is active.
+
+For hardware validation, enable the mode, walk from 30 cm toward 3 m, stand
+still, then leave. Confirm exactly one LED moves along the strip, departure turns
+it off after the radar's delay, and On restores the entire strip. Automated tests
+use synthetic radar readings and mocked controller acknowledgments.

@@ -322,7 +322,7 @@ def make_handler(service: Service):
                 try:
                     body = self._body()
                     if not body or set(body) - {"mode", "brightness", "color"} or any(value is None for value in body.values()):
-                        raise ValueError('Provide mode (on/off/auto), brightness (1–255), or color (#RRGGBB).')
+                        raise ValueError('Provide mode (on/off/auto/distance_test), brightness (1–255), or color (#RRGGBB).')
                     if set(body) == {"mode"}:
                         lighting = service.lighting.set_mode(body["mode"])
                     else:
@@ -509,6 +509,7 @@ def main(argv=None) -> int:
                       animal_analysis=not args.no_animal_analysis)
     server = build_server(service, port=args.port)
     service.presence_sensor.start()
+    service.lighting.start_distance_sampling(service.presence_sensor.response)
     service.collection_schedule.start()
     try:
         service.animal_analysis.start()

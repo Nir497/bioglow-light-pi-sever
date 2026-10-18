@@ -41,6 +41,22 @@ class ServiceTests(unittest.TestCase):
             handler.do_POST()
             self.assertEqual(handler._send.call_args.args[0], 400)
 
+    def test_distance_mode_handler_and_passive_status(self):
+        handler = object.__new__(make_handler(self.service))
+        handler.path = '/v1/lighting'
+        handler._send = MagicMock()
+        handler._body = MagicMock(return_value={"mode": "distance_test"})
+        self.service.lighting.transport = MagicMock()
+        self.service.lighting._background = False
+        handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], 200)
+        self.assertEqual(handler._send.call_args.args[1]["lighting"]["mode"], "distance_test")
+        self.service.lighting.update_distance(200, {"fresh": True, "presence": "moving", "moving_distance_cm": 300})
+        self.service.presence_sensor.response = MagicMock(return_value=(200, {"fresh": True}))
+        self.assertEqual(self.service.latest()["lighting"]["led_index"], 191)
+        self.assertEqual(self.service.reading_history.recent("radar"), [])
+        self.service.lighting.stop()
+
     def test_lux_drives_lighting_and_latest_is_passive(self):
         self.service.lighting = MagicMock()
         self.service.light_sensor.response = MagicMock(return_value=(200, {"lux": 12, "ambient_counts": 24, "white_counts": 36}))

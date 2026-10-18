@@ -249,7 +249,7 @@ async function main(){
   assert.deepEqual(JSON.parse(requests.findLast(r=>r.path==='/v1/lighting').options.body),{brightness:80,color:'#112233'});
   assert.equal(vm.runInContext('lighting.mode',context),'on');
   assert.equal(form.dataset.dirty,'false');
-  for (const mode of ['off','on','auto']) {
+  for (const mode of ['off','on','auto','distance_test']) {
     await vm.runInContext(`setLightingMode('${mode}')`,context);
     assert.deepEqual(JSON.parse(requests.findLast(r=>r.path==='/v1/lighting').options.body),{mode});
     assert.equal(vm.runInContext('lighting.mode',context),mode);
@@ -260,6 +260,14 @@ async function main(){
   assert.deepEqual(JSON.parse(requests.findLast(r=>r.path==='/v1/lighting').options.body),{brightness:255,color:'#112233',mode:'on'});
   assert.equal(vm.runInContext('lighting.manual_brightness',context),255);
   assert.match(vm.runInContext('lightingControls()',context),/Full brightness · 100%/);
+  vm.runInContext("lighting.mode='distance_test';lighting.distance_cm=165;lighting.led_index=96;lighting.test_state='tracking'",context);
+  assert.match(vm.runInContext('lightingControls()',context),/data-lighting-appearance disabled/);
+  assert.match(vm.runInContext('lightingSummary()',context),/165 cm · LED 97 \/ 192/);
+  vm.runInContext("lighting.led_index=null;lighting.test_state='sensor_unavailable';lighting.sensor_error='Radar unavailable'",context);
+  assert.match(vm.runInContext('lightingControls()',context),/Radar unavailable/);
+  assert.match(vm.runInContext('lightingSummary()',context),/sensor unavailable/);
+  vm.runInContext("lighting.mode='on';delete lighting.sensor_error",context);
+
   vm.runInContext("lighting.device={confirmed_color:'#112233',confirmed_brightness:255,confirmed_on:true,segment_brightness:255,current_limit_ma:3000}",context);
   assert.match(vm.runInContext('lightingDevice()',context),/100% \(255 \/ 255\)/);
   assert.match(vm.runInContext('lightingDevice()',context),/#112233/);

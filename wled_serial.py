@@ -122,7 +122,10 @@ class WLEDSerial:
             coverage = min(count, self.led_count)
             command = copy.deepcopy(params)
             full = command["seg"][0]
-            full.update(id=0, start=0, stop=coverage, grp=1, spc=0, of=0,
+            start, stop = full.get("start", 0), full.get("stop", coverage)
+            if type(start) is not int or type(stop) is not int or not 0 <= start < stop <= coverage:
+                raise OSError("Requested LED range is outside the configured strip")
+            full.update(id=0, start=start, stop=stop, grp=1, spc=0, of=0,
                         on=True, bri=255, fx=0, pal=0, frz=False, rev=False, mi=False)
             # Consolidate the entire strip into segment 0 so overlapping old
             # spotlight/music segments cannot override part of the output.
@@ -142,15 +145,16 @@ class WLEDSerial:
             if reported_color != requested_color:
                 raise OSError("WLED did not acknowledge the requested RGBW color")
             if any(segment.get(key) != value for key, value in
-                   {"start": 0, "stop": coverage, "grp": 1, "spc": 0,
+                   {"start": start, "stop": stop, "grp": 1, "spc": 0,
                     "on": True, "bri": 255, "fx": 0, "pal": 0, "frz": False, "of": 0}.items()):
-                raise OSError("WLED did not acknowledge full-strip coverage with a solid color")
+                raise OSError("WLED did not acknowledge full-strip coverage or requested LED range with a solid color")
             if any(item.get("id", 0) != 0 and item.get("stop", 0) > item.get("start", 0)
                    for item in segments):
                 raise OSError("WLED still reports other active segments over the strip")
             power = acknowledged.get("info", {}).get("leds", {})
             self.device_info.update(
-                covered_leds=coverage, full_strip_confirmed=coverage == self.led_count,
+                covered_leds=stop - start, full_strip_confirmed=start == 0 and stop == self.led_count,
+                confirmed_led_index=start if stop - start == 1 else None,
                 confirmed_color="#" + "".join(f"{value:02x}" for value in reported_color[:3]),
                 confirmed_white=reported_color[3], confirmed_brightness=state.get("bri"),
                 confirmed_on=state.get("on"), segment_brightness=segment["bri"],

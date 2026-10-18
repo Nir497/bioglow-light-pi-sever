@@ -238,3 +238,35 @@ class WLEDSerialTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, 'No WLED JSON response'):
                 light.send(self.params)
         self.connection.close.assert_called_once()
+
+    def test_single_led_range_then_restore_full_strip(self):
+        light = WLEDSerial(port="test")
+        self.params["seg"][0].update(start=95, stop=96)
+        single = json.loads(json.dumps(self.reply))
+        single["state"]["seg"][0].update(start=95, stop=96)
+        self.connection.read_until.side_effect = [json.dumps(item).encode() for item in (self.reply, single, single, self.reply)]
+        result = light.send(self.params)
+        self.assertEqual(result["covered_leds"], 1)
+        self.assertFalse(result["full_strip_confirmed"])
+        self.assertEqual(result["confirmed_led_index"], 95)
+        del self.params["seg"][0]["start"]
+        del self.params["seg"][0]["stop"]
+        result = light.send(self.params)
+        self.assertEqual(result["covered_leds"], 192)
+        self.assertTrue(result["full_strip_confirmed"])
+
+    def test_wrong_led_range_acknowledgment_rejected(self):
+        self.params["seg"][0].update(start=95, stop=96)
+        with self.assertRaisesRegex(OSError, "requested LED range"):
+            WLEDSerial(port="test").send(self.params)
+
+    def test_single_led_clears_competing_segments(self):
+        current = json.loads(json.dumps(self.reply))
+        current["state"]["seg"].append({"id": 2, "start": 0, "stop": 192})
+        single = json.loads(json.dumps(self.reply))
+        single["state"]["seg"][0].update(start=191, stop=192)
+        self.params["seg"][0].update(start=191, stop=192)
+        self.connection.read_until.side_effect = [json.dumps(item).encode() for item in (current, single)]
+        WLEDSerial(port="test").send(self.params)
+        command = json.loads(self.connection.write.call_args.args[0])
+        self.assertEqual(command["seg"][1], {"id": 2, "stop": 0})
