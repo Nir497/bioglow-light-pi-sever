@@ -43,11 +43,26 @@ class LightingTests(unittest.TestCase):
     def test_mdns_fallback(self):
         light = LightingControl(opener=self.opener, background=True)
         with patch('lighting_control.socket.gethostbyname', side_effect=socket.gaierror('DNS')), patch('lighting_control.subprocess.run') as resolve:
-            resolve.return_value.stdout = 'bioglow.local\t192.0.2.1\n'
+            resolve.return_value.stdout = json.dumps({"type": "iisiu", "data": [2, 0, 'bioglow.local', 0, '192.0.2.1', 0]})
             self.assertIsNone(light._request(0))
             self.assertIn('192.0.2.1/json/state', self.opener.call_args.args[0].full_url)
             self.assertIsNone(light._request(0))
             self.assertEqual(resolve.call_count, 1)
+
+    def test_missing_resolver_reports_actionable_connection_error(self):
+        light = LightingControl(opener=self.opener, background=True)
+        with patch('lighting_control.socket.gethostbyname', side_effect=socket.gaierror('DNS')), patch('lighting_control.subprocess.run', side_effect=FileNotFoundError('busctl')):
+            error = light._request(0)
+            self.assertIn('BIOGLOW_LIGHT_HOST', error)
+            self.assertNotIn('No such file', error)
+            self.opener.assert_not_called()
+
+    def test_invalid_resolver_reply_does_not_send_request(self):
+        light = LightingControl(opener=self.opener, background=True)
+        with patch('lighting_control.socket.gethostbyname', side_effect=socket.gaierror('DNS')), patch('lighting_control.subprocess.run') as resolve:
+            resolve.return_value.stdout = '{"data": [2, 0, "bioglow.local", 0, "invalid", 0]}'
+            self.assertIn('Cannot resolve', light._request(0))
+            self.opener.assert_not_called()
 
     def test_hysteresis_and_brightness(self):
         self.assertEqual(self.read(0)['brightness'], 255)

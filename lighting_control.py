@@ -1,5 +1,6 @@
 """Server-owned lux control for the BioGlow WLED fixture."""
 import json
+import ipaddress
 import math
 import os
 import socket
@@ -116,10 +117,26 @@ class LightingControl:
                     try:
                         self._address = socket.gethostbyname(host)
                     except socket.gaierror:
-                        # Avahi can resolve LAN mDNS even without an NSS mDNS module.
-                        resolved = subprocess.run(["avahi-resolve-host-name", "-4", host],
-                                                  capture_output=True, text=True, timeout=2, check=True)
-                        self._address = resolved.stdout.split()[1]
+                        if not host.endswith(".local"):
+                            raise
+                        # Use the installed system bus client, without requiring
+                        # the optional avahi-utils command-line package.
+                        try:
+                            resolved = subprocess.run(
+                                ["busctl", "--system", "--timeout=2", "--json=short", "--", "call",
+                                 "org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server",
+                                 "ResolveHostName", "iisiu", "-1", "-1", host, "0", "0"],
+                                capture_output=True, text=True, timeout=2.5, check=True)
+                            reply = json.loads(resolved.stdout)
+                            address = reply["data"][4]
+                            self._address = str(ipaddress.IPv4Address(address))
+                        except (OSError, subprocess.SubprocessError, ValueError,
+                                KeyError, IndexError, TypeError) as exc:
+                            raise OSError(
+                                f"Cannot resolve {host} through DNS or system Avahi. "
+                                "Check the fixture connection and Avahi service, or set "
+                                "BIOGLOW_LIGHT_HOST to its LAN IP address"
+                            ) from exc
                 host = self._address
             request = Request(f"http://{host}/json/state",
                           data=json.dumps(params).encode("utf-8"),
