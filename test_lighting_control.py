@@ -117,7 +117,7 @@ class LightingTests(unittest.TestCase):
         self.opener.assert_not_called()
 
     def test_distance_brightness_endpoints_and_clamping(self):
-        for distance, target in ((1,38), (100,38), (350,147), (600,255), (900,255)):
+        for distance, target in ((1,38), (100,38), (350,83), (600,128), (900,128)):
             self.assertEqual(distance_brightness(distance), target)
             self.light.update_distance(200, dict(fresh=True, presence='moving', range_estimate_cm=distance))
             self.assertEqual(self.light.status()['brightness'], target)
@@ -152,7 +152,7 @@ class LightingTests(unittest.TestCase):
         self.opener.side_effect = OSError('offline')
         self.light.update_distance(200, dict(fresh=True, presence='moving', range_estimate_cm=600))
         self.assertIsNone(self.light.status()['brightness'])
-        self.assertEqual(self.light.status()['target_brightness'], 255)
+        self.assertEqual(self.light.status()['target_brightness'], 128)
         self.light.update_distance(200, dict(fresh=True, presence='moving', range_estimate_cm=600))
         self.assertEqual(self.opener.call_count, 2)
 
@@ -380,13 +380,38 @@ class AutoLightingTests(unittest.TestCase):
         self.light.configure(color="#123456")
         state = self.light.status()
         self.assertEqual(state["mode"], "auto")
-        self.assertEqual(state["brightness"], 147)
+        self.assertEqual(state["brightness"], 83)
         command = self.transport.send.call_args.args[0]
         self.assertEqual(command["transition"], 3)
         self.assertNotIn("start", command["seg"][0])
         self.assertEqual(command["seg"][0]["col"], [[18,52,86,0]])
         self.light.set_mode("on")
         self.assertEqual(self.light.status()["brightness"], 255)
+
+    def test_static_target_expires_and_only_distance_change_reactivates(self):
+        self.light.update_distance(200, self.reading(350))
+        self.assertEqual(self.light.status()["brightness"], 83)
+        sent = self.transport.send.call_count
+        self.light.update_distance(200, self.reading(352))
+        self.assertEqual(self.light.status()["brightness"], 83)
+        self.assertEqual(self.transport.send.call_count, sent)
+        for tick in range(1, 10):
+            self.now = tick * 0.5
+            self.light.update_distance(200, self.reading(350))
+        self.assertEqual(self.transport.send.call_count, sent)
+        self.now = 5
+        self.light.update_distance(200, self.reading(350))
+        self.assertEqual(self.light.status()["brightness"], 0)
+        self.assertEqual(self.light.status()["test_state"], "idle")
+        sent = self.transport.send.call_count
+        self.now = 20
+        self.light.update_distance(200, self.reading(352))
+        self.assertEqual(self.transport.send.call_count, sent, "Small range jitter must not wake lights")
+        self.light.configure(color="#112233")
+        self.assertEqual(self.light.status()["brightness"], 0)
+        self.light.update_distance(200, self.reading(400))
+        self.assertGreater(self.light.status()["brightness"], 0)
+        self.assertLessEqual(self.light.status()["brightness"], 128)
 
     def test_auto_continuously_updates_without_dashboard_requests(self):
         transport = MagicMock()
@@ -409,7 +434,7 @@ class AutoLightingTests(unittest.TestCase):
         try:
             light.start_distance_sampling(read)
             self.assertTrue(finished.wait(4))
-            self.assertEqual(targets[:5], [38, 147, 255, 0, 38])
+            self.assertEqual(targets[:5], [38, 83, 128, 0, 38])
             self.assertEqual(light.status()["mode"], "auto")
         finally:
             light.stop()
@@ -434,7 +459,7 @@ class AutoLightingTests(unittest.TestCase):
             light.update_distance(200, self.reading(600))
             with light._condition:
                 self.assertTrue(light._condition.wait_for(
-                    lambda: light._state["brightness"] == 255, timeout=1))
+                    lambda: light._state["brightness"] == 128, timeout=1))
         finally:
             light.stop()
 
@@ -447,7 +472,7 @@ class AutoLightingTests(unittest.TestCase):
             # necessarily sees an old sample time and a missing snapshot.
             with light._condition:
                 light._radar_sampled_at = 0
-                light._send(255)
+                light._send(128)
                 self.assertTrue(light._condition.wait_for(
                     lambda: light._state["status"] == "ok", timeout=1))
             self.assertTrue(light._worker.is_alive())
@@ -467,7 +492,7 @@ class AutoLightingTests(unittest.TestCase):
                 now[0] = 0.6
                 light._condition.notify_all()
                 self.assertTrue(light._condition.wait_for(
-                    lambda: light._state["brightness"] == 147, timeout=2))
+                    lambda: light._state["brightness"] == 83, timeout=2))
             self.assertEqual(transport.send.call_count, 2)
             self.assertNotIn("error", light.status())
         finally:
@@ -483,7 +508,7 @@ class AutoLightingTests(unittest.TestCase):
             light.update_distance(200, self.reading(600))
             with light._condition:
                 self.assertTrue(light._condition.wait_for(
-                    lambda: light._state["brightness"] == 255, timeout=1))
+                    lambda: light._state["brightness"] == 128, timeout=1))
                 now[0] = 3
                 light._condition.notify_all()
                 self.assertTrue(light._condition.wait_for(
@@ -532,11 +557,11 @@ class AutoLightingTests(unittest.TestCase):
             light.start_distance_sampling(read)
             self.assertTrue(entered.wait(1))
             self.assertTrue(sampled.wait(2))
-            self.assertEqual(light.status()["target_brightness"], 255)
+            self.assertEqual(light.status()["target_brightness"], 128)
             release.set()
             with light._condition:
                 self.assertTrue(light._condition.wait_for(
-                    lambda: light._state["brightness"] == 255, timeout=2))
+                    lambda: light._state["brightness"] == 128, timeout=2))
         finally:
             release.set()
             light.stop()
@@ -558,13 +583,13 @@ class AutoLightingTests(unittest.TestCase):
             self.assertTrue(entered.wait(1))
             light.update_distance(200, self.reading(350, timestamp="middle"))
             light.update_distance(200, self.reading(600, timestamp="far"))
-            self.assertEqual(light.status()["target_brightness"], 255)
+            self.assertEqual(light.status()["target_brightness"], 128)
             self.assertIsNone(light.status()["brightness"])
             release.set()
             with light._condition:
                 self.assertTrue(light._condition.wait_for(
-                    lambda: light._state["brightness"] == 255, timeout=2))
-            self.assertEqual([command["bri"] for command in commands], [38,255])
+                    lambda: light._state["brightness"] == 128, timeout=2))
+            self.assertEqual([command["bri"] for command in commands], [38,128])
             self.assertEqual(light.status()["confirmed_radar_timestamp"], "far")
         finally:
             release.set()
@@ -574,7 +599,6 @@ class AutoLightingTests(unittest.TestCase):
 # Share behaviors without inheriting single-LED-specific assertions.
 for _name in ("test_lux_and_obsolete_radar_cannot_override_mode",
               "test_controller_error_separate_from_sensor_error",
-              "test_unchanged_output_is_deduplicated_and_periodically_reasserted",
               "test_sampling_interval_and_shutdown_off"):
     setattr(AutoLightingTests, _name, getattr(DistanceLightingTests, _name))
 

@@ -159,8 +159,8 @@ access from another device remain to be verified on the host.
 
 Auto (the startup default, API `{"mode":"auto"}`) controls all 192 LEDs using the
 dashboard color. At 1 m or closer brightness is 15% (38/255); between 1 and 6 m
-it rises linearly, reaching 100% (255/255) at 6 m or farther. At 3.5 m it is
-147/255. Changes fade over 0.3 seconds. No target, stale/unavailable radar, or an
+it rises linearly, reaching 50% (128/255) at 6 m or farther. At 3.5 m it is
+83/255. Changes fade over 0.3 seconds. No target, stale/unavailable radar, or an
 unusable filtered range requests immediate off. Startup requests off until fresh
 radar arrives. Controller failures can prevent a command from reaching the strip.
 
@@ -234,7 +234,7 @@ For Auto hardware validation, approach, move away, stand still, and leave the de
 
 Auto output delivery retains the latest desired command independently of radar
 sampling. The output worker retries failed commands every 0.5 seconds after a
-request completes and reasserts acknowledged output every two seconds. A separate
+request completes. Distance test reasserts acknowledged output every two seconds. A separate
 output watchdog requests immediate off if radar sampling stops for over two
 seconds; malformed readings report a sensor error without terminating sampling.
 Slow USB acknowledgments do not block the radar sampling thread. Status includes
@@ -242,3 +242,11 @@ Slow USB acknowledgments do not block the radar sampling thread. Status includes
 page displays sample and acknowledgment ages. Delivery still depends on a working
 controller connection; a blocked request must finish or time out before off can
 be sent.
+
+Auto now wakes on the first usable target or a change of at least 5 cm in the
+filtered range. After five seconds without such a change it turns off, even if
+radar continues detecting a stationary wall. Fresh timestamps, raw channel
+noise, and color changes do not reset this timer. Movement reactivates Auto.
+Successful unchanged Auto commands are no longer periodically resent; failed
+commands still retry. Distance test retains its periodic reassertion, and manual
+On retains its saved brightness and full brightness option.

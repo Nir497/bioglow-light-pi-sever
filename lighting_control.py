@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen, build_opener, ProxyHandler
 
 def distance_brightness(distance_cm):
     """Map a usable radar range to full-strip brightness independently of rendering."""
-    return round(255 * (0.15 + 0.85 * max(0, min(1, (distance_cm - 100) / 500))))
+    return round(255 * (0.15 + 0.35 * max(0, min(1, (distance_cm - 100) / 500))))
 
 
 class LightingControl:
@@ -45,6 +45,8 @@ class LightingControl:
         self._device_info = dict(device_info) if isinstance(device_info, dict) else {}
         self._samples = deque()
         self._auto_target = 0
+        self._auto_last_distance = None
+        self._auto_last_change = None
         self._state = {"name": "BioGlow", "hostname": self.host, "brightness": None,
                        "target_brightness": None, "status": "waiting", "mode": "auto",
                        "connection": "usb" if transport else "wifi",
@@ -106,6 +108,8 @@ class LightingControl:
             self._pending = None
             self._radar_snapshot = None
             self._radar_sampled_at = None
+            self._auto_last_distance = None
+            self._auto_last_change = None
             self._last_distance_command = None
             self._state.pop("sensor_error", None)
             self._state.pop("error", None)
@@ -209,8 +213,19 @@ class LightingControl:
             else:
                 self._state.pop("sensor_error", None)
             if self._state["mode"] == "auto":
-                self._auto_target = distance_brightness(distance) if distance is not None else 0
-                self._send(self._auto_target, instant=distance is None)
+                now = self._clock()
+                if distance is None:
+                    self._auto_last_distance = None
+                    self._auto_last_change = None
+                elif (self._auto_last_distance is None
+                      or abs(distance - self._auto_last_distance) >= 5):
+                    self._auto_last_distance = distance
+                    self._auto_last_change = now
+                active = distance is not None and now - self._auto_last_change < 5
+                self._auto_target = distance_brightness(self._auto_last_distance) if active else 0
+                if distance is not None and not active:
+                    self._state["test_state"] = "idle"
+                self._send(self._auto_target, instant=self._auto_target == 0)
             else:
                 self._send(64 if index is not None else 0, color="#ffa028", led_index=index, instant=True)
 
@@ -260,7 +275,8 @@ class LightingControl:
                     interval = 0.5 if radar_active and retry else 2
                     # Manual on/off commands also recover after a lost USB or
                     # network reply. Only replay the newest desired state.
-                    if ((not radar_active and not retry) or self._desired is None
+                    if (((not radar_active or self._state["mode"] == "auto") and not retry)
+                            or self._desired is None
                             or (last_attempt is not None and self._clock() - last_attempt < interval)):
                         continue
                     self._pending = self._desired
@@ -292,7 +308,8 @@ class LightingControl:
         if (self._state["mode"] in ("auto", "distance_test")
                 and signature == self._last_distance_command
                 and self._state["status"] != "controller_unavailable"
-                and self._last_distance_sent_at is not None and now - self._last_distance_sent_at < 2):
+                and self._last_distance_sent_at is not None
+                and (self._state["mode"] == "auto" or now - self._last_distance_sent_at < 2)):
             return
         if self._state["mode"] in ("auto", "distance_test"):
             self._last_distance_command, self._last_distance_sent_at = signature, now

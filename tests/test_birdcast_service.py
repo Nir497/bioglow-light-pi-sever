@@ -82,7 +82,7 @@ class ServiceTests(unittest.TestCase):
         light.update_distance(200, {"fresh": True, "presence": "stationary", "range_estimate_cm": 350})
         self.service.presence_sensor.response = MagicMock()
         latest = self.service.latest()
-        self.assertEqual(latest["lighting"]["target_brightness"], 147)
+        self.assertEqual(latest["lighting"]["target_brightness"], 83)
         self.assertEqual(latest["sources"]["radar"]["result"]["range_estimate_cm"],
                          latest["lighting"]["distance_cm"])
         self.service.presence_sensor.response.assert_not_called()
@@ -92,7 +92,7 @@ class ServiceTests(unittest.TestCase):
         handler._body = MagicMock(return_value={"color": "#112233"})
         handler.do_POST()
         self.assertEqual(handler._send.call_args.args[1]["lighting"]["mode"], "auto")
-        self.assertEqual(light.status()["brightness"], 147)
+        self.assertEqual(light.status()["brightness"], 83)
         light.stop()
 
     def test_lux_collection_and_latest_are_passive(self):
