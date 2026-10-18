@@ -105,6 +105,7 @@ class LightingControl:
             self._revision += 1
             self._pending = None
             self._radar_snapshot = None
+            self._radar_sampled_at = None
             self._last_distance_command = None
             self._state.pop("sensor_error", None)
             self._state.pop("error", None)
@@ -242,7 +243,8 @@ class LightingControl:
                     test_active = self._state["mode"] in ("auto", "distance_test")
                     break
                 radar_active = self._state["mode"] in ("auto", "distance_test")
-                if (radar_active and self._radar_sampled_at is not None
+                if (radar_active and self._radar_snapshot is not None
+                        and self._radar_sampled_at is not None
                         and ((self._radar_snapshot["result"].get("age_seconds") or 0)
                              + self._clock() - self._radar_sampled_at
                              > self._radar_snapshot["result"].get("stale_after_seconds", 2))
@@ -296,7 +298,7 @@ class LightingControl:
         self._state["status"] = "pending"
         if self._background:
             self._pending = self._desired
-            if self._worker is None:
+            if self._worker is None or not self._worker.is_alive():
                 self._worker = threading.Thread(target=self._work, daemon=True, name="lighting-control")
                 self._worker.start()
             self._condition.notify()

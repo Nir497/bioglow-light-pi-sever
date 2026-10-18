@@ -394,6 +394,46 @@ class AutoLightingTests(unittest.TestCase):
         finally:
             light.stop()
 
+    def test_mode_switch_clears_sample_time_and_keeps_worker_running(self):
+        transport = MagicMock()
+        transport.send.return_value = {}
+        light = LightingControl(transport=transport, background=True)
+        try:
+            for mode in ("auto", "distance_test", "auto"):
+                light.update_distance(200, self.reading(350))
+                with light._condition:
+                    self.assertTrue(light._condition.wait_for(
+                        lambda: light._state["status"] == "ok", timeout=1))
+                light.set_mode(mode)
+                self.assertIsNone(light.status()["sample_age_seconds"])
+                with light._condition:
+                    self.assertTrue(light._condition.wait_for(
+                        lambda: light._state["status"] == "ok", timeout=1))
+                self.assertTrue(light._worker.is_alive())
+                self.assertEqual(light.status()["brightness"], 0)
+            light.update_distance(200, self.reading(600))
+            with light._condition:
+                self.assertTrue(light._condition.wait_for(
+                    lambda: light._state["brightness"] == 255, timeout=1))
+        finally:
+            light.stop()
+
+    def test_watchdog_tolerates_missing_snapshot_with_old_sample_time(self):
+        transport = MagicMock()
+        transport.send.return_value = {}
+        light = LightingControl(transport=transport, background=True)
+        try:
+            # Submit while holding the lock so the first worker iteration
+            # necessarily sees an old sample time and a missing snapshot.
+            with light._condition:
+                light._radar_sampled_at = 0
+                light._send(255)
+                self.assertTrue(light._condition.wait_for(
+                    lambda: light._state["status"] == "ok", timeout=1))
+            self.assertTrue(light._worker.is_alive())
+        finally:
+            light.stop()
+
     def test_output_retries_failure_without_another_sensor_submission(self):
         now = [0]
         transport = MagicMock()
