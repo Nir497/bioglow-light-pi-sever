@@ -399,6 +399,7 @@ def make_handler(service: Service):
             path = urlsplit(self.path).path
             assets = {
                 "/": ("index.html", "text/html; charset=utf-8"),
+                "/distance-test": ("index.html", "text/html; charset=utf-8"),
                 "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
                 "/dashboard.js": ("dashboard.js", "text/javascript; charset=utf-8"),
             }

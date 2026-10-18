@@ -55,7 +55,7 @@ class DashboardTests(unittest.TestCase):
         self.service.light_sensor.response = Mock(side_effect=AssertionError("hardware probe"))
         self.service.runner = Mock(side_effect=AssertionError("scrape"))
         with patch("birdcast_service.subprocess.run", side_effect=AssertionError("record")):
-            for path, content_type in [("/", "text/html"), ("/dashboard.css", "text/css"),
+            for path, content_type in [("/", "text/html"), ("/distance-test", "text/html"), ("/dashboard.css", "text/css"),
                                        ("/dashboard.js", "text/javascript")]:
                 status, headers, data = self.request("GET", path)
                 self.assertEqual(status, 200)

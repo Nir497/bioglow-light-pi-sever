@@ -157,8 +157,13 @@ access from another device remain to be verified on the host.
 
 ### Distance test lighting mode
 
-Select **WLED light → Distance test** to test the LD2410C distance sensor with
-one LED. The server checks the existing radar receiver every 0.5 seconds,
+Select **WLED light → Distance test** to activate testing and open its dedicated
+`/distance-test` page. This page combines live radar readings, raw diagnostics,
+and LED output status, refreshed together every half second. The sidebar and
+lighting page also link directly to it; opening the URL alone does not activate
+the lights. Use **Start distance test** or **Off · stop test** on that page.
+
+The mode tests the LD2410C distance sensor with one LED. The server checks the existing radar receiver every 0.5 seconds,
 even with the browser closed; sensor history keeps its normal 10-second cadence.
 Distances of 30–300 cm map linearly onto LEDs 1–192 (API indices 0–191),
 clamping outside that range. The dot stays amber (`#ffa028`) at 25% brightness

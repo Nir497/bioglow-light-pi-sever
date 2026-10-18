@@ -1,7 +1,7 @@
 'use strict';
-const names = {overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',birdcast:'BirdCast',recordings:'Recordings'};
-const titles = {overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library'};
-const descriptions = {overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
+const names = {'distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',birdcast:'BirdCast',recordings:'Recordings'};
+const titles = {'distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library'};
+const descriptions = {'distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
 let histories = {};
 let lighting = {};
@@ -46,7 +46,7 @@ const content = document.querySelector('#content');
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const time = value => { if (!value) return 'No reading yet'; const date = new Date(value); return Number.isNaN(date.getTime()) ? escapeHtml(value) : escapeHtml(date.toLocaleString()); };
 const number = value => value == null ? '—' : escapeHtml(typeof value === 'number' ? value.toLocaleString(undefined,{maximumFractionDigits:2}) : value);
-const view = () => Object.hasOwn(names, location.hash.slice(1)) ? location.hash.slice(1) : 'overview';
+const view = () => Object.hasOwn(names, location.hash.slice(1)) ? location.hash.slice(1) : location.pathname === '/distance-test' ? 'distance-test' : 'overview';
 function notice(message, error = false) { const box = document.querySelector('#notice'); box.textContent = message; box.classList.toggle('error',error); box.hidden = !message; }
 async function api(path, options = {}) {
   const response = await fetch(path, {...options, cache:'no-store'});
@@ -83,7 +83,7 @@ function scheduleRadarExpiry() {
 function scheduleRadarPoll() {
   clearTimeout(radarPollTimer);
   const generation = ++radarPollGeneration;
-  if (!['overview','radar'].includes(view())) return;
+  if (!['overview','radar','distance-test'].includes(view())) return;
   radarPollTimer = setTimeout(async()=>{
     if (generation !== radarPollGeneration) return;
     const started = performance.now();
@@ -91,6 +91,10 @@ function scheduleRadarPoll() {
     try {
       const latest = await api('/v1/latest');
       entry = latest.sources.radar;
+      if (generation === radarPollGeneration && view() === 'distance-test') {
+        lighting = latest.lighting || {};
+        syncLightingControls();
+      }
     } catch (error) {
       entry = {http_status:503,result:error.data || {fresh:false,status:'unavailable',
         error:{code:'presence_unavailable',message:error.message}}};
@@ -101,14 +105,14 @@ function scheduleRadarPoll() {
     updateRadarReading();
     scheduleRadarExpiry();
     scheduleRadarPoll();
-  },200);
+  },view()==='distance-test' ? 500 : 200);
 }
 function updateRadarReading() {
   const reading = content.querySelector('[data-reading="radar"]');
   if (!reading) return;
   const wasOpen = reading.querySelector('details.details')?.open;
   const wrapper = document.createElement('div');
-  wrapper.innerHTML = sourceCard('radar',view()==='radar');
+  wrapper.innerHTML = sourceCard('radar',['radar','distance-test'].includes(view()));
   const replacement = wrapper.querySelector('[data-reading="radar"]');
   const detailsEl = replacement.querySelector('details.details');
   if (detailsEl && wasOpen) detailsEl.open = true;
@@ -154,7 +158,7 @@ function sourceCard(source, expanded = false) {
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
   const topGraphic = expanded && source === 'radar' ? renderRadarLocatorGraphic(entry, success, data) : '';
   const control = source === 'birdcast' ? action('birdcast','Fetch BirdCast') : action(source,'Read now');
-  return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${topGraphic}${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded ? historyGraph(source) : ''}</article>`;
+  return `<article class="card" data-source="${source}"><div data-reading="${source}"><div class="card-header"><div class="source-label"><div class="source-icon" aria-hidden="true">${meta[0]}</div><div><h2>${meta[1]}</h2><small>${meta[2]}</small></div></div>${badge(source)}</div>${topGraphic}${body}<div class="card-actions">${control}${expanded ? '' : `<a class="section-link" href="#${source}">Explore data ↗</a>`}</div>${expanded ? details(entry || {status:'not_requested'}) : ''}</div>${expanded && view() !== 'distance-test' ? historyGraph(source) : ''}</article>`;
 }
 function lightingDevice() {
   const device = lighting.device || {};
@@ -166,6 +170,13 @@ function lightingSummary() {
   const detail = lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · LED ${lighting.led_index + 1} / 192`;
   return `${base} · ${detail} · 25% amber · every 0.5 s`;
 }
+function distanceTestPage() {
+  return `<article class="card"><h2>Single-LED test</h2><p class="timestamp" data-lighting-summary>${escapeHtml(lightingSummary())}</p>
+    <p>30–300 cm maps to LEDs 1–192. One amber LED stays at 25% brightness. No target turns the strip off; the radar’s absence delay still applies.</p>
+    <div class="card-actions"><button class="button" data-lighting-mode="distance_test">Start distance test</button><button class="button secondary" data-lighting-mode="off">Off · stop test</button><a class="section-link" href="#lighting">Lighting controls ↗</a></div>
+    <p class="error-message" data-lighting-error ${(lighting.error || lighting.sensor_error) ? '' : 'hidden'}>${escapeHtml([lighting.error, lighting.sensor_error].filter(Boolean).join(' '))}</p>
+    <div data-lighting-device>${lightingDevice()}</div></article>${sourceCard('radar',true)}`;
+}
 function lightingControls() {
   const brightness = lighting.manual_brightness ?? 255;
   const color = /^#[0-9a-f]{6}$/i.test(lighting.color || '') ? lighting.color : '#ffa028';
@@ -173,6 +184,7 @@ function lightingControls() {
     <h2>SP803E · WLED-ESP32 · USB</h2>
     <p class="timestamp" data-lighting-summary>${escapeHtml(lightingSummary())}</p>
     <div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button><button class="button secondary" data-lighting-mode="distance_test">Distance test</button><button class="button secondary" data-lighting-max>Full brightness · 100%</button></div>
+    <p><a class="section-link" href="/distance-test">Open distance test &amp; live radar ↗</a></p>
     <div data-lighting-device>${lightingDevice()}</div>
     <p class="error-message" data-lighting-error ${(lighting.error || lighting.sensor_error) ? '' : 'hidden'}>${escapeHtml([lighting.error, lighting.sensor_error].filter(Boolean).join(' '))}</p>
     <form data-lighting-settings>
@@ -577,6 +589,7 @@ function syncLibrary() {
 function scheduleCollectionPoll() {
   clearTimeout(collectionTimer);
   const generation = ++collectionGeneration;
+  if (view() === 'distance-test') return;
   collectionTimer = setTimeout(async()=>{
     try {
       const latest = await api('/v1/latest');
@@ -608,6 +621,7 @@ function render() {
   document.querySelector('#page-description').textContent = descriptions[current];
   document.querySelectorAll('[data-view]').forEach(link => { if(link.dataset.view === current) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current'); });
   if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div><div data-recording-library>${library(3)}</div>`;
+  else if (current === 'distance-test') content.innerHTML = distanceTestPage();
   else if (current === 'lighting') content.innerHTML = `<article class="card">${lightingControls()}</article>`;
   else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div><div data-recording-library>${library()}</div>`;
   else {
@@ -656,6 +670,7 @@ async function setLightingMode(mode, settings = {}) {
     const data = await api('/v1/lighting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mode ? {...settings,mode} : settings)});
     lighting = data.lighting;
     notice('Lighting settings saved.');
+    if (mode === 'distance_test' && view() !== 'distance-test') location.href = '/distance-test';
     const form = content.querySelector('[data-lighting-settings]');
     if (form && (settings.color || settings.brightness)) form.dataset.dirty = 'false';
     syncLightingControls();
