@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from wled_serial import WLEDSerial
+from wled_serial import WLEDSerial, SerialReplyTimeout
 
 
 class WLEDSerialTests(unittest.TestCase):
@@ -148,6 +148,48 @@ class WLEDSerialTests(unittest.TestCase):
         self.connection.read_until.side_effect = [b'booting\n', reply[:25], reply[25:], reply]
         WLEDSerial(port='test').send(self.params)
         self.assertEqual(self.connection.write.call_count, 2)
+
+    def test_startup_retries_without_reopening_or_resetting_the_port(self):
+        light = WLEDSerial(port='test')
+        with patch.object(light, '_read_reply', side_effect=[SerialReplyTimeout('booting'), self.reply, self.reply]):
+            light.send(self.params)
+        self.factory.assert_called_once()
+        self.connection.open.assert_called_once()
+        self.connection.close.assert_not_called()
+        writes = [json.loads(call.args[0]) for call in self.connection.write.call_args_list]
+        self.assertEqual(writes[:2], [{'v': True}, {'v': True}])
+        self.assertIn('seg', writes[2])
+
+    def test_silent_startup_never_sends_lighting_commands(self):
+        light = WLEDSerial(port='test')
+        with patch.object(light, '_read_reply', side_effect=SerialReplyTimeout('no data')):
+            with self.assertRaises(SerialReplyTimeout):
+                light.send(self.params)
+        writes = [json.loads(call.args[0]) for call in self.connection.write.call_args_list]
+        self.assertEqual(writes, [{'v': True}, {'v': True}])
+        self.connection.open.assert_called_once()
+        self.connection.close.assert_called_once()
+
+    def test_json_after_boot_prefix_without_newline(self):
+        reply = json.dumps(self.reply).encode() + b'\n'
+        self.connection.read_until.side_effect = [b'\x00ESP32 boot log: ' + reply, reply]
+        WLEDSerial(port='test').send(self.params)
+
+    def test_no_response_reports_selected_port_baud_and_received_bytes(self):
+        light = WLEDSerial(port='/dev/serial/by-id/sp803e')
+        light.connection = self.connection
+        self.connection.read_until.return_value = b''
+        with patch('wled_serial.time.monotonic', side_effect=[0, 0, 4]):
+            with self.assertRaisesRegex(SerialReplyTimeout, '/dev/serial/by-id/sp803e at 115200 baud.*0 bytes received'):
+                light._read_reply()
+
+    def test_esphome_output_is_distinguished_from_silence(self):
+        light = WLEDSerial(port='test')
+        light.connection = self.connection
+        self.connection.read_until.return_value = b'[I][app:001]: ESPHome version 2026\n'
+        with patch('wled_serial.time.monotonic', side_effect=[0, 0, 4]):
+            with self.assertRaisesRegex(SerialReplyTimeout, 'ESPHome output'):
+                light._read_reply()
 
     def test_silent_controller_times_out(self):
         light = WLEDSerial(port='test')

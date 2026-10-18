@@ -28,7 +28,12 @@ in the server environment, then restart the existing service.
 
 The Pi must expose the USB controller's serial port and the server user must
 have access to it. Use a data-capable USB cable. The connection is held open with
-exclusive access and reset/boot control lines deasserted. Unplugging or failed
+exclusive access and reset/boot control lines deasserted. The first query is
+retried once on the same open port if the ESP is still booting. The response
+parser accepts JSON following startup text, even without an intervening newline.
+The page shows the selected USB serial path and baud rate; timeout errors show
+whether the Pi received zero bytes or serial output without WLED JSON. No raw
+serial log output is exposed by the dashboard. Unplugging or failed
 acknowledgements closes the connection; subsequent commands or scheduled reads
 retry discovery. No firmware, GPIO, LED-output bus, or configured LED count is changed.
 Commands consolidate the strip into one segment covering all configured pixels.
@@ -95,3 +100,25 @@ the dashboard server now explicitly selects USB and never resolves
 
 Protocol references: [WLED serial](https://kno.wled.ge/interfaces/serial/) and
 [WLED JSON API](https://kno.wled.ge/interfaces/json-api/).
+
+## Connection troubleshooting
+
+The path is browser → `/v1/lighting` on the existing Pi server → USB serial
+at 115200 baud → SP803E WLED firmware. It is not a direct browser serial session.
+The first payload is `{"v":true}`, requesting WLED state and device information.
+Lighting commands are sent only after the device identifies as WLED.
+
+A response timeout means the serial port opened but WLED state was not received;
+it does not prove the selected port is the controller or that the firmware
+supports serial JSON. Check the selected device using the read-only host command:
+
+```bash
+.venv/bin/python -m serial.tools.list_ports -v
+```
+
+Run it from the repository on the Pi. If necessary, set `BIOGLOW_WLED_PORT` to
+that controller's stable `/dev/serial/by-id/...` path in the existing server's
+environment. Check WLED's serial speed and whether its RX/TX pins are allocated
+by another function. WLED serial support must be enabled in the installed
+firmware. ESPHome boot logs indicate different firmware and do not satisfy a
+WLED handshake. Do not infer successful control from USB enumeration alone.

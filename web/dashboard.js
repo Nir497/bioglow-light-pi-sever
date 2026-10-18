@@ -151,7 +151,7 @@ function sourceCard(source, expanded = false) {
 }
 function lightingDevice() {
   const device = lighting.device || {};
-  return facts([['Strip length','3.2 ft · 144 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 144)} pixels`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Commands cover pixels 1–144 with a solid color and no spacing. WLED must be configured for at least 144 pixels; a shorter configured output is reported as an error.</p>';
+  return facts([['Connection','Pi server → USB serial → SP803E'],['USB port',escapeHtml(device.serial_port || 'Not selected yet')],['Serial speed',`${number(device.baudrate ?? 115200)} baud`],['Strip length','3.2 ft · 144 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 144)} pixels`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Commands cover pixels 1–144 with a solid color and no spacing. WLED must be configured for at least 144 pixels; a shorter configured output is reported as an error.</p>';
 }
 function lightingControls() {
   const brightness = lighting.manual_brightness ?? 255;

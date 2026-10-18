@@ -181,7 +181,7 @@ class LightingControl:
             device_info = getattr(self.transport, "device_info", None)
             if isinstance(device_info, dict):
                 self._device_info = dict(device_info)
-            return f"WLED controller ({'USB' if self.transport else self.host}) unavailable: {exc}. Lux measurements continue."
+            return f"WLED controller ({'USB' if self.transport else self.host}) unavailable: {str(exc).rstrip('.')}. Lux measurements continue."
 
     def _apply_result(self, target, error):
         if error is None:

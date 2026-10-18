@@ -8,6 +8,10 @@ import serial
 from serial.tools import list_ports
 
 
+class SerialReplyTimeout(OSError):
+    """A serial port opened, but no complete WLED state response arrived."""
+
+
 class WLEDSerial:
     def __init__(self, port=None, baudrate=115200, led_count=144):
         self.port = port or os.environ.get("BIOGLOW_WLED_PORT")
@@ -19,20 +23,50 @@ class WLEDSerial:
     def _read_reply(self):
         deadline = time.monotonic() + 3
         pending = b""
+        decoder = json.JSONDecoder()
         while time.monotonic() < deadline:
-            pending += self.connection.read_until(b"\n", 32768)
+            chunk = self.connection.read_until(b"\n", 32768)
+            self.device_info["received_bytes"] = self.device_info.get("received_bytes", 0) + len(chunk)
+            pending += chunk
             if len(pending) > 65536:
                 raise OSError("WLED USB response exceeds the supported size")
+            # ESP boot/debug output may precede JSON without a newline. Scan
+            # for a complete state object rather than dropping the entire line.
+            text = pending.decode("utf-8", errors="replace")
+            start = text.find("{")
+            while start >= 0:
+                try:
+                    reply, _ = decoder.raw_decode(text[start:])
+                except ValueError:
+                    start = text.find("{", start + 1)
+                    continue
+                if isinstance(reply, dict) and isinstance(reply.get("state"), dict):
+                    self.device_info["response_kind"] = "WLED JSON"
+                    return reply
+                start = text.find("{", start + 1)
+            if chunk:
+                self.device_info["response_kind"] = "serial output without WLED JSON"
+                if "esphome" in text.lower():
+                    self.device_info["response_kind"] = "ESPHome output (not WLED firmware)"
+        port = self.device_info.get("serial_port", self.port or "selected USB port")
+        received = self.device_info.get("received_bytes", 0)
+        kind = self.device_info.get("response_kind", "no serial data")
+        raise SerialReplyTimeout(
+            f"No WLED JSON response from {port} at {self.baudrate} baud "
+            f"({received} bytes received; {kind}). Check the selected USB device, "
+            "WLED serial baud rate, firmware serial support, and RX/TX pin assignments")
+
+    def _query(self, startup=False):
+        for attempt in range(2 if startup else 1):
+            self._write({"v": True})
             try:
-                reply = json.loads(pending)
-            except (ValueError, UnicodeDecodeError):
-                if pending.endswith(b"\n"):
-                    pending = b""  # Ignore complete boot/debug lines.
-                continue
-            pending = b""
-            if isinstance(reply, dict) and isinstance(reply.get("state"), dict):
-                return reply
-        raise OSError("No WLED JSON response over USB. Check WLED serial support and 115200 baud.")
+                return self._read_reply()
+            except SerialReplyTimeout:
+                if not startup or attempt == 1:
+                    raise
+                # Opening some USB bridges resets the ESP. Retry on the same
+                # open port after the first response window; reopening can reset
+                # it again and prevent it ever answering the initial query.
 
     def _write(self, params):
         data = (json.dumps(params, separators=(",", ":")) + "\n").encode("ascii")
@@ -58,9 +92,10 @@ class WLEDSerial:
                 connection.dtr = False
                 connection.rts = False
                 connection.port = port
+                self.device_info.update(serial_port=port, baudrate=self.baudrate,
+                                        received_bytes=0, response_kind="no serial data")
                 connection.open()
-                self._write({"v": True})
-                reply = self._read_reply()
+                reply = self._query(startup=True)
                 if reply.get("info", {}).get("brand") != "WLED":
                     raise OSError("The selected USB serial device did not identify as WLED")
                 current = reply
@@ -68,15 +103,16 @@ class WLEDSerial:
             # changed in WLED since the preceding command.
             if current is None:
                 self.connection.reset_input_buffer()
-                self._write({"v": True})
-                current = self._read_reply()
+                current = self._query()
             info = current.get("info", {})
             count = info.get("leds", {}).get("count")
             if type(count) is not int or not 1 <= count <= 65535:
                 raise OSError("WLED did not report a valid configured LED count; check LED Preferences")
             if not str(info.get("arch", "esp32")).lower().startswith("esp32"):
                 raise OSError("Expected the SP803E ESP32 WLED controller")
-            self.device_info = {"model": "SP803E", "name": info.get("name", "WLED-ESP32"),
+            self.device_info = {"serial_port": self.device_info.get("serial_port"),
+                                "baudrate": self.baudrate,
+                                "model": "SP803E", "name": info.get("name", "WLED-ESP32"),
                                 "firmware": info.get("ver"), "architecture": info.get("arch", "esp32"),
                                 "led_count": count, "expected_led_count": self.led_count, "length_ft": 3.2}
             if count < self.led_count and params["on"]:
