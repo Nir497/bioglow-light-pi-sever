@@ -10,6 +10,8 @@ page (`/#light`) contains only the VEML7700 readings and history graph:
 - **On** restores the chosen manual brightness; **Off** switches off.
 - Choose a color and brightness, then **Apply color & brightness**. Applying
   settings selects manual control, retaining Off if already selected.
+- **Full brightness · 100%** selects manual On, applies the currently chosen
+  color, and requests master brightness 255/255 and segment brightness 255/255.
 - **Auto** restores lux control using the latest smoothed measurement.
 
 Manual settings survive scheduled sensor reads, including lux sensor failures.
@@ -46,7 +48,11 @@ It expands segment 0 from `start: 0` to `stop: 144` (exclusive), sets solid
 RGB with `grp: 1`, `spc: 0`, full segment brightness, zero offset, and unfreezes
 output. Other active segments are removed so old spotlight or music layouts
 cannot override the strip. Playlists and nightlight are stopped. The white
-channel stays zero so the selected RGB color is preserved. Commands suppress
+channel stays zero so the selected RGB color is preserved. The primary color
+is sent as `seg[0].col: [[R,G,B,0]]`; color bytes are never premultiplied by
+brightness. The solid effect and default palette are explicitly selected.
+Acknowledgement checks all four RGBW channels (a three-channel RGB reply implies
+white zero), preventing an unwanted white channel from washing out the color. Commands suppress
 sync notifications and override incoming live streams. WLED's response must acknowledge power, brightness when on, and
 color and the full segment range before the server reports success. The page
 shows the firmware version, configured LED count, and last acknowledged pixel
@@ -56,6 +62,12 @@ lighting a partial strip. Off remains available and discloses partial configured
 coverage. Set the actual LED-output length to 144 in WLED LED Preferences if
 needed; WLED's USB serial state API does not expose hardware bus configuration.
 The server leaves data GPIO, bus type, voltage, and current limits unchanged.
+The page shows acknowledged RGB color, master brightness, segment brightness,
+and WLED's reported current limit. Brightness 255 requests the full API range;
+WLED's configured global brightness factor and automatic brightness limiter can
+still reduce actual output. The application does not overwrite the power budget.
+Physical color order remains the strip's WLED LED Preferences setting; if red
+and green are physically swapped, correct the output's color order there.
 This acknowledgement verifies controller state, not physical light output.
 
 ## Verification

@@ -235,7 +235,8 @@ async function main(){
   context.fetch=async(path,options)=>{
     if(path==='/v1/lighting') {
       requests.push({path,options});
-      data.lighting={connection:'usb',mode:JSON.parse(options.body).mode || 'on',status:'pending',manual_brightness:80,color:'#112233'};
+      const requested=JSON.parse(options.body);
+      data.lighting={connection:'usb',mode:requested.mode || 'on',status:'pending',manual_brightness:requested.brightness ?? 80,color:requested.color || '#112233'};
       return {ok:true,json:async()=>({lighting:data.lighting})};
     }
     return originalFetch(path,options);
@@ -254,6 +255,15 @@ async function main(){
     assert.equal(vm.runInContext('lighting.mode',context),mode);
   }
 
+  page.listeners.click({target:{closest:selector=>selector==='[data-lighting-max]' ? {} : null}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(JSON.parse(requests.findLast(r=>r.path==='/v1/lighting').options.body),{brightness:255,color:'#112233',mode:'on'});
+  assert.equal(vm.runInContext('lighting.manual_brightness',context),255);
+  assert.match(vm.runInContext('lightingControls()',context),/Full brightness · 100%/);
+  vm.runInContext("lighting.device={confirmed_color:'#112233',confirmed_brightness:255,confirmed_on:true,segment_brightness:255,current_limit_ma:3000}",context);
+  assert.match(vm.runInContext('lightingDevice()',context),/100% \(255 \/ 255\)/);
+  assert.match(vm.runInContext('lightingDevice()',context),/#112233/);
+  assert.match(vm.runInContext('lightingDevice()',context),/3,000 mA/);
   delayLatest=2500;
   await vm.runInContext('loadCache()',context);
   assert.equal(vm.runInContext("currentEntry('radar').http_status",context),503,'Network delay must count toward radar freshness');

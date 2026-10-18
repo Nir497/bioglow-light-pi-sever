@@ -123,7 +123,7 @@ class WLEDSerial:
             command = copy.deepcopy(params)
             full = command["seg"][0]
             full.update(id=0, start=0, stop=coverage, grp=1, spc=0, of=0,
-                        on=True, bri=255, fx=0, frz=False, rev=False, mi=False)
+                        on=True, bri=255, fx=0, pal=0, frz=False, rev=False, mi=False)
             # Consolidate the entire strip into segment 0 so overlapping old
             # spotlight/music segments cannot override part of the output.
             command["seg"] = [full] + [
@@ -137,16 +137,24 @@ class WLEDSerial:
                 raise OSError("WLED did not acknowledge the requested power and brightness")
             segments = state.get("seg", [])
             segment = next((item for item in segments if item.get("id", 0) == 0), None)
-            if not segment or segment.get("col", [[]])[0][:3] != params["seg"][0]["col"][0][:3]:
-                raise OSError("WLED did not acknowledge the requested color")
+            requested_color = (list(params["seg"][0]["col"][0]) + [0])[:4]
+            reported_color = (list(segment.get("col", [[]])[0]) + [0])[:4] if segment else []
+            if reported_color != requested_color:
+                raise OSError("WLED did not acknowledge the requested RGBW color")
             if any(segment.get(key) != value for key, value in
                    {"start": 0, "stop": coverage, "grp": 1, "spc": 0,
-                    "on": True, "bri": 255, "fx": 0, "frz": False, "of": 0}.items()):
+                    "on": True, "bri": 255, "fx": 0, "pal": 0, "frz": False, "of": 0}.items()):
                 raise OSError("WLED did not acknowledge full-strip coverage with a solid color")
             if any(item.get("id", 0) != 0 and item.get("stop", 0) > item.get("start", 0)
                    for item in segments):
                 raise OSError("WLED still reports other active segments over the strip")
-            self.device_info.update(covered_leds=coverage, full_strip_confirmed=coverage == self.led_count)
+            power = acknowledged.get("info", {}).get("leds", {})
+            self.device_info.update(
+                covered_leds=coverage, full_strip_confirmed=coverage == self.led_count,
+                confirmed_color="#" + "".join(f"{value:02x}" for value in reported_color[:3]),
+                confirmed_white=reported_color[3], confirmed_brightness=state.get("bri"),
+                confirmed_on=state.get("on"), segment_brightness=segment["bri"],
+                current_limit_ma=power.get("maxpwr"), estimated_current_ma=power.get("pwr"))
             return dict(self.device_info)
         except Exception:
             self.close()

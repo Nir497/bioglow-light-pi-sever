@@ -134,7 +134,7 @@ class LightingControl:
         # silently leave the physical output out of sync with the server.
         params = {"on": bool(target), "bri": target, "transition": 30,
                   "lor": 2, "live": False, "udpn": {"nn": True},
-                  "seg": [{"id": 0, "on": True, "bri": 255, "fx": 0,
+                  "seg": [{"id": 0, "on": True, "bri": 255, "fx": 0, "pal": 0,
                            "col": [[int(color[index:index + 2], 16) for index in (1, 3, 5)] + [0]]}]}
         try:
             if self.transport:

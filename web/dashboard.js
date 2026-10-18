@@ -158,7 +158,7 @@ function sourceCard(source, expanded = false) {
 }
 function lightingDevice() {
   const device = lighting.device || {};
-  return facts([['Connection','Pi server → USB serial → SP803E'],['USB port',escapeHtml(device.serial_port || 'Not selected yet')],['Serial speed',`${number(device.baudrate ?? 115200)} baud`],['Strip length','3.2 ft · 144 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 144)} pixels`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Commands cover pixels 1–144 with a solid color and no spacing. WLED must be configured for at least 144 pixels; a shorter configured output is reported as an error.</p>';
+  return facts([['Connection','Pi server → USB serial → SP803E'],['USB port',escapeHtml(device.serial_port || 'Not selected yet')],['Serial speed',`${number(device.baudrate ?? 115200)} baud`],['Strip length','3.2 ft · 144 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 144)} pixels`],['Confirmed color',escapeHtml(device.confirmed_color || 'Not verified yet')],['Confirmed brightness',device.confirmed_brightness == null ? 'Not verified yet' : device.confirmed_on === false ? 'Off' : `${Math.round(device.confirmed_brightness / 255 * 100)}% (${number(device.confirmed_brightness)} / 255)`],['Segment brightness',device.segment_brightness == null ? 'Not verified yet' : `${number(device.segment_brightness)} / 255`],['WLED current limit',device.current_limit_ma == null ? 'Not reported' : device.current_limit_ma === 0 ? 'Disabled in WLED' : `${number(device.current_limit_ma)} mA`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Commands cover pixels 1–144 with a solid color and no spacing. WLED must be configured for at least 144 pixels; a shorter configured output is reported as an error.</p>';
 }
 function lightingControls() {
   const brightness = lighting.manual_brightness ?? 255;
@@ -166,7 +166,7 @@ function lightingControls() {
   return `<section class="lighting-controls" aria-label="WLED lighting controls">
     <h2>SP803E · WLED-ESP32 · USB</h2>
     <p class="timestamp" data-lighting-summary>${escapeHtml(lighting.mode || 'auto')} · ${escapeHtml(lighting.status || 'waiting')}</p>
-    <div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button></div>
+    <div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button><button class="button secondary" data-lighting-max>Full brightness · 100%</button></div>
     <div data-lighting-device>${lightingDevice()}</div>
     <p class="error-message" data-lighting-error ${lighting.error ? '' : 'hidden'}>${escapeHtml(lighting.error || '')}</p>
     <form data-lighting-settings>
@@ -177,7 +177,7 @@ function lightingControls() {
       <button class="button secondary" type="submit">Apply color &amp; brightness</button>
     </form>
     <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Select Auto to let lux readings control brightness again.</p>
-    <p class="timestamp">Commands go from this server to the USB controller. Status shows whether WLED acknowledged the command.</p>
+    <p class="timestamp">Commands go from this server to the USB controller. Status shows whether WLED acknowledged the command. At 100%, both master and segment brightness are 255/255. WLED’s configured power limits and global brightness factor can still reduce physical output.</p>
   </section>`;
 }
 function syncLightingControls() {
@@ -639,7 +639,7 @@ async function run(source) {
 async function setLightingMode(mode, settings = {}) {
   if (pending.has('lighting')) return;
   pending.add('lighting');
-  const buttons = content.querySelectorAll('[data-lighting-mode], [data-lighting-settings] button, [data-lighting-settings] input');
+  const buttons = content.querySelectorAll('[data-lighting-mode], [data-lighting-max], [data-lighting-settings] button, [data-lighting-settings] input');
   buttons.forEach(button=>button.disabled=true);
   try {
     const data = await api('/v1/lighting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mode ? {...settings,mode} : settings)});
@@ -675,6 +675,13 @@ content.addEventListener('submit', event=>{
   setLightingMode(null, {brightness:Number(form.querySelector('[name="brightness"]').value),color:form.querySelector('[name="color"]').value});
 });
 content.addEventListener('click',event=>{
+  const maximum = event.target.closest('[data-lighting-max]');
+  if (maximum) {
+    const form = content.querySelector('[data-lighting-settings]');
+    const color = form?.querySelector('[name="color"]')?.value || lighting.color || '#ffa028';
+    setLightingMode('on', {brightness:255,color});
+    return;
+  }
   const lightingButton = event.target.closest('[data-lighting-mode]');
   if (lightingButton) { setLightingMode(lightingButton.dataset.lightingMode); return; }
   const schedule = event.target.closest('[data-schedule-recording]');

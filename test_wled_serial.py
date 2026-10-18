@@ -9,7 +9,7 @@ from wled_serial import WLEDSerial, SerialReplyTimeout
 class WLEDSerialTests(unittest.TestCase):
     def setUp(self):
         self.params = {'on': True, 'bri': 80, 'seg': [{'id': 0, 'col': [[0, 255, 68, 0]]}]}
-        self.reply = {'state': {'on': True, 'bri': 80, 'seg': [{'id': 0, 'start': 0, 'stop': 144, 'grp': 1, 'spc': 0, 'on': True, 'bri': 255, 'fx': 0, 'frz': False, 'of': 0, 'col': [[0, 255, 68, 0]]}]},
+        self.reply = {'state': {'on': True, 'bri': 80, 'seg': [{'id': 0, 'start': 0, 'stop': 144, 'grp': 1, 'spc': 0, 'on': True, 'bri': 255, 'fx': 0, 'pal': 0, 'frz': False, 'of': 0, 'col': [[0, 255, 68, 0]]}]},
                       'info': {'brand': 'WLED', 'arch': 'esp32', 'ver': '0.14.4', 'leds': {'count': 144}}}
         self.connection = MagicMock()
         self.connection.write.side_effect = len
@@ -55,6 +55,45 @@ class WLEDSerialTests(unittest.TestCase):
         self.assertEqual(result['covered_leds'], 144)
         self.assertEqual(result['led_count'], 144)
 
+    def test_wled_color_and_full_brightness_payloads(self):
+        from lighting_control import LightingControl
+        for color, rgb in (('#ff0000', [255, 0, 0]), ('#00ff00', [0, 255, 0]),
+                           ('#0000ff', [0, 0, 255]), ('#ffffff', [255, 255, 255]),
+                           ('#000000', [0, 0, 0]), ('#1280ef', [18, 128, 239])):
+            for brightness in (1, 128, 255):
+                with self.subTest(color=color, brightness=brightness):
+                    ack = json.loads(json.dumps(self.reply))
+                    ack['state']['bri'] = brightness
+                    ack['state']['seg'][0]['col'] = [rgb + [0]]
+                    ack['info']['leds'].update(maxpwr=3000, pwr=1800)
+                    self.connection.read_until.side_effect = [json.dumps(self.reply).encode(), json.dumps(ack).encode()]
+                    light = LightingControl(transport=WLEDSerial(port='test'))
+                    result = light.configure(mode='on', color=color, brightness=brightness)
+                    self.assertEqual(result['status'], 'ok')
+                    command = json.loads(self.connection.write.call_args.args[0])
+                    self.assertEqual(command['bri'], brightness)
+                    self.assertEqual(command['seg'][0]['bri'], 255)
+                    self.assertEqual(command['seg'][0]['col'], [rgb + [0]])
+                    self.assertEqual(command['seg'][0]['fx'], 0)
+                    self.assertEqual(command['seg'][0]['pal'], 0)
+                    self.assertEqual(command['seg'][0]['stop'], 144)
+                    device = light.status()['device']
+                    self.assertEqual(device['confirmed_color'], color)
+                    self.assertEqual(device['confirmed_brightness'], brightness)
+                    self.assertEqual(device['current_limit_ma'], 3000)
+                    self.assertEqual(device['estimated_current_ma'], 1800)
+                    # Brightness commands must not alter the hardware power budget.
+                    self.assertNotIn('hw', command)
+                    light.stop()
+        self.connection.read_until.side_effect = None
+
+    def test_unrequested_white_channel_is_not_accepted_as_the_selected_color(self):
+        wrong = json.loads(json.dumps(self.reply))
+        wrong['state']['seg'][0]['col'][0][3] = 255
+        self.connection.read_until.side_effect = [json.dumps(self.reply).encode(), json.dumps(wrong).encode()]
+        with self.assertRaisesRegex(OSError, 'RGBW color'):
+            WLEDSerial(port='test').send(self.params)
+
     def test_configured_output_shorter_than_144_is_not_success(self):
         self.reply['info']['leds']['count'] = 100
         self.reply['state']['seg'][0]['stop'] = 100
@@ -93,7 +132,7 @@ class WLEDSerialTests(unittest.TestCase):
         self.assertEqual(self.connection.write.call_count, 1)
 
     def test_partial_strip_acknowledgement_is_failure(self):
-        for key, value in (('start', 10), ('stop', 100), ('spc', 2), ('on', False), ('fx', 5), ('frz', True), ('of', 20)):
+        for key, value in (('start', 10), ('stop', 100), ('spc', 2), ('on', False), ('fx', 5), ('pal', 10), ('bri', 50), ('frz', True), ('of', 20)):
             wrong = json.loads(json.dumps(self.reply))
             wrong['state']['seg'][0][key] = value
             self.connection.read_until.side_effect = [json.dumps(self.reply).encode(), json.dumps(wrong).encode()]
