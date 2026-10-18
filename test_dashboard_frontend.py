@@ -38,7 +38,7 @@ const data = {status:'ok',sources:{radar:{http_status:200,result:{fresh:true,pre
   moving_distance_cm:120,moving_energy_score:70,serial_connected:true,age_seconds:.1,
   stale_after_seconds:2,timestamp:'2026-10-11T12:00:00Z'}}},regions:[{code:'US-CA',name:'California'},{code:'US-NY',name:'New York'}]};
 let recordings=[];
-const context=vm.createContext({document,console,URL,Object,Date,location:{hash:''},performance:{now:()=>clock},
+const context=vm.createContext({document,console,URL,Object,Date,AbortController,TypeError,location:{hash:''},performance:{now:()=>clock},
   window:{matchMedia:()=>({matches:false,addEventListener(){}}),addEventListener:(name,fn)=>{windowEvents[name]=fn;}},
   setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout:id=>cancelledTimers.add(id),
   fetch:async(path,options)=>{
@@ -305,6 +305,16 @@ async function main(){
   delayLatest=2500;
   await vm.runInContext('loadCache()',context);
   assert.equal(vm.runInContext("currentEntry('radar').http_status",context),503,'Network delay must count toward radar freshness');
+  context.fetch = async()=>{throw new TypeError('Failed to fetch');};
+  await assert.rejects(vm.runInContext("api('/v1/latest')",context), /Cannot reach the station/);
+  context.fetch = (path,options)=>new Promise((resolve,reject)=>{
+    options.signal.addEventListener('abort',()=>reject(new Error('aborted')));
+  });
+  const hungRead = vm.runInContext("api('/v1/latest')",context);
+  timers.at(-1).fn();
+  await assert.rejects(hungRead, /too long to respond/);
+  assert.ok(cancelledTimers.has(timers.length), 'Timeout is cleared after failure');
+
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
 '''

@@ -257,8 +257,10 @@ class LightingControl:
                                        sensor_error="Radar sampling stopped; requesting lights off.")
                     self._send(0, instant=True)
                 if self._pending is None:
-                    interval = 0.5 if retry else 2
-                    if (not radar_active or self._desired is None
+                    interval = 0.5 if radar_active and retry else 2
+                    # Manual on/off commands also recover after a lost USB or
+                    # network reply. Only replay the newest desired state.
+                    if ((not radar_active and not retry) or self._desired is None
                             or (last_attempt is not None and self._clock() - last_attempt < interval)):
                         continue
                     self._pending = self._desired

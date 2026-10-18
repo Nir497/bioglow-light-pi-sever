@@ -62,26 +62,31 @@ class ReadingHistory:
                 if math.isfinite(timestamp) and start <= timestamp <= end:
                     yield timestamp, entry
 
-        selected = list(points())
-        for timestamp, entry in selected:
-            earliest = min(earliest, timestamp)
+        if type(max_points) is not int or max_points < 1:
+            raise ValueError("max_points must be a positive integer")
+        # Scan the full log without retaining every sensor record in memory.
+        # All-time queries need a first pass to determine the bucket span.
+        if seconds is None:
+            for timestamp, _ in points():
+                earliest = min(earliest, timestamp)
+            start = earliest
+        selected, buckets = [], {}
+        for timestamp, entry in points():
             count += 1
+            if count <= max_points:
+                selected.append((timestamp, entry))
+            elif selected:
+                selected.clear()
             for animal in entry["result"].get("animals", []) or []:
                 if isinstance(animal, dict) and isinstance(animal.get("scientific_name"), str):
                     animals.add(animal["scientific_name"])
-        start = earliest if seconds is None else start
-        if count <= max_points:
-            return {"entries": [entry for _, entry in sorted(selected, key=lambda item: item[0])],
-                    "total": count, "sampled": False, "animals": sorted(animals),
-                    "range": window, "start": start if count else end, "end": end}
-        buckets = {}
-        # Keep the last reading in each time bucket, bounding browser payloads.
-        for timestamp, entry in selected:
             bucket = min(max_points - 1, int((timestamp - start) / max(1, end - start) * max_points))
             if bucket not in buckets or timestamp >= buckets[bucket][0]:
                 buckets[bucket] = (timestamp, entry)
-        return {"entries": [entry for _, entry in sorted(buckets.values(), key=lambda item: item[0])],
-                "total": count, "sampled": count > len(buckets), "animals": sorted(animals),
+        sampled = count > max_points
+        entries = buckets.values() if sampled else selected
+        return {"entries": [entry for _, entry in sorted(entries, key=lambda item: item[0])],
+                "total": count, "sampled": sampled, "animals": sorted(animals),
                 "range": window, "start": start if count else end, "end": end}
 
     def recording(self, metadata, analysis):

@@ -276,6 +276,8 @@ class Service:
 
 def make_handler(service: Service):
     class Handler(BaseHTTPRequestHandler):
+        timeout = 10  # Bound stalled request headers and bodies on the LAN.
+
         server_version = "BioGlowBirdCast/1.0"
 
         def handle(self):
@@ -317,7 +319,13 @@ def make_handler(service: Service):
             length = int(self.headers.get("Content-Length", "0" if optional else "-1"))
             if not 0 <= length <= 4096:
                 raise ValueError("Invalid request size.")
-            body = json.loads(self.rfile.read(length)) if length else {}
+            try:
+                raw = self.rfile.read(length)
+            except TimeoutError as exc:
+                raise ValueError("Timed out reading request body.") from exc
+            if len(raw) != length:
+                raise ValueError("Incomplete request body.")
+            body = json.loads(raw) if length else {}
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object.")
             return body

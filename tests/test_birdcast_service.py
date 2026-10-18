@@ -1,4 +1,5 @@
 import json
+import io
 import hashlib
 import os
 import sys
@@ -21,6 +22,18 @@ class ServiceTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.service = Service(self.root, self.root / "config.json", runner=lambda region: self.snapshot)
+
+    def test_request_body_rejects_disconnect_and_timeout(self):
+        handler = object.__new__(make_handler(self.service))
+        self.assertEqual(handler.timeout, 10)
+        handler.headers = {"Content-Length": "20"}
+        handler.rfile = io.BytesIO(b'{"mode":"off"}')
+        with self.assertRaisesRegex(ValueError, "Incomplete"):
+            handler._body()
+        handler.rfile = MagicMock()
+        handler.rfile.read.side_effect = TimeoutError()
+        with self.assertRaisesRegex(ValueError, "Timed out"):
+            handler._body()
 
     def test_usb_lighting_settings_handler_without_sockets(self):
         handler = object.__new__(make_handler(self.service))

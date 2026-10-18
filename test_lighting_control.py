@@ -40,6 +40,26 @@ class LightingTests(unittest.TestCase):
             release.set()
             light.stop()
 
+    def test_manual_command_retries_latest_state_after_connection_failure(self):
+        failed, recovered = threading.Event(), threading.Event()
+        light = LightingControl(background=True)
+        self.addCleanup(light.stop)
+        calls = []
+        def request(target, *args):
+            calls.append(target)
+            if len(calls) == 1:
+                failed.set()
+                return 'USB disconnected'
+            recovered.set()
+            return None
+        light._request = request
+        light.set_mode('on')
+        self.assertTrue(failed.wait(1))
+        self.assertTrue(recovered.wait(4))
+        with light._condition:
+            self.assertTrue(light._condition.wait_for(lambda: light._state['status'] == 'ok', timeout=1))
+        self.assertEqual(calls, [255, 255])
+
     def test_mdns_fallback(self):
         light = LightingControl(opener=self.opener, background=True)
         with patch('lighting_control.socket.gethostbyname', side_effect=socket.gaierror('DNS')), patch('lighting_control.subprocess.run') as resolve:

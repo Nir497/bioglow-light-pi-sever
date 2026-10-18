@@ -5,3 +5,10 @@ recordings/
 .runtime/
 .models/
 readings/
+
+# Local runtime output and historical copies
+*.log
+birdcast_service_snapshot.json
+birdcast_service_config.json
+*.backup-*
+backups/

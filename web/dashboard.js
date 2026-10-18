@@ -49,15 +49,29 @@ const number = value => value == null ? '—' : escapeHtml(typeof value === 'num
 const view = () => Object.hasOwn(names, location.hash.slice(1)) ? location.hash.slice(1) : location.pathname === '/distance-test' ? 'distance-test' : 'overview';
 function notice(message, error = false) { const box = document.querySelector('#notice'); box.textContent = message; box.classList.toggle('error',error); box.hidden = !message; }
 async function api(path, options = {}) {
-  const response = await fetch(path, {...options, cache:'no-store'});
-  let data;
-  try { data = await response.json(); } catch { throw new Error('The station returned an unreadable response.'); }
-  if (!response.ok) {
-    const error = new Error(data.error?.message || data.analysis?.error || `Request failed (${response.status}).`);
-    error.data = data;
+  const controller = new AbortController();
+  // Reads recover quickly; actions allow the server's capture/scraper deadline.
+  const timeout = setTimeout(()=>controller.abort(), options.method ? 60000 : 10000);
+  try {
+    const response = await fetch(path, {...options, signal:controller.signal, cache:'no-store'});
+    let data;
+    try { data = await response.json(); } catch (error) {
+      if (controller.signal.aborted) throw error;
+      throw new Error('The station returned an unreadable response.');
+    }
+    if (!response.ok) {
+      const error = new Error(data.error?.message || data.analysis?.error || `Request failed (${response.status}).`);
+      error.data = data;
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('The station took too long to respond. Check its connection. Actions may still finish; refresh before trying again.');
+    if (error instanceof TypeError) throw new Error('Cannot reach the station. Check your network connection.');
     throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return data;
 }
 function details(data, label = 'View complete data') { return `<details class="details"><summary>${escapeHtml(label)}</summary><pre>${escapeHtml(JSON.stringify(data,null,2))}</pre></details>`; }
 function action(source, label) { return `<button class="button" data-action="${source}" ${pending.has(source) ? 'disabled aria-busy="true"' : ''}>${pending.has(source) ? (source === 'microphone' ? 'Recording 5 seconds…' : 'Requesting…') : label}</button>`; }
