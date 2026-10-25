@@ -13,7 +13,7 @@ page (`/#light`) contains only the VEML7700 readings and history graph:
 - **Full brightness · 100%** selects manual On, applies the currently chosen
   color, and requests master brightness 255/255 and segment brightness 255/255.
 - **Auto** uses distance control only after the latest lux reading confirms darkness.
-  At ≤10 lux it enables distance control; at ≥20 lux it requests off.
+  At <10 lux it enables distance control; at >30 lux it requests off.
 
 Manual settings survive scheduled sensor reads, including lux sensor failures.
 All dashboard clients share the server's settings. Restarting the server returns
@@ -102,9 +102,9 @@ unreachable lighting never blocks lux sampling or `/v1/latest`. The API reports
 on failure. `/v1/latest` exposes cached lighting state without USB traffic.
 
 Auto uses the latest valid VEML7700 reading from the existing ten-second sampler.
-At **10 lux or below**, distance control is enabled. At **20 lux or above**, the
-strip is off. Between these thresholds the previous dark/light classification is
-retained. Startup in this band stays off. The 30-second rolling average remains
+At **less than 10 lux**, distance control is enabled. At **more than 30 lux**, the
+strip is off. From 10 through 30 lux, including both boundaries, the previous dark/light
+classification is retained. Startup in this band stays off. The 30-second rolling average remains
 available for display, but does not control the gate.
 
 Missing, invalid (including negative/nonfinite values), failed, or more than
@@ -132,18 +132,19 @@ editable settings, and restarting requires new sensor readings.
 
 Place or shield the lux sensor so it measures outside light without material
 illumination from the strip. Exposure is currently unverified; hardware checks
-must watch for on/off cycling caused by the strip itself raising lux above 20.
+must watch for on/off cycling caused by the strip itself raising lux above 30.
 No automatic compensation is applied.
 
 The WLED page shows the current lux reading prominently beside three Auto bands:
-≤10 lux enables distance control, 10 < lux < 20 retains the previous classification,
-and ≥20 lux keeps the strip off. Unavailable/stale readings are labeled explicitly.
+<10 lux enables distance control, 10 ≤ lux ≤ 30 retains the previous classification,
+and >30 lux keeps the strip off. Unavailable/stale readings are labeled explicitly.
 
-The 10/20 lux thresholds are starting values, not an outdoor-lighting standard.
+The project-selected 10/30 lux thresholds are engineering settings for dusk/dawn
+detection, not an outdoor-lighting standard or verified wildlife-safe limits.
 [ABB twilight switches](https://new.abb.com/low-voltage/products/system-pro-m/control-and-automation-devices/twilight-switches)
 include a 10-lux factory preset; [Finder's twilight relay guide](https://www.findernet.com/en/uk/news/what-is-a-light-dependent-relay-twilight-switch-finder/)
 also describes a fixed 10-lux model. These support 10 lux as a practical twilight
-trigger; the separate 20-lux cutoff is our hysteresis choice to reduce switching
+trigger; the separate 30-lux cutoff is our hysteresis choice to reduce switching
 near that trigger. Confirm suitability using readings at the desired evening and
 morning switching times, with the strip's light excluded from the sensor.
 

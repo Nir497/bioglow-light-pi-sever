@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen, build_opener, ProxyHandler
 
 
 LUX_DARK_THRESHOLD = 10
-LUX_LIGHT_THRESHOLD = 20
+LUX_LIGHT_THRESHOLD = 30
 LUX_STALE_AFTER_SECONDS = 30
 
 
@@ -171,9 +171,9 @@ class LightingControl:
                 self._samples.popleft()
             if type(lux) in (int, float) and math.isfinite(lux) and lux >= 0:
                 self._lux, self._lux_at = lux, now
-                if lux <= LUX_DARK_THRESHOLD:
+                if lux < LUX_DARK_THRESHOLD:
                     self._ambient_state = "dark"
-                elif lux >= LUX_LIGHT_THRESHOLD:
+                elif lux > LUX_LIGHT_THRESHOLD:
                     self._ambient_state = "light"
                 self._samples.append((now, lux))
                 self._state["smoothed_lux"] = sum(value for _, value in self._samples) / len(self._samples)

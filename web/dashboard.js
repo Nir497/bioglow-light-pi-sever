@@ -189,14 +189,14 @@ function lightingLuxReading() {
 }
 function lightingLuxRule() {
   const dark = lighting.lux_dark_threshold ?? 10;
-  const light = lighting.lux_light_threshold ?? 20;
+  const light = lighting.lux_light_threshold ?? 30;
   return `<section class="lighting-lux" aria-label="Ambient light and Auto thresholds">
     <h3>Outside light · Auto rule</h3>
     <p class="lighting-lux-reading">Current lux reading <strong data-lighting-lux>${escapeHtml(lightingLuxReading())}</strong></p>
     <div class="lighting-lux-bands">
-      <div><strong>≤ ${number(dark)} lux</strong><span>Dark: use distance control</span></div>
-      <div><strong>${number(dark)} &lt; lux &lt; ${number(light)}</strong><span>Keep the previous dark/light state</span></div>
-      <div><strong>≥ ${number(light)} lux</strong><span>Light: keep the strip off</span></div>
+      <div><strong>&lt; ${number(dark)} lux</strong><span>Dark: use distance control</span></div>
+      <div><strong>${number(dark)} ≤ lux ≤ ${number(light)}</strong><span>Keep the previous dark/light state</span></div>
+      <div><strong>&gt; ${number(light)} lux</strong><span>Light: keep the strip off</span></div>
     </div>
     <p class="timestamp">These thresholds apply in Auto. At startup, or after a lux failure, the middle range keeps Auto off until darkness is confirmed.</p>
     <p class="timestamp" data-lighting-ambient>${escapeHtml(lightingAmbientSummary())}</p>
@@ -207,7 +207,7 @@ function lightingAmbientSummary() {
     daylight:'Daylight · Auto off',lux_unavailable:'Lux unavailable or stale · Auto off',
     distance_control:'Distance control active'};
   const reason = lighting.mode === 'auto' ? (reasons[lighting.auto_gate_reason] || reasons.waiting_lux) : 'Lux gate applies in Auto only';
-  return `${reason} · Ambient ${lighting.ambient_state || 'unknown'} · Lux ${lighting.lux == null ? 'unavailable' : lighting.lux.toLocaleString(undefined,{maximumFractionDigits:2})} · Lux age ${lighting.lux_age_seconds == null ? 'unavailable' : lighting.lux_age_seconds.toFixed(1) + ' s'} · Dark ≤${lighting.lux_dark_threshold ?? 10} lux / Light ≥${lighting.lux_light_threshold ?? 20} lux · Stale after ${lighting.lux_stale_after_seconds ?? 30} s`;
+  return `${reason} · Ambient ${lighting.ambient_state || 'unknown'} · Lux ${lighting.lux == null ? 'unavailable' : lighting.lux.toLocaleString(undefined,{maximumFractionDigits:2})} · Lux age ${lighting.lux_age_seconds == null ? 'unavailable' : lighting.lux_age_seconds.toFixed(1) + ' s'} · Dark <${lighting.lux_dark_threshold ?? 10} lux / Light >${lighting.lux_light_threshold ?? 30} lux · Stale after ${lighting.lux_stale_after_seconds ?? 30} s`;
 }
 function lightingSummary() {
   const base = `${lighting.mode || 'auto'} · ${lighting.status || 'waiting'}`;
@@ -247,7 +247,7 @@ function lightingControls() {
       </fieldset>
     </form>
     <p class="timestamp">Distance test: LED 1 at 1 m or closer; LED 192 at 6 m or farther. Between 1–6 m, the dot moves along LEDs 2–191 at 25% amber. No target turns lights off; the radar’s own absence delay still applies. Stale readings turn lights off and show an error.</p>
-    <p class="timestamp">Auto allows distance control at 10 lux or below and turns the strip off at 20 lux or above. Between these thresholds it keeps the previous ambient state. Missing, invalid, or over-30-second-old lux keeps Auto off until darkness is confirmed. Manual On and Distance test bypass this rule.</p>
+    <p class="timestamp">Auto allows distance control below 10 lux and turns the strip off above 30 lux. From 10 through 30 lux it keeps the previous ambient state. Missing, invalid, or over-30-second-old lux keeps Auto off until darkness is confirmed. Manual On and Distance test bypass this rule.</p>
     <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Auto uses distance for all 192 LEDs: 15% at 1 m or closer, rising to 50% at 6 m. After 5 seconds without a distance change, lights turn off. No target or unavailable radar turns lights off. Color changes preserve Auto.</p>
     <p class="timestamp">Commands go from this server to the USB controller. Status shows whether WLED acknowledged the command. At 100%, both master and segment brightness are 255/255. WLED’s configured power limits and global brightness factor can still reduce physical output.</p>
   </section>`;

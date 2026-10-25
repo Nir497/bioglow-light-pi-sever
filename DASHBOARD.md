@@ -167,7 +167,7 @@ radar and confirmed darkness arrive. Controller failures can prevent a command f
 Auto and Distance test share the half-second radar loop and filtered range below.
 The lighting page refreshes every half second and shows sampled distance, target
 and acknowledged brightness, and separate sensor/controller errors. Auto permits
-distance control at ≤10 lux and requests off at ≥20 lux, retaining the previous
+distance control at <10 lux and requests off at >30 lux, retaining the previous
 ambient classification between them. Startup in that band stays off. Failed,
 invalid, missing, or more than 30-second-old lux keeps Auto off; a fresh threshold
 reading and new radar sample are required to recover. The latest lux controls
@@ -236,7 +236,7 @@ still, then leave. Confirm exactly one LED moves along the strip, departure turn
 it off after the radar's delay, and On restores the entire strip. Automated tests
 use synthetic radar readings and mocked controller acknowledgments.
 
-For Auto hardware validation, confirm darkness at ≤10 lux, then approach, move away, stand still, and leave the detection area. Verify whole-strip brightness, selected color, five-second inactivity, and off after the radar absence delay. Confirm ≥20 lux forces off and lux sensor failure keeps Auto off. Check that the strip itself does not illuminate the lux sensor enough to cause cycling; sensor placement is not yet verified.
+For Auto hardware validation, confirm darkness at <10 lux, then approach, move away, stand still, and leave the detection area. Verify whole-strip brightness, selected color, five-second inactivity, and off after the radar absence delay. Confirm >30 lux forces off and lux sensor failure keeps Auto off. Check that the strip itself does not illuminate the lux sensor enough to cause cycling; sensor placement is not yet verified.
 
 Auto output delivery retains the latest desired command independently of radar
 sampling. The output worker retries failed commands every 0.5 seconds after a

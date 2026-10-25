@@ -120,18 +120,18 @@ class ServiceTests(unittest.TestCase):
         light = self.service.lighting
         light._background = False
         light.transport = MagicMock()
-        self.service.light_sensor.response = MagicMock(return_value=(200, {'lux': 10}))
+        self.service.light_sensor.response = MagicMock(return_value=(200, {'lux': 9}))
         self.service.light_reading()
         light.update_distance(200, {'fresh': True, 'presence': 'moving', 'range_estimate_cm': 350})
         self.assertEqual(light.status()['brightness'], 83)
-        self.service.light_sensor.response.return_value = (200, {'lux': 20})
+        self.service.light_sensor.response.return_value = (200, {'lux': 31})
         self.service.light_reading()
         state = self.service.latest()['lighting']
         self.assertEqual(state['brightness'], 0)
         self.assertEqual(state['auto_gate_reason'], 'daylight')
-        self.assertEqual(state['lux'], 20)
+        self.assertEqual(state['lux'], 31)
         self.assertEqual(state['lux_dark_threshold'], 10)
-        self.assertEqual(state['lux_light_threshold'], 20)
+        self.assertEqual(state['lux_light_threshold'], 30)
         count = light.transport.send.call_count
         self.service.latest()
         self.assertEqual(light.transport.send.call_count, count)

@@ -232,12 +232,12 @@ async function main(){
   assert.match(vm.runInContext('lightingControls()',context),/type="range"/);
   assert.match(vm.runInContext('lightingControls()',context),/SP803E · WLED-ESP32 · USB/);
   for (const [reason,label] of [['waiting_lux','Waiting for lux'],['daylight','Daylight'],['lux_unavailable','Lux unavailable or stale'],['distance_control','Distance control active']]) {
-    vm.runInContext(`lighting={mode:'auto',status:'ok',auto_gate_reason:'${reason}',ambient_state:'dark',lux:10,lux_age_seconds:2,lux_dark_threshold:10,lux_light_threshold:20,lux_stale_after_seconds:30}`,context);
+    vm.runInContext(`lighting={mode:'auto',status:'ok',auto_gate_reason:'${reason}',ambient_state:'dark',lux:10,lux_age_seconds:2,lux_dark_threshold:10,lux_light_threshold:30,lux_stale_after_seconds:30}`,context);
     vm.runInContext('syncLightingControls()',context);
     assert.ok(ambientSummary.textContent.includes(label));
     assert.match(ambientSummary.textContent,/Lux 10/);
     assert.match(ambientSummary.textContent,/Lux age 2.0 s/);
-    assert.match(ambientSummary.textContent,/Dark ≤10 lux \/ Light ≥20 lux/);
+    assert.match(ambientSummary.textContent,/Dark <10 lux \/ Light >30 lux/);
   }
   vm.runInContext("lighting.mode='on'",context);
   const originalFetch=context.fetch;

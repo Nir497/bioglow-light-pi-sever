@@ -624,9 +624,11 @@ class LuxGatedAutoTests(unittest.TestCase):
     def test_startup_middle_band_and_exact_hysteresis_boundaries(self):
         self.assertEqual(self.sample_distance()['brightness'], 0)
         self.assertEqual(self.light.status()['auto_gate_reason'], 'waiting_lux')
-        for lux, ambient, target in ((15, 'unknown', 0), (10, 'dark', 83),
-                                     (19.99, 'dark', 83), (20, 'light', 0),
-                                     (10.01, 'light', 0), (10, 'dark', 83)):
+        for lux, ambient, target in ((10, 'unknown', 0), (30, 'unknown', 0), (15, 'unknown', 0),
+                                     (9.99, 'dark', 83), (10, 'dark', 83),
+                                     (20, 'dark', 83), (30, 'dark', 83),
+                                     (30.01, 'light', 0), (30, 'light', 0),
+                                     (20, 'light', 0), (10, 'light', 0), (9.99, 'dark', 83)):
             with self.subTest(lux=lux):
                 self.light.update(lux)
                 state = self.sample_distance()
@@ -634,13 +636,13 @@ class LuxGatedAutoTests(unittest.TestCase):
                 self.assertEqual(state['brightness'], target)
                 self.assertEqual(state['lux'], lux)
         self.assertEqual(state['lux_dark_threshold'], 10)
-        self.assertEqual(state['lux_light_threshold'], 20)
+        self.assertEqual(state['lux_light_threshold'], 30)
         self.assertEqual(state['lux_stale_after_seconds'], 30)
 
     def test_daylight_stops_immediately_without_radar_and_color_cannot_bypass(self):
         self.light.update(0)
         self.sample_distance()
-        self.light.update(20)
+        self.light.update(31)
         self.assertFalse(self.transport.send.call_args.args[0]['on'])
         self.assertEqual(self.transport.send.call_args.args[0]['transition'], 0)
         state = self.light.configure(color='#123456')
@@ -668,7 +670,7 @@ class LuxGatedAutoTests(unittest.TestCase):
                 self.assertIsNone(self.light._auto_last_distance)
                 self.light.update(15)
                 self.assertEqual(self.sample_distance()['brightness'], 0)
-                self.light.update(10)
+                self.light.update(9)
                 self.assertEqual(self.light.status()['brightness'], 0, 'Wait for new radar')
                 self.assertEqual(self.sample_distance()['brightness'], 83)
 
@@ -734,7 +736,7 @@ class LuxGatedAutoTests(unittest.TestCase):
         self.assertEqual(self.transport.send.call_args.args[0]['transition'], 0)
 
     def test_queued_on_replaced_and_inflight_ack_ignored_on_daylight_or_failure(self):
-        for lux in (20, None):
+        for lux in (31, None):
             with self.subTest(lux=lux):
                 entered, release = threading.Event(), threading.Event()
                 commands = []
