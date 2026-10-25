@@ -418,6 +418,8 @@ def make_handler(service: Service):
                 "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
                 "/dashboard.js": ("dashboard.js", "text/javascript; charset=utf-8"),
                 "/favicon.png": ("favicon.png", "image/png"),
+                "/glow-favicon.png": ("favicon.png", "image/png"),
+                "/favicon.ico": ("favicon.png", "image/png"),
             }
             if path in assets:
                 filename, content_type = assets[path]
