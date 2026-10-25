@@ -1,7 +1,7 @@
 'use strict';
-const names = {'distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',birdcast:'BirdCast',recordings:'Recordings'};
-const titles = {'distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library'};
-const descriptions = {'distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
+const names = {'wled-log':'WLED log','distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',birdcast:'BirdCast',recordings:'Recordings'};
+const titles = {'wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library'};
+const descriptions = {'wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
 let histories = {};
 let lighting = {};
@@ -645,6 +645,57 @@ function scheduleCollectionPoll() {
     if(generation===collectionGeneration)scheduleCollectionPoll();
   },view()==='lighting' ? 500 : 10000);
 }
+let wledLogTimer, wledLogGeneration = 0;
+function wledLogEvent(event) {
+  let payload = event.payload;
+  try { payload = JSON.stringify(JSON.parse(payload), null, 2); } catch { /* Preserve serial text. */ }
+  const label = {sent:'Sent',received:'Received',error:'Error'}[event.direction] || event.direction;
+  return `<li class="wled-log-event" data-event-id="${event.id}"><p><time datetime="${escapeHtml(event.timestamp)}">${escapeHtml(new Date(event.timestamp).toLocaleString())}</time> · <strong>${escapeHtml(label)}</strong>${event.outcome ? ` · ${escapeHtml(event.outcome)}${event.bytes_written == null ? '' : ` (${event.bytes_written}/${event.bytes_expected} bytes)`}` : ''}</p><pre>${escapeHtml(payload)}</pre></li>`;
+}
+function scheduleWledLog() {
+  clearTimeout(wledLogTimer);
+  const generation = ++wledLogGeneration;
+  if (view() !== 'wled-log') return;
+  let cursor = 0, session = null;
+  const poll = async () => {
+    if (generation !== wledLogGeneration || view() !== 'wled-log') return;
+    if (!document.hidden) {
+      try {
+        const data = await api(`/v1/wled-log?after=${cursor}`);
+        if (generation !== wledLogGeneration || view() !== 'wled-log') return;
+        // Defer DOM changes while the user selects text; replay from the same cursor.
+        if (!window.getSelection?.()?.toString()) {
+          const list = content.querySelector('[data-wled-events]');
+          const message = content.querySelector('[data-wled-message]');
+          if (session && session !== data.session && !data.reset) {
+            list.innerHTML = '';
+            cursor = 0; session = null;
+          } else {
+            if (data.reset || (session && session !== data.session)) list.innerHTML = '';
+            session = data.session;
+            const before = list.getBoundingClientRect().height;
+            const preserveScroll = window.scrollY > list.getBoundingClientRect().top + window.scrollY;
+            if (data.events.length) list.insertAdjacentHTML('afterbegin',data.events.slice().reverse().map(wledLogEvent).join(''));
+            list.querySelectorAll('[data-event-id]').forEach(node=>{
+              if (Number(node.dataset.eventId) < data.oldest_id) node.remove();
+            });
+            if (preserveScroll) window.scrollBy(0,list.getBoundingClientRect().height - before);
+            cursor = data.latest_id;
+            message.textContent = data.expired || data.oldest_id > 1
+              ? 'Older events have expired. Showing the latest 2,000 events.'
+              : cursor ? '' : 'No USB traffic observed yet.';
+          }
+        }
+      } catch(error) {
+        if (generation === wledLogGeneration && view() === 'wled-log')
+          content.querySelector('[data-wled-message]').textContent = `Log unavailable: ${error.message}`;
+      }
+    }
+    if (generation === wledLogGeneration && view() === 'wled-log')
+      wledLogTimer = setTimeout(poll,500);
+  };
+  poll();
+}
 function render() {
   const current = view();
   document.querySelector('#breadcrumb').textContent = names[current];
@@ -653,6 +704,7 @@ function render() {
   document.querySelectorAll('[data-view]').forEach(link => { if(link.dataset.view === current) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current'); });
   if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div><div data-recording-library>${library(3)}</div>`;
   else if (current === 'distance-test') content.innerHTML = distanceTestPage();
+  else if (current === 'wled-log') content.innerHTML = '<article class="card"><p data-wled-message role="status">Loading USB traffic…</p><ol class="wled-log-list" data-wled-events></ol></article>';
   else if (current === 'lighting') content.innerHTML = `<article class="card">${lightingControls()}</article>`;
   else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div><div data-recording-library>${library()}</div>`;
   else {
@@ -663,6 +715,7 @@ function render() {
   scheduleRadarPoll();
   scheduleHistoryPoll();
   scheduleCollectionPoll();
+  scheduleWledLog();
 }
 async function loadCache() {
   const requestedAt = performance.now();

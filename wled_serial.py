@@ -3,6 +3,10 @@ import copy
 import json
 import os
 import time
+import threading
+import uuid
+from collections import deque
+from datetime import datetime, timezone
 
 import serial
 from serial.tools import list_ports
@@ -12,8 +16,36 @@ class SerialReplyTimeout(OSError):
     """A serial port opened, but no complete WLED state response arrived."""
 
 
+class WLEDLog:
+    """Bounded traffic history, independent of the controller's I/O lock."""
+
+    def __init__(self):
+        self._events = deque(maxlen=2000)
+        self._lock = threading.Lock()
+        self._sequence = 0
+        self._session = uuid.uuid4().hex
+
+    def append(self, direction, payload, **details):
+        with self._lock:
+            self._sequence += 1
+            self._events.append({"id": self._sequence,
+                                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                                 "direction": direction, "payload": payload, **details})
+
+    def snapshot(self, after=0):
+        with self._lock:
+            oldest = self._events[0]["id"] if self._events else 1
+            reset = after > self._sequence
+            return {"status": "ok", "session": self._session,
+                    "latest_id": self._sequence, "oldest_id": oldest,
+                    "expired": after > 0 and after < oldest - 1, "reset": reset,
+                    "events": [dict(event) for event in self._events
+                               if reset or event["id"] > after]}
+
+
 class WLEDSerial:
     def __init__(self, port=None, baudrate=115200, led_count=192, clock=time.monotonic):
+        self.log = WLEDLog()
         self.port = port or os.environ.get("BIOGLOW_WLED_PORT")
         self.baudrate = baudrate
         self.connection = None
@@ -30,6 +62,9 @@ class WLEDSerial:
         while time.monotonic() < deadline:
             chunk = self.connection.read_until(b"\n", 32768)
             self.device_info["received_bytes"] = self.device_info.get("received_bytes", 0) + len(chunk)
+            if chunk:
+                self.log.append("received", chunk.decode("utf-8", errors="replace"),
+                                bytes_hex=chunk.hex())
             pending += chunk
             if len(pending) > 65536:
                 raise OSError("WLED USB response exceeds the supported size")
@@ -64,16 +99,25 @@ class WLEDSerial:
             self._write({"v": True})
             try:
                 return self._read_reply()
-            except SerialReplyTimeout:
+            except SerialReplyTimeout as exc:
                 if not startup or attempt == 1:
                     raise
+                self.log.append("error", str(exc))
                 # Opening some USB bridges resets the ESP. Retry on the same
                 # open port after the first response window; reopening can reset
                 # it again and prevent it ever answering the initial query.
 
     def _write(self, params):
         data = (json.dumps(params, separators=(",", ":")) + "\n").encode("ascii")
-        if self.connection.write(data) != len(data):
+        try:
+            written = self.connection.write(data)
+        except Exception:
+            self.log.append("sent", data.decode("ascii"), outcome="delivery unknown")
+            raise
+        self.log.append("sent", data.decode("ascii"),
+                        outcome="written" if written == len(data) else "partial write",
+                        bytes_written=written, bytes_expected=len(data))
+        if written != len(data):
             raise OSError("Incomplete WLED USB command")
 
     def send(self, params):
@@ -175,7 +219,8 @@ class WLEDSerial:
             cached_info["leds"] = {**info.get("leds", {}), **ack_info.get("leds", {})}
             self._current = {"state": copy.deepcopy(state), "info": cached_info}
             return dict(self.device_info)
-        except Exception:
+        except Exception as exc:
+            self.log.append("error", str(exc))
             self.close()
             raise
 

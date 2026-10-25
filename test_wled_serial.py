@@ -1,5 +1,6 @@
 import json
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,69 @@ class WLEDSerialTests(unittest.TestCase):
         self.serial = patch('wled_serial.serial.Serial', return_value=self.connection)
         self.factory = self.serial.start()
         self.addCleanup(self.serial.stop)
+
+    def test_traffic_records_queries_commands_and_fragments_once(self):
+        light = WLEDSerial(port='test')
+        reply = json.dumps(self.reply).encode() + b'\n'
+        self.connection.read_until.side_effect = [b'boot: ready\n', reply[:25], reply[25:], reply]
+        light.send(self.params)
+        events = light.log.snapshot()['events']
+        self.assertEqual([e['direction'] for e in events],
+                         ['sent', 'received', 'received', 'received', 'sent', 'received'])
+        self.assertEqual(json.loads(events[0]['payload']), {'v': True})
+        self.assertEqual(events[1]['payload'], 'boot: ready\n')
+        self.assertEqual(events[2]['payload'] + events[3]['payload'], reply.decode())
+        self.assertEqual(bytes.fromhex(events[2]['bytes_hex']), reply[:25])
+        self.assertEqual([e['id'] for e in events], list(range(1, 7)))
+
+    def test_partial_and_failed_writes_are_not_successful(self):
+        for written in (0, 2):
+            with self.subTest(written=written):
+                light = WLEDSerial(port='test')
+                self.connection.write.side_effect = None
+                self.connection.write.return_value = written
+                with self.assertRaisesRegex(OSError, 'Incomplete'):
+                    light.send(self.params)
+                events = light.log.snapshot()['events']
+                self.assertEqual(events[0]['outcome'], 'partial write')
+                self.assertEqual(events[0]['bytes_written'], written)
+                self.assertEqual(events[-1]['direction'], 'error')
+        self.connection.write.side_effect = OSError('disconnected')
+        light = WLEDSerial(port='test')
+        with self.assertRaises(OSError):
+            light.send(self.params)
+        self.assertEqual(light.log.snapshot()['events'][0]['outcome'], 'delivery unknown')
+
+    def test_log_bounds_concurrency_and_passive_snapshot(self):
+        light = WLEDSerial(port='test')
+        def record(_):
+            light.log.append('received', 'test')
+            light.log.snapshot()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(record, range(2100)))
+        snapshot = light.log.snapshot(1)
+        self.assertEqual(len(snapshot['events']), 2000)
+        self.assertEqual(snapshot['oldest_id'], 101)
+        self.assertTrue(snapshot['expired'])
+        self.assertEqual([e['id'] for e in snapshot['events']], list(range(101, 2101)))
+        self.assertEqual(light.log.snapshot(2099)['events'][0]['id'], 2100)
+        self.assertEqual(light.log.snapshot(2100)['events'], [])
+        self.assertTrue(light.log.snapshot(9999)['reset'])
+        self.assertEqual(len(light.log.snapshot(9999)['events']), 2000)
+        self.assertFalse(self.factory.called)
+        self.assertNotEqual(snapshot['session'], WLEDSerial().log.snapshot()['session'])
+
+    def test_connection_and_timeout_errors_are_logged(self):
+        light = WLEDSerial(port='test')
+        self.connection.open.side_effect = OSError('cannot open')
+        with self.assertRaises(OSError):
+            light.send(self.params)
+        self.assertEqual(light.log.snapshot()['events'][-1]['payload'], 'cannot open')
+        self.connection.open.side_effect = None
+        with patch.object(light, '_read_reply', side_effect=SerialReplyTimeout('no reply')):
+            with self.assertRaises(SerialReplyTimeout):
+                light.send(self.params)
+        self.assertEqual(light.log.snapshot()['events'][-1]['payload'], 'no reply')
 
     def test_identifies_wled_and_reuses_connection(self):
         light = WLEDSerial(port='/dev/serial/by-id/wled')

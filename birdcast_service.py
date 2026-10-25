@@ -53,7 +53,8 @@ class Service:
                  animal_analysis: bool = True):
         self.root = root.resolve()
         self.light_sensor = LightSensor()
-        self.lighting = LightingControl(background=True, transport=WLEDSerial())
+        self.wled = WLEDSerial()
+        self.lighting = LightingControl(background=True, transport=self.wled)
         self.presence_sensor = PresenceSensor()
         self.reading_history = ReadingHistory(self.root)
         self.animal_names = AnimalNames(self.root)
@@ -423,6 +424,16 @@ def make_handler(service: Service):
                     self._send(404, error_payload("not_found", "Asset not found."))
                 else:
                     self._send_bytes(asset.read_bytes(), content_type)
+                return
+            if path == "/v1/wled-log":
+                query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                values = query.get("after", ["0"])
+                if (set(query) - {"after"} or len(values) != 1
+                        or not values[0].isascii() or not values[0].isdigit()
+                        or len(values[0]) > 18):
+                    self._send(400, error_payload("invalid_cursor", "Use a nonnegative integer after cursor."))
+                    return
+                self._send(200, service.wled.log.snapshot(int(values[0])))
                 return
             if path == "/v1/latest":
                 self._send(200, service.latest())

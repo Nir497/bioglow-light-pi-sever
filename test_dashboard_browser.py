@@ -19,11 +19,20 @@ const recordingId='a'.repeat(32);
 let browserRecordings=[{recording_id:recordingId,created_at:now,byte_length:960044,
   download_path:'/v1/recordings/'+recordingId,analysis:{state:'completed',candidates:[{scientific_name:'Buteo jamaicensis',score:7.5}]}}];
 let browserCollection={enabled:false,recording:false,duration_seconds:5,interval_seconds:120};
+let logEvents=[{id:1,timestamp:now,direction:'received',payload:'<img src=x onerror=alert(1)>'}];
+let logSession='one';
+let logFailure=false;
 let browserLighting={mode:'off',status:'ok',on:false};
 window.fetch=async(path,options={})=>{
   browserRequests.push(path);
   let body;
-  if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},lighting:browserLighting,collection:browserCollection,regions:[{code:'US-CA',name:'California'}]};
+  if(path.startsWith('/v1/wled-log?')){
+    if(logFailure)throw new Error('offline');
+    const after=Number(new URL(path,'http://test').searchParams.get('after'));
+    body={session:logSession,latest_id:logEvents.at(-1)?.id||0,oldest_id:logEvents[0]?.id||1,expired:false,reset:after>(logEvents.at(-1)?.id||0),events:logEvents.filter(e=>e.id>after)};
+    if(body.reset)body.events=logEvents;
+  }
+  else if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},lighting:browserLighting,collection:browserCollection,regions:[{code:'US-CA',name:'California'}]};
   else if(path==='/v1/lighting'){
     browserLighting={mode:JSON.parse(options.body).mode,status:'ok',on:true,distance_cm:350,
       led_index:96,confirmed_led_index:96,test_state:'tracking'};
@@ -109,6 +118,35 @@ setTimeout(async()=>{
     check(!document.querySelector('[data-estimated-range]'),'Filtered null fell back to raw 650 cm');
     check(document.querySelector('[data-lighting-error]').textContent.includes('No usable filtered range'),'Sensor error not shown');
     check(document.querySelector('[data-lighting-mode="distance_test"]')===startTest,'Polling replaced the dev controls');
+    location.hash='#wled-log';await pause(100);
+    check(document.querySelector('#page-title').textContent==='WLED command log','Log navigation failed');
+    const first=document.querySelector('[data-event-id="1"]');
+    check(first.textContent.includes('<img src=x onerror=alert(1)>'),'Raw serial text missing');
+    check(!first.querySelector('img'),'Serial text executed as HTML');
+    const selection=window.getSelection();
+    const selectedRange=document.createRange();selectedRange.selectNodeContents(first.querySelector('pre'));
+    selection.removeAllRanges();selection.addRange(selectedRange);
+    logEvents.push({id:2,timestamp:now,direction:'sent',payload:'{"v":true}',outcome:'written'});
+    await pause(650);
+    check(!document.querySelector('[data-event-id="2"]'),'Update interrupted selection');
+    selection.removeAllRanges();await pause(650);
+    check(document.querySelectorAll('[data-event-id]').length===2,'Live update missing or duplicated');
+    check(document.querySelector('[data-event-id="1"]')===first,'Live update replaced existing event');
+    check(document.querySelector('[data-wled-events]').firstElementChild.dataset.eventId==='2','Log order incorrect');
+    logFailure=true;await pause(650);
+    check(document.querySelector('[data-wled-message]').textContent.includes('offline'),'Read error hidden');
+    logFailure=false;logSession='two';logEvents=[{id:1,timestamp:now,direction:'received',payload:'restarted'}];
+    await pause(1100);
+    check(document.querySelectorAll('[data-event-id]').length===1,'Restart retained old events');
+    check(document.querySelector('[data-event-id]').textContent.includes('restarted'),'Restart did not recover');
+    logSession='three';logEvents=[{id:3,timestamp:now,direction:'received',payload:'new session ahead'}];
+    await pause(1100);
+    check(document.querySelectorAll('[data-event-id]').length===1,'New session duplicated old events');
+    check(document.querySelector('[data-event-id]').textContent.includes('new session ahead'),'New session cursor recovery failed');
+    location.hash='#overview';await pause(100);
+    const logReads=browserRequests.filter(p=>p.startsWith('/v1/wled-log')).length;
+    await pause(650);
+    check(browserRequests.filter(p=>p.startsWith('/v1/wled-log')).length===logReads,'Log polling continued after navigation');
     document.body.dataset.browserCheck='passed';
   }catch(error){document.body.dataset.browserCheck='failed: '+error.message;}
 },50);
@@ -122,8 +160,8 @@ setTimeout(async()=>{
             page.write_text(html, encoding="utf-8")
             result = subprocess.run([shutil.which("chromium"), "--headless", "--no-sandbox",
                                      "--disable-gpu", "--disable-dev-shm-usage", "--no-proxy-server",
-                                     "--user-data-dir="+directory+"/profile", "--virtual-time-budget=15000",
-                                     "--dump-dom", page.as_uri()], capture_output=True, text=True, timeout=20)
+                                     "--user-data-dir="+directory+"/profile", "--virtual-time-budget=25000",
+                                     "--dump-dom", page.as_uri()], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr[-1500:])
         self.assertIn('data-browser-check="passed"', result.stdout,
                       result.stdout[-1800:]+result.stderr[-500:])

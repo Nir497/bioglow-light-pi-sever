@@ -250,3 +250,24 @@ noise, and color changes do not reset this timer. Movement reactivates Auto.
 Successful unchanged Auto commands are no longer periodically resent; failed
 commands still retry. Distance test retains its periodic reassertion, and manual
 On retains its saved brightness and full brightness option.
+
+## WLED command log
+
+Open **WLED log** (`/#wled-log`) for a live, newest-first list of USB commands,
+queries, replies, unexpected serial output, and communication errors observed by
+this server. Each event includes its timestamp, direction, and full payload.
+Partial or uncertain writes are labeled; a completed write alone does not prove
+controller acknowledgment. Received fragments appear once, as read.
+
+The server retains the latest 2,000 events in memory even when the page is closed;
+restarting the server clears the log. The page polls every 500 ms while visible,
+preserves text selection and scroll position, and reports expired history.
+Viewing it never sends controller commands. This does not monitor other apps,
+Wi-Fi clients, or serial data the server has not read.
+
+`GET /v1/wled-log?after=0` returns events after the given nonnegative event ID,
+plus `session`, `latest_id`, `oldest_id`, `expired`, and `reset`. A cursor beyond
+the current sequence returns all retained events with `reset: true`; clients
+must also detect changed sessions across server restarts. Invalid cursors return
+HTTP 400. Incoming events include `bytes_hex` to preserve original bytes when
+serial text contains invalid UTF-8. No log files are written.

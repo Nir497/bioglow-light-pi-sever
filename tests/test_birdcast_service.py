@@ -23,6 +23,26 @@ class ServiceTests(unittest.TestCase):
         self.root = Path(directory.name)
         self.service = Service(self.root, self.root / "config.json", runner=lambda region: self.snapshot)
 
+    def test_wled_log_endpoint_is_passive_and_validates_cursor(self):
+        handler = object.__new__(make_handler(self.service))
+        handler._send = MagicMock()
+        self.service.wled.log.append('received', 'boot')
+        with patch.object(self.service.wled, 'send') as send:
+            handler.path = '/v1/wled-log'
+            handler.do_GET()
+            status, data = handler._send.call_args.args
+            self.assertEqual(status, 200)
+            self.assertEqual(data['events'][0]['payload'], 'boot')
+            handler.path = '/v1/wled-log?after=1'
+            handler.do_GET()
+            self.assertEqual(handler._send.call_args.args[1]['events'], [])
+            send.assert_not_called()
+        for query in ('after=-1', 'after=', 'after=abc', 'after=1&after=2',
+                      'after=99999999999999999999999999', 'unknown=1'):
+            handler.path = '/v1/wled-log?' + query
+            handler.do_GET()
+            self.assertEqual(handler._send.call_args.args[0], 400, query)
+
     def test_request_body_rejects_disconnect_and_timeout(self):
         handler = object.__new__(make_handler(self.service))
         self.assertEqual(handler.timeout, 10)
