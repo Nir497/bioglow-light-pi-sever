@@ -12,7 +12,8 @@ page (`/#light`) contains only the VEML7700 readings and history graph:
   settings selects manual control, retaining Off if already selected.
 - **Full brightness · 100%** selects manual On, applies the currently chosen
   color, and requests master brightness 255/255 and segment brightness 255/255.
-- **Auto** restores lux control using the latest smoothed measurement.
+- **Auto** uses distance control only after the latest lux reading confirms darkness.
+  At ≤10 lux it enables distance control; at ≥20 lux it requests off.
 
 Manual settings survive scheduled sensor reads, including lux sensor failures.
 All dashboard clients share the server's settings. Restarting the server returns
@@ -89,22 +90,50 @@ wiring or light output.
 {"mode":"on","brightness":128,"color":"#2288ff"}
 ```
 
-`mode` is `on`, `off`, or `auto`; `brightness` is an integer 1–255; `color`
+`mode` is `on`, `off`, `auto`, or `distance_test`; `brightness` is an integer 1–255; `color`
 is `#RRGGBB`. Invalid requests are rejected before settings change. Use Off
 for zero output; On remembers the manual brightness. Color/brightness without
-a mode select manual control, preserving an existing Off state.
+a mode select manual control when brightness is included, preserving an existing
+Off state. Color-only changes preserve Auto.
 
 Commands run in one background worker with a single pending command. Slow or
 unreachable lighting never blocks lux sampling or `/v1/latest`. The API reports
 `pending` until WLED acknowledges, `ok` on success, and `controller_unavailable`
 on failure. `/v1/latest` exposes cached lighting state without USB traffic.
 
-Every lux read contributes to a 30-second rolling average. Below 30 lux the
-fixture turns on; above 300 lux it turns off. Between those thresholds it
-retains its on/off state. While on, automatic brightness increases from 50 at
-30 lux to 255 at zero lux, with a three-second fade. Startup in the middle band
-defaults to off. Unavailable lux retains the last output in Auto. Place the lux
-sensor away from the fixture's direct light to avoid feedback.
+Auto uses the latest valid VEML7700 reading from the existing ten-second sampler.
+At **10 lux or below**, distance control is enabled. At **20 lux or above**, the
+strip is off. Between these thresholds the previous dark/light classification is
+retained. Startup in this band stays off. The 30-second rolling average remains
+available for display, but does not control the gate.
+
+Missing, invalid (including negative/nonfinite values), failed, or more than
+**30-second-old** lux keeps Auto off. After failure/staleness, the middle band
+cannot restore the old classification: a fresh reading must reach a threshold.
+Darkness recovery waits for a new half-second radar sample. During darkness,
+whole-strip brightness follows distance: 15% at ≤1 m, increasing linearly to 50%
+at ≥6 m. No usable target, unavailable/stale radar, or five seconds without a
+filtered-distance change of at least 5 cm requests immediate off. Color changes
+preserve Auto and do not reset inactivity. Manual On/Off and Distance test bypass
+the lux gate.
+
+The gate covers appearance changes, queued commands and retries. The output
+worker also watches lux freshness if collection stalls. Already-running USB
+exchanges can finish before the Off command is sent; acknowledged brightness
+remains distinct from the requested target, and delivery failures are reported.
+
+Lighting status from `/v1/latest` and `/v1/lighting` includes `lux`,
+`lux_age_seconds`, `ambient_state` (`unknown`, `light`, `dark`),
+`auto_gate_reason` (`waiting_lux`, `daylight`, `lux_unavailable`,
+`distance_control`; null outside Auto), `lux_dark_threshold`,
+`lux_light_threshold`, and `lux_stale_after_seconds`. Status reads do not measure
+lux or send controller commands. Thresholds are named server constants, not
+editable settings, and restarting requires new sensor readings.
+
+Place or shield the lux sensor so it measures outside light without material
+illumination from the strip. Exposure is currently unverified; hardware checks
+must watch for on/off cycling caused by the strip itself raising lux above 20.
+No automatic compensation is applied.
 
 `LightingControl` retains its optional HTTP transport for existing integrations;
 the dashboard server now explicitly selects USB and never resolves

@@ -13,6 +13,11 @@ from collections import deque
 from urllib.request import Request, urlopen, build_opener, ProxyHandler
 
 
+LUX_DARK_THRESHOLD = 10
+LUX_LIGHT_THRESHOLD = 20
+LUX_STALE_AFTER_SECONDS = 30
+
+
 def distance_brightness(distance_cm):
     """Map a usable radar range to full-strip brightness independently of rendering."""
     return round(255 * (0.15 + 0.35 * max(0, min(1, (distance_cm - 100) / 500))))
@@ -44,6 +49,10 @@ class LightingControl:
         device_info = getattr(transport, "device_info", None)
         self._device_info = dict(device_info) if isinstance(device_info, dict) else {}
         self._samples = deque()
+        self._lux = None
+        self._lux_at = None
+        self._lux_seen = False
+        self._ambient_state = "unknown"
         self._auto_target = 0
         self._auto_last_distance = None
         self._auto_last_change = None
@@ -52,9 +61,28 @@ class LightingControl:
                        "connection": "usb" if transport else "wifi",
                        "manual_brightness": 255, "color": "#ffa028", "on": None}
 
+    def _ambient_status(self):
+        """Read-only view; callers hold the lighting lock."""
+        age = None if self._lux_at is None else max(0, self._clock() - self._lux_at)
+        unavailable = self._lux_seen and (age is None or age > LUX_STALE_AFTER_SECONDS)
+        ambient = "unknown" if unavailable else self._ambient_state
+        reason = ("lux_unavailable" if unavailable else "waiting_lux" if ambient == "unknown"
+                  else "daylight" if ambient == "light" else "distance_control")
+        return {"lux": self._lux, "lux_age_seconds": age, "ambient_state": ambient,
+                "auto_gate_reason": reason if self._state["mode"] == "auto" else None,
+                "lux_dark_threshold": LUX_DARK_THRESHOLD,
+                "lux_light_threshold": LUX_LIGHT_THRESHOLD,
+                "lux_stale_after_seconds": LUX_STALE_AFTER_SECONDS}
+
+    def _lighting_state(self):
+        return {**self._state, **self._ambient_status()}
+
+    def _auto_allowed(self):
+        return self._ambient_status()["ambient_state"] == "dark"
+
     def status(self):
         with self._lock:
-            result = {**self._state, "device": dict(self._device_info)}
+            result = {**self._lighting_state(), "device": dict(self._device_info)}
             result["radar_loop_running"] = bool(self._radar_worker and self._radar_worker.is_alive())
             result["sample_age_seconds"] = (None if self._radar_sampled_at is None
                                             else max(0, self._clock() - self._radar_sampled_at))
@@ -96,7 +124,7 @@ class LightingControl:
                 self._revision += 1
                 self._last_distance_command = None
                 self._send(self._auto_target, instant=self._auto_target == 0)
-                return dict(self._state)
+                return self._lighting_state()
             if brightness is not None:
                 self._state["manual_brightness"] = brightness
             if color is not None:
@@ -123,25 +151,42 @@ class LightingControl:
                         self._state.pop(key, None)
                 self._auto_target = 0
                 self._send(0, color="#ffa028" if mode == "distance_test" else None, instant=True)
-                return dict(self._state)
+                return self._lighting_state()
             for key in ("distance_cm", "led_index", "test_state", "test_brightness", "test_color", "sample_interval_seconds", "distance_source", "radar_timestamp", "confirmed_led_index",
                         "confirmed_distance_cm", "confirmed_radar_timestamp"):
                 self._state.pop(key, None)
             self._send(self._state["manual_brightness"] if mode == "on" else 0)
-            return dict(self._state)
+            return self._lighting_state()
 
     def update(self, lux):
         with self._lock:
             if self._stopped:
                 return
-            # Lux remains collected and displayed, but never controls Auto.
+            # A failed/stale classification cannot carry through the middle band.
+            was_dark = self._auto_allowed()
+            self._ambient_state = self._ambient_status()["ambient_state"]
+            self._lux_seen = True
             now = self._clock()
             while self._samples and now - self._samples[0][0] >= 30:
                 self._samples.popleft()
-            if isinstance(lux, (int, float)) and math.isfinite(lux) and lux >= 0:
+            if type(lux) in (int, float) and math.isfinite(lux) and lux >= 0:
+                self._lux, self._lux_at = lux, now
+                if lux <= LUX_DARK_THRESHOLD:
+                    self._ambient_state = "dark"
+                elif lux >= LUX_LIGHT_THRESHOLD:
+                    self._ambient_state = "light"
                 self._samples.append((now, lux))
                 self._state["smoothed_lux"] = sum(value for _, value in self._samples) / len(self._samples)
-            if self._state["mode"] in ("on", "off"):
+            else:
+                self._lux = self._lux_at = None
+                self._ambient_state = "unknown"
+            if not was_dark:
+                self._auto_target = 0
+                self._auto_last_distance = self._auto_last_change = None
+            if self._state["mode"] == "auto" and (not self._auto_allowed()
+                    or (not was_dark and self._state["target_brightness"])):
+                self._send(0, instant=True)
+            elif self._state["mode"] in ("on", "off"):
                 self._send(self._state["manual_brightness"] if self._state["mode"] == "on" else 0)
 
     def start_distance_sampling(self, presence_reader):
@@ -214,6 +259,9 @@ class LightingControl:
                 self._state.pop("sensor_error", None)
             if self._state["mode"] == "auto":
                 now = self._clock()
+                if not self._auto_allowed():
+                    self._send(0, instant=True)
+                    return
                 if distance is None:
                     self._auto_last_distance = None
                     self._auto_last_change = None
@@ -257,6 +305,10 @@ class LightingControl:
                 if self._stopped:
                     test_active = self._state["mode"] in ("auto", "distance_test")
                     break
+                if (self._state["mode"] == "auto" and not self._auto_allowed()
+                        and self._state["target_brightness"]):
+                    # Lux freshness has its own watchdog if collection stalls.
+                    self._send(0, instant=True)
                 radar_active = self._state["mode"] in ("auto", "distance_test")
                 if (radar_active and self._radar_snapshot is not None
                         and self._radar_sampled_at is not None
@@ -298,6 +350,14 @@ class LightingControl:
             self.transport.close()
 
     def _send(self, target, color=None, led_index=None, instant=False):
+        if self._state["mode"] == "auto" and not self._auto_allowed():
+            # Gate all Auto paths, including appearance changes and watchdogs.
+            if self._state["target_brightness"]:
+                self._revision += 1
+                self._pending = None
+            target, instant = 0, True
+            self._auto_target = 0
+            self._auto_last_distance = self._auto_last_change = None
         color = color or self._state["color"]
         signature = (target, color, led_index)
         now = self._clock()

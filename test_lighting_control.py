@@ -117,12 +117,14 @@ class LightingTests(unittest.TestCase):
         self.opener.assert_not_called()
 
     def test_distance_brightness_endpoints_and_clamping(self):
+        self.light.update(0)
         for distance, target in ((1,38), (100,38), (350,83), (600,128), (900,128)):
             self.assertEqual(distance_brightness(distance), target)
             self.light.update_distance(200, dict(fresh=True, presence='moving', range_estimate_cm=distance))
             self.assertEqual(self.light.status()['brightness'], target)
 
     def test_unavailable_radar_turns_off_immediately(self):
+        self.light.update(0)
         for reading in ({'fresh':False}, {'fresh':True, 'presence':'none'},
                         {'fresh':True, 'presence':'moving', 'range_estimate_cm':None},
                         {'fresh':True, 'presence':'moving', 'range_estimate_cm':350, 'age_seconds':3}):
@@ -149,6 +151,7 @@ class LightingTests(unittest.TestCase):
             self.light.set_mode('invalid')
 
     def test_failure_retries_without_claiming_success(self):
+        self.light.update(0)
         self.opener.side_effect = OSError('offline')
         self.light.update_distance(200, dict(fresh=True, presence='moving', range_estimate_cm=600))
         self.assertIsNone(self.light.status()['brightness'])
@@ -373,6 +376,7 @@ class AutoLightingTests(unittest.TestCase):
     def setUp(self):
         DistanceLightingTests.setUp(self)
         self.light.set_mode("auto")
+        self.light.update(0)
 
     reading = DistanceLightingTests.reading
     def test_auto_color_and_full_strip(self):
@@ -417,6 +421,7 @@ class AutoLightingTests(unittest.TestCase):
         transport = MagicMock()
         transport.send.return_value = {}
         light = LightingControl(transport=transport)
+        light.update(0)
         readings = iter((100, 350, 600, None, 100))
         targets = []
         finished = threading.Event()
@@ -443,6 +448,7 @@ class AutoLightingTests(unittest.TestCase):
         transport = MagicMock()
         transport.send.return_value = {}
         light = LightingControl(transport=transport, background=True)
+        light.update(0)
         try:
             for mode in ("auto", "distance_test", "auto"):
                 light.update_distance(200, self.reading(350))
@@ -467,6 +473,7 @@ class AutoLightingTests(unittest.TestCase):
         transport = MagicMock()
         transport.send.return_value = {}
         light = LightingControl(transport=transport, background=True)
+        light.update(0)
         try:
             # Submit while holding the lock so the first worker iteration
             # necessarily sees an old sample time and a missing snapshot.
@@ -484,6 +491,7 @@ class AutoLightingTests(unittest.TestCase):
         transport = MagicMock()
         transport.send.side_effect = [OSError("disconnected"), {}]
         light = LightingControl(transport=transport, background=True, clock=lambda: now[0])
+        light.update(0)
         try:
             light.update_distance(200, self.reading(350))
             with light._condition:
@@ -504,6 +512,7 @@ class AutoLightingTests(unittest.TestCase):
         transport = MagicMock()
         transport.send.return_value = {}
         light = LightingControl(transport=transport, background=True, clock=lambda: now[0])
+        light.update(0)
         try:
             light.update_distance(200, self.reading(600))
             with light._condition:
@@ -528,6 +537,7 @@ class AutoLightingTests(unittest.TestCase):
             return {}
         transport.send.side_effect = send
         light = LightingControl(transport=transport, background=True)
+        light.update(0)
         frames = iter((None, {"fresh":True, "age_seconds":"invalid"}, self.reading(100)))
         try:
             light.start_distance_sampling(lambda: (200, next(frames, self.reading(100))))
@@ -553,6 +563,7 @@ class AutoLightingTests(unittest.TestCase):
             return {}
         transport.send.side_effect = send
         light = LightingControl(transport=transport, background=True)
+        light.update(0)
         try:
             light.start_distance_sampling(read)
             self.assertTrue(entered.wait(1))
@@ -578,6 +589,7 @@ class AutoLightingTests(unittest.TestCase):
             return {}
         transport.send.side_effect = send
         light = LightingControl(transport=transport, background=True)
+        light.update(0)
         try:
             light.update_distance(200, self.reading(100, timestamp="near"))
             self.assertTrue(entered.wait(1))
@@ -595,6 +607,185 @@ class AutoLightingTests(unittest.TestCase):
             release.set()
             light.stop()
         self.assertFalse(commands[-1]["on"])
+
+class LuxGatedAutoTests(unittest.TestCase):
+    reading = DistanceLightingTests.reading
+
+    def setUp(self):
+        self.now = 0
+        self.transport = MagicMock()
+        self.transport.send.return_value = {}
+        self.light = LightingControl(transport=self.transport, clock=lambda: self.now)
+
+    def sample_distance(self, distance=350):
+        self.light.update_distance(200, self.reading(distance))
+        return self.light.status()
+
+    def test_startup_middle_band_and_exact_hysteresis_boundaries(self):
+        self.assertEqual(self.sample_distance()['brightness'], 0)
+        self.assertEqual(self.light.status()['auto_gate_reason'], 'waiting_lux')
+        for lux, ambient, target in ((15, 'unknown', 0), (10, 'dark', 83),
+                                     (19.99, 'dark', 83), (20, 'light', 0),
+                                     (10.01, 'light', 0), (10, 'dark', 83)):
+            with self.subTest(lux=lux):
+                self.light.update(lux)
+                state = self.sample_distance()
+                self.assertEqual(state['ambient_state'], ambient)
+                self.assertEqual(state['brightness'], target)
+                self.assertEqual(state['lux'], lux)
+        self.assertEqual(state['lux_dark_threshold'], 10)
+        self.assertEqual(state['lux_light_threshold'], 20)
+        self.assertEqual(state['lux_stale_after_seconds'], 30)
+
+    def test_daylight_stops_immediately_without_radar_and_color_cannot_bypass(self):
+        self.light.update(0)
+        self.sample_distance()
+        self.light.update(20)
+        self.assertFalse(self.transport.send.call_args.args[0]['on'])
+        self.assertEqual(self.transport.send.call_args.args[0]['transition'], 0)
+        state = self.light.configure(color='#123456')
+        self.assertEqual(state['brightness'], 0)
+        self.assertEqual(state['auto_gate_reason'], 'daylight')
+        self.assertEqual(state['ambient_state'], 'light')
+        self.assertEqual(self.light._desired[0], 0)
+
+    def test_latest_lux_controls_independently_of_smoothed_value(self):
+        self.light.update(600)
+        self.now = 10
+        self.light.update(0)
+        self.assertEqual(self.sample_distance()['brightness'], 83)
+        self.assertEqual(self.light.status()['smoothed_lux'], 300)
+
+    def test_invalid_lux_and_recovery_require_new_dark_confirmation_and_radar(self):
+        for invalid in (None, True, False, -1, float('nan'), float('inf'), '0'):
+            with self.subTest(lux=invalid):
+                self.light.update(0)
+                self.assertEqual(self.sample_distance()['brightness'], 83)
+                self.light.update(invalid)
+                self.assertEqual(self.light.status()['brightness'], 0)
+                self.assertEqual(self.light.status()['auto_gate_reason'], 'lux_unavailable')
+                self.assertIsNone(self.light.status()['lux'])
+                self.assertIsNone(self.light._auto_last_distance)
+                self.light.update(15)
+                self.assertEqual(self.sample_distance()['brightness'], 0)
+                self.light.update(10)
+                self.assertEqual(self.light.status()['brightness'], 0, 'Wait for new radar')
+                self.assertEqual(self.sample_distance()['brightness'], 83)
+
+    def test_staleness_is_passive_in_status_and_blocks_color_and_new_radar(self):
+        self.light.update(0)
+        self.sample_distance()
+        self.now = 30
+        self.assertEqual(self.light.status()['ambient_state'], 'dark')
+        self.now = 30.01
+        count = self.transport.send.call_count
+        state = self.light.status()
+        self.assertEqual(self.transport.send.call_count, count, 'Status must remain passive')
+        self.assertEqual(state['ambient_state'], 'unknown')
+        self.assertEqual(state['auto_gate_reason'], 'lux_unavailable')
+        self.assertEqual(state['lux_age_seconds'], 30.01)
+        self.assertEqual(self.light.configure(color='#abcdef')['brightness'], 0)
+        self.assertEqual(self.sample_distance()['brightness'], 0)
+        self.light.update(15)
+        self.assertEqual(self.light.status()['ambient_state'], 'unknown')
+        self.light.update(0)
+        self.assertEqual(self.light.status()['brightness'], 0)
+        self.assertEqual(self.sample_distance()['brightness'], 83)
+
+    def test_lux_errors_radar_errors_and_controller_errors_are_separate(self):
+        self.light.update(0)
+        self.sample_distance()
+        self.transport.send.side_effect = OSError('USB lost')
+        self.light.update(None)
+        self.light.update_distance(503, {})
+        state = self.light.status()
+        self.assertEqual(state['auto_gate_reason'], 'lux_unavailable')
+        self.assertIn('Radar', state['sensor_error'])
+        self.assertIn('USB lost', state['error'])
+        self.light.update(0)
+        self.assertIn('Radar', self.light.status()['sensor_error'])
+
+    def test_manual_modes_and_distance_test_bypass_lux(self):
+        for mode, target in (('on', 255), ('off', 0), ('distance_test', 64)):
+            self.light.set_mode(mode)
+            for lux in (None, 0, 600):
+                self.light.update(lux)
+                self.sample_distance()
+                state = self.light.status()
+                self.assertEqual(state['brightness'], target)
+                self.assertIsNone(state['auto_gate_reason'])
+        self.light.set_mode('auto')
+        self.assertEqual(self.sample_distance()['brightness'], 0)
+
+    def test_worker_watchdog_stops_stale_lux_with_fresh_radar(self):
+        light = LightingControl(transport=self.transport, background=True, clock=lambda: self.now)
+        self.addCleanup(light.stop)
+        light.update(0)
+        light.update_distance(200, self.reading(350))
+        with light._condition:
+            self.assertTrue(light._condition.wait_for(lambda: light._state['brightness'] == 83, timeout=1))
+            self.now = 31
+            # Keep radar fresh without invoking the lux gate through update_distance.
+            light._radar_sampled_at = self.now
+            light._condition.notify_all()
+            self.assertTrue(light._condition.wait_for(lambda: light._state['brightness'] == 0, timeout=2))
+        self.assertEqual(light.status()['auto_gate_reason'], 'lux_unavailable')
+        self.assertNotIn('sensor_error', light.status())
+        self.assertEqual(self.transport.send.call_args.args[0]['transition'], 0)
+
+    def test_queued_on_replaced_and_inflight_ack_ignored_on_daylight_or_failure(self):
+        for lux in (20, None):
+            with self.subTest(lux=lux):
+                entered, release = threading.Event(), threading.Event()
+                commands = []
+                transport = MagicMock()
+                def send(command):
+                    commands.append(command)
+                    if len(commands) == 1:
+                        entered.set()
+                        release.wait(2)
+                    return {}
+                transport.send.side_effect = send
+                light = LightingControl(transport=transport, background=True)
+                try:
+                    light.update(0)
+                    light.update_distance(200, self.reading(100))
+                    self.assertTrue(entered.wait(1))
+                    light.update_distance(200, self.reading(600))
+                    light.update(lux)
+                    self.assertEqual(light.status()['target_brightness'], 0)
+                    self.assertEqual(light._pending[0], 0)
+                    release.set()
+                    with light._condition:
+                        self.assertTrue(light._condition.wait_for(lambda: light._state['brightness'] == 0, timeout=2))
+                    self.assertEqual([c['bri'] for c in commands], [38, 0])
+                finally:
+                    release.set()
+                    light.stop()
+
+    def test_failed_on_retry_becomes_off_when_lux_expires(self):
+        failed = threading.Event()
+        commands = []
+        def send(command):
+            commands.append(command)
+            if len(commands) == 1:
+                failed.set()
+                raise OSError('USB lost')
+            return {}
+        self.transport.send.side_effect = send
+        light = LightingControl(transport=self.transport, background=True, clock=lambda: self.now)
+        self.addCleanup(light.stop)
+        light.update(0)
+        light.update_distance(200, self.reading(350))
+        self.assertTrue(failed.wait(1))
+        with light._condition:
+            self.assertTrue(light._condition.wait_for(lambda: light._state['status'] == 'controller_unavailable', timeout=1))
+            self.now = 31
+            light._radar_sampled_at = self.now
+            light._condition.notify_all()
+            self.assertTrue(light._condition.wait_for(lambda: light._state['brightness'] == 0, timeout=2))
+        self.assertEqual([c['bri'] for c in commands], [83, 0])
+
 
 # Share behaviors without inheriting single-LED-specific assertions.
 for _name in ("test_lux_and_obsolete_radar_cannot_override_mode",

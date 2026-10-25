@@ -182,6 +182,13 @@ function lightingDevice() {
   const device = lighting.device || {};
   return facts([['Connection','Pi server → USB serial → SP803E'],['USB port',escapeHtml(device.serial_port || 'Not selected yet')],['Serial speed',`${number(device.baudrate ?? 115200)} baud`],['Strip length','3.2 ft · 192 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 192)} pixels`],['Confirmed color',escapeHtml(device.confirmed_color || 'Not verified yet')],['Confirmed brightness',device.confirmed_brightness == null ? 'Not verified yet' : device.confirmed_on === false ? 'Off' : `${Math.round(device.confirmed_brightness / 255 * 100)}% (${number(device.confirmed_brightness)} / 255)`],['Segment brightness',device.segment_brightness == null ? 'Not verified yet' : `${number(device.segment_brightness)} / 255`],['WLED current limit',device.current_limit_ma == null ? 'Not reported' : device.current_limit_ma === 0 ? 'Disabled in WLED' : `${number(device.current_limit_ma)} mA`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Normal modes cover pixels 1–192 with a solid color and no spacing; Distance test lights one pixel. WLED must be configured for at least 192 pixels; a shorter configured output is reported as an error.</p>';
 }
+function lightingAmbientSummary() {
+  const reasons = {waiting_lux:'Waiting for lux to confirm darkness · Auto off',
+    daylight:'Daylight · Auto off',lux_unavailable:'Lux unavailable or stale · Auto off',
+    distance_control:'Distance control active'};
+  const reason = lighting.mode === 'auto' ? (reasons[lighting.auto_gate_reason] || reasons.waiting_lux) : 'Lux gate applies in Auto only';
+  return `${reason} · Ambient ${lighting.ambient_state || 'unknown'} · Lux ${lighting.lux == null ? 'unavailable' : lighting.lux.toLocaleString(undefined,{maximumFractionDigits:2})} · Lux age ${lighting.lux_age_seconds == null ? 'unavailable' : lighting.lux_age_seconds.toFixed(1) + ' s'} · Dark ≤${lighting.lux_dark_threshold ?? 10} lux / Light ≥${lighting.lux_light_threshold ?? 20} lux · Stale after ${lighting.lux_stale_after_seconds ?? 30} s`;
+}
 function lightingSummary() {
   const base = `${lighting.mode || 'auto'} · ${lighting.status || 'waiting'}`;
   if (lighting.mode === 'auto') return `${base}${lighting.test_state === 'idle' ? ' · Idle · no distance change' : ''} · Distance ${lighting.distance_cm == null ? '—' : lighting.distance_cm + ' cm'} · Target ${lighting.target_brightness ?? '—'}/255 · Acknowledged ${lighting.brightness ?? '—'}/255 · Sample ${lighting.sample_age_seconds == null ? 'waiting' : lighting.sample_age_seconds.toFixed(1) + ' s ago'} · Ack ${lighting.ack_age_seconds == null ? 'waiting' : lighting.ack_age_seconds.toFixed(1) + ' s ago'}`;
@@ -205,6 +212,7 @@ function lightingControls() {
   return `<section class="lighting-controls" aria-label="WLED lighting controls">
     <h2>SP803E · WLED-ESP32 · USB</h2>
     <p class="timestamp" data-lighting-summary>${escapeHtml(lightingSummary())}</p>
+    <p class="timestamp" data-lighting-ambient>${escapeHtml(lightingAmbientSummary())}</p>
     <div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button><button class="button secondary" data-lighting-mode="distance_test">Distance test</button><button class="button secondary" data-lighting-max>Full brightness · 100%</button></div>
     <p><a class="section-link" href="/distance-test">Open distance test &amp; live radar ↗</a></p>
     <div data-lighting-device>${lightingDevice()}</div>
@@ -219,6 +227,7 @@ function lightingControls() {
       </fieldset>
     </form>
     <p class="timestamp">Distance test: LED 1 at 1 m or closer; LED 192 at 6 m or farther. Between 1–6 m, the dot moves along LEDs 2–191 at 25% amber. No target turns lights off; the radar’s own absence delay still applies. Stale readings turn lights off and show an error.</p>
+    <p class="timestamp">Auto allows distance control at 10 lux or below and turns the strip off at 20 lux or above. Between these thresholds it keeps the previous ambient state. Missing, invalid, or over-30-second-old lux keeps Auto off until darkness is confirmed. Manual On and Distance test bypass this rule.</p>
     <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Auto uses distance for all 192 LEDs: 15% at 1 m or closer, rising to 50% at 6 m. After 5 seconds without a distance change, lights turn off. No target or unavailable radar turns lights off. Color changes preserve Auto.</p>
     <p class="timestamp">Commands go from this server to the USB controller. Status shows whether WLED acknowledged the command. At 100%, both master and segment brightness are 255/255. WLED’s configured power limits and global brightness factor can still reduce physical output.</p>
   </section>`;
@@ -230,6 +239,8 @@ function syncLightingControls() {
   if (error) { error.textContent = [lighting.error, lighting.sensor_error].filter(Boolean).join(' '); error.hidden = !error.textContent; }
   const summary = content.querySelector('[data-lighting-summary]');
   if (summary) summary.textContent = lightingSummary();
+  const ambient = content.querySelector('[data-lighting-ambient]');
+  if (ambient) ambient.textContent = lightingAmbientSummary();
   const appearance = content.querySelector('[data-lighting-appearance]');
   if (appearance) appearance.disabled = lighting.mode === 'distance_test';
   const slider = content.querySelector('[name="brightness"]');

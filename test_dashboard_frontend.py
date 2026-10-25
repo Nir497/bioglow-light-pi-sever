@@ -214,8 +214,8 @@ async function main(){
   assert.match(vm.runInContext('lightingDevice()',context),/192 \/ 192 pixels/);
   const brightnessInput={value:'80'}, colorInput={value:'#112233'}, output={textContent:''};
   const form={dataset:{dirty:'true'},contains:()=>false,querySelector:selector=>selector==='[name="brightness"]' ? brightnessInput : selector==='[name="color"]' ? colorInput : output};
-  const summary={textContent:''};
-  page.querySelector=selector=>selector==='[data-lighting-settings]' ? form : selector==='[data-lighting-summary]' ? summary : null;
+  const summary={textContent:''}, ambientSummary={textContent:''};
+  page.querySelector=selector=>selector==='[data-lighting-settings]' ? form : selector==='[data-lighting-summary]' ? summary : selector==='[data-lighting-ambient]' ? ambientSummary : null;
   page.querySelectorAll=()=>[];
   vm.runInContext("lighting={connection:'usb',mode:'on',status:'ok',manual_brightness:120,color:'#abcdef'}",context);
   vm.runInContext('syncLightingControls()',context);
@@ -231,6 +231,15 @@ async function main(){
   assert.match(vm.runInContext('lightingControls()',context),/type="color"/);
   assert.match(vm.runInContext('lightingControls()',context),/type="range"/);
   assert.match(vm.runInContext('lightingControls()',context),/SP803E · WLED-ESP32 · USB/);
+  for (const [reason,label] of [['waiting_lux','Waiting for lux'],['daylight','Daylight'],['lux_unavailable','Lux unavailable or stale'],['distance_control','Distance control active']]) {
+    vm.runInContext(`lighting={mode:'auto',status:'ok',auto_gate_reason:'${reason}',ambient_state:'dark',lux:10,lux_age_seconds:2,lux_dark_threshold:10,lux_light_threshold:20,lux_stale_after_seconds:30}`,context);
+    vm.runInContext('syncLightingControls()',context);
+    assert.ok(ambientSummary.textContent.includes(label));
+    assert.match(ambientSummary.textContent,/Lux 10/);
+    assert.match(ambientSummary.textContent,/Lux age 2.0 s/);
+    assert.match(ambientSummary.textContent,/Dark ≤10 lux \/ Light ≥20 lux/);
+  }
+  vm.runInContext("lighting.mode='on'",context);
   const originalFetch=context.fetch;
   context.fetch=async(path,options)=>{
     if(path==='/v1/lighting') {

@@ -162,12 +162,18 @@ dashboard color. At 1 m or closer brightness is 15% (38/255); between 1 and 6 m
 it rises linearly, reaching 50% (128/255) at 6 m or farther. At 3.5 m it is
 83/255. Changes fade over 0.3 seconds. No target, stale/unavailable radar, or an
 unusable filtered range requests immediate off. Startup requests off until fresh
-radar arrives. Controller failures can prevent a command from reaching the strip.
+radar and confirmed darkness arrive. Controller failures can prevent a command from reaching the strip.
 
 Auto and Distance test share the half-second radar loop and filtered range below.
 The lighting page refreshes every half second and shows sampled distance, target
-and acknowledged brightness, and separate sensor/controller errors. Lux continues
-to be collected, displayed, and logged without controlling brightness.
+and acknowledged brightness, and separate sensor/controller errors. Auto permits
+distance control at ≤10 lux and requests off at ≥20 lux, retaining the previous
+ambient classification between them. Startup in that band stays off. Failed,
+invalid, missing, or more than 30-second-old lux keeps Auto off; a fresh threshold
+reading and new radar sample are required to recover. The latest lux controls
+this gate, independently of the rolling average. The WLED page shows lux, age,
+ambient state, fixed thresholds, and the gate reason. Manual On and Distance test
+bypass the gate. Lux retains its ten-second collection and logging cadence.
 Color changes preserve Auto; manual brightness is disabled in Auto. On restores
 saved manual brightness. Shutdown requests off for both radar-controlled modes.
 USB acknowledgments verify full-strip coverage, color, and brightness, clear
@@ -230,7 +236,7 @@ still, then leave. Confirm exactly one LED moves along the strip, departure turn
 it off after the radar's delay, and On restores the entire strip. Automated tests
 use synthetic radar readings and mocked controller acknowledgments.
 
-For Auto hardware validation, approach, move away, stand still, and leave the detection area. Verify whole-strip brightness, selected color, and off after the radar absence delay.
+For Auto hardware validation, confirm darkness at ≤10 lux, then approach, move away, stand still, and leave the detection area. Verify whole-strip brightness, selected color, five-second inactivity, and off after the radar absence delay. Confirm ≥20 lux forces off and lux sensor failure keeps Auto off. Check that the strip itself does not illuminate the lux sensor enough to cause cycling; sensor placement is not yet verified.
 
 Auto output delivery retains the latest desired command independently of radar
 sampling. The output worker retries failed commands every 0.5 seconds after a
@@ -243,7 +249,7 @@ page displays sample and acknowledgment ages. Delivery still depends on a workin
 controller connection; a blocked request must finish or time out before off can
 be sent.
 
-Auto now wakes on the first usable target or a change of at least 5 cm in the
+While darkness is confirmed, Auto wakes on the first usable target or a change of at least 5 cm in the
 filtered range. After five seconds without such a change it turns off, even if
 radar continues detecting a stationary wall. Fresh timestamps, raw channel
 noise, and color changes do not reset this timer. Movement reactivates Auto.

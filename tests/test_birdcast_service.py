@@ -99,6 +99,7 @@ class ServiceTests(unittest.TestCase):
         light.transport = MagicMock()
         light._background = False
         light.set_mode("auto")
+        light.update(0)
         light.update_distance(200, {"fresh": True, "presence": "stationary", "range_estimate_cm": 350})
         self.service.presence_sensor.response = MagicMock()
         latest = self.service.latest()
@@ -114,6 +115,33 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(handler._send.call_args.args[1]["lighting"]["mode"], "auto")
         self.assertEqual(light.status()["brightness"], 83)
         light.stop()
+
+    def test_lux_readings_gate_auto_and_status_never_resamples(self):
+        light = self.service.lighting
+        light._background = False
+        light.transport = MagicMock()
+        self.service.light_sensor.response = MagicMock(return_value=(200, {'lux': 10}))
+        self.service.light_reading()
+        light.update_distance(200, {'fresh': True, 'presence': 'moving', 'range_estimate_cm': 350})
+        self.assertEqual(light.status()['brightness'], 83)
+        self.service.light_sensor.response.return_value = (200, {'lux': 20})
+        self.service.light_reading()
+        state = self.service.latest()['lighting']
+        self.assertEqual(state['brightness'], 0)
+        self.assertEqual(state['auto_gate_reason'], 'daylight')
+        self.assertEqual(state['lux'], 20)
+        self.assertEqual(state['lux_dark_threshold'], 10)
+        self.assertEqual(state['lux_light_threshold'], 20)
+        count = light.transport.send.call_count
+        self.service.latest()
+        self.assertEqual(light.transport.send.call_count, count)
+        self.assertEqual(self.service.light_sensor.response.call_count, 2)
+        self.service.light_sensor.response.return_value = (503, {'error': 'disconnected'})
+        self.service.light_reading()
+        self.assertEqual(light.status()['auto_gate_reason'], 'lux_unavailable')
+        self.assertEqual(light.status()['brightness'], 0)
+        self.assertEqual(len(self.service.reading_history.recent('light')), 3)
+        self.assertEqual(self.service.reading_history.recent('light')[-1]['http_status'], 503)
 
     def test_lux_collection_and_latest_are_passive(self):
         self.service.lighting = MagicMock()
