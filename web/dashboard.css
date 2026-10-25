@@ -958,3 +958,13 @@ select {
 .wled-log-list { list-style: none; padding: 0; margin: 0; overflow-anchor: none; }
 .wled-log-event { border-bottom: 1px solid #dce2db; padding: 12px 0; }
 .wled-log-event pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+
+.lighting-lux { margin: 1rem 0; padding: 1rem; background: var(--surface, #f5f7f4); border: 1px solid var(--line, #ddd); border-radius: .75rem; }
+.lighting-lux h3 { margin-top: 0; }
+.lighting-lux-reading { display: flex; flex-wrap: wrap; align-items: baseline; gap: .75rem; }
+.lighting-lux-reading strong { font-size: 1.6rem; }
+.lighting-lux-bands { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
+.lighting-lux-bands div { padding: .75rem; border: 1px solid var(--line, #ddd); border-radius: .5rem; }
+.lighting-lux-bands strong, .lighting-lux-bands span { display: block; }
+.lighting-lux-bands span { margin-top: .35rem; }
+@media (max-width: 700px) { .lighting-lux-bands { grid-template-columns: 1fr; } }

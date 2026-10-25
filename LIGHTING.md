@@ -135,6 +135,18 @@ illumination from the strip. Exposure is currently unverified; hardware checks
 must watch for on/off cycling caused by the strip itself raising lux above 20.
 No automatic compensation is applied.
 
+The WLED page shows the current lux reading prominently beside three Auto bands:
+≤10 lux enables distance control, 10 < lux < 20 retains the previous classification,
+and ≥20 lux keeps the strip off. Unavailable/stale readings are labeled explicitly.
+
+The 10/20 lux thresholds are starting values, not an outdoor-lighting standard.
+[ABB twilight switches](https://new.abb.com/low-voltage/products/system-pro-m/control-and-automation-devices/twilight-switches)
+include a 10-lux factory preset; [Finder's twilight relay guide](https://www.findernet.com/en/uk/news/what-is-a-light-dependent-relay-twilight-switch-finder/)
+also describes a fixed 10-lux model. These support 10 lux as a practical twilight
+trigger; the separate 20-lux cutoff is our hysteresis choice to reduce switching
+near that trigger. Confirm suitability using readings at the desired evening and
+morning switching times, with the strip's light excluded from the sensor.
+
 `LightingControl` retains its optional HTTP transport for existing integrations;
 the dashboard server now explicitly selects USB and never resolves
 `bioglow.local` to control this device.

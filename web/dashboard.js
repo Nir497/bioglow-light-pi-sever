@@ -182,6 +182,26 @@ function lightingDevice() {
   const device = lighting.device || {};
   return facts([['Connection','Pi server → USB serial → SP803E'],['USB port',escapeHtml(device.serial_port || 'Not selected yet')],['Serial speed',`${number(device.baudrate ?? 115200)} baud`],['Strip length','3.2 ft · 192 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 192)} pixels`],['Confirmed color',escapeHtml(device.confirmed_color || 'Not verified yet')],['Confirmed brightness',device.confirmed_brightness == null ? 'Not verified yet' : device.confirmed_on === false ? 'Off' : `${Math.round(device.confirmed_brightness / 255 * 100)}% (${number(device.confirmed_brightness)} / 255)`],['Segment brightness',device.segment_brightness == null ? 'Not verified yet' : `${number(device.segment_brightness)} / 255`],['WLED current limit',device.current_limit_ma == null ? 'Not reported' : device.current_limit_ma === 0 ? 'Disabled in WLED' : `${number(device.current_limit_ma)} mA`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Normal modes cover pixels 1–192 with a solid color and no spacing; Distance test lights one pixel. WLED must be configured for at least 192 pixels; a shorter configured output is reported as an error.</p>';
 }
+function lightingLuxReading() {
+  if (lighting.lux == null) return 'Unavailable';
+  const stale = lighting.lux_age_seconds > (lighting.lux_stale_after_seconds ?? 30);
+  return `${lighting.lux.toLocaleString(undefined,{maximumFractionDigits:2})} lux${stale ? ' (stale)' : ''}`;
+}
+function lightingLuxRule() {
+  const dark = lighting.lux_dark_threshold ?? 10;
+  const light = lighting.lux_light_threshold ?? 20;
+  return `<section class="lighting-lux" aria-label="Ambient light and Auto thresholds">
+    <h3>Outside light · Auto rule</h3>
+    <p class="lighting-lux-reading">Current lux reading <strong data-lighting-lux>${escapeHtml(lightingLuxReading())}</strong></p>
+    <div class="lighting-lux-bands">
+      <div><strong>≤ ${number(dark)} lux</strong><span>Dark: use distance control</span></div>
+      <div><strong>${number(dark)} &lt; lux &lt; ${number(light)}</strong><span>Keep the previous dark/light state</span></div>
+      <div><strong>≥ ${number(light)} lux</strong><span>Light: keep the strip off</span></div>
+    </div>
+    <p class="timestamp">These thresholds apply in Auto. At startup, or after a lux failure, the middle range keeps Auto off until darkness is confirmed.</p>
+    <p class="timestamp" data-lighting-ambient>${escapeHtml(lightingAmbientSummary())}</p>
+  </section>`;
+}
 function lightingAmbientSummary() {
   const reasons = {waiting_lux:'Waiting for lux to confirm darkness · Auto off',
     daylight:'Daylight · Auto off',lux_unavailable:'Lux unavailable or stale · Auto off',
@@ -212,7 +232,7 @@ function lightingControls() {
   return `<section class="lighting-controls" aria-label="WLED lighting controls">
     <h2>SP803E · WLED-ESP32 · USB</h2>
     <p class="timestamp" data-lighting-summary>${escapeHtml(lightingSummary())}</p>
-    <p class="timestamp" data-lighting-ambient>${escapeHtml(lightingAmbientSummary())}</p>
+    ${lightingLuxRule()}
     <div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button><button class="button secondary" data-lighting-mode="distance_test">Distance test</button><button class="button secondary" data-lighting-max>Full brightness · 100%</button></div>
     <p><a class="section-link" href="/distance-test">Open distance test &amp; live radar ↗</a></p>
     <div data-lighting-device>${lightingDevice()}</div>
@@ -241,6 +261,8 @@ function syncLightingControls() {
   if (summary) summary.textContent = lightingSummary();
   const ambient = content.querySelector('[data-lighting-ambient]');
   if (ambient) ambient.textContent = lightingAmbientSummary();
+  const luxReading = content.querySelector('[data-lighting-lux]');
+  if (luxReading) luxReading.textContent = lightingLuxReading();
   const appearance = content.querySelector('[data-lighting-appearance]');
   if (appearance) appearance.disabled = lighting.mode === 'distance_test';
   const slider = content.querySelector('[name="brightness"]');
