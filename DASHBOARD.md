@@ -12,9 +12,10 @@ or boot configuration is changed by this feature.
 
 Open `http://NirRaspberryPi.local:8000/` from a device on the same network, or use
 `http://<Pi-LAN-IP>:8000/` if mDNS is unavailable. The default bind is `0.0.0.0`;
-there is no login. Keep the service on the local network. Everyone who can reach
+there is no login. Everyone who can reach
 it can view readings, download audio, fetch BirdCast, and record microphone audio.
-No internet hosting or router forwarding is required. LAN reachability depends on
+For public HTTPS access through Cloudflare Tunnel, see
+[CLOUDFLARE.md](CLOUDFLARE.md). No router forwarding is required. LAN reachability depends on
 the host firewall and network; the hostname is not a verified reachability claim.
 
 The separate **WLED light** page (`/#lighting`) provides SP803E WLED-ESP32 USB
