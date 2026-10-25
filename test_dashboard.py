@@ -56,11 +56,16 @@ class DashboardTests(unittest.TestCase):
         self.service.runner = Mock(side_effect=AssertionError("scrape"))
         with patch("birdcast_service.subprocess.run", side_effect=AssertionError("record")):
             for path, content_type in [("/", "text/html"), ("/distance-test", "text/html"), ("/dashboard.css", "text/css"),
-                                       ("/dashboard.js", "text/javascript")]:
+                                       ("/dashboard.js", "text/javascript"), ("/favicon.png", "image/png")]:
                 status, headers, data = self.request("GET", path)
                 self.assertEqual(status, 200)
                 self.assertTrue(headers["Content-Type"].startswith(content_type))
                 self.assertGreater(len(data), 100)
+                if path == "/favicon.png":
+                    self.assertEqual(data, (Path(__file__).parent / "web" / "favicon.png").read_bytes())
+                    self.assertTrue(data.startswith(b"\x89PNG\r\n\x1a\n"))
+                if path == "/":
+                    self.assertIn(b'<link rel="icon" type="image/png" href="/favicon.png">', data)
             status, _, data = self.request("GET", "/v1/latest")
             self.assertEqual(status, 200)
             latest = json.loads(data)
