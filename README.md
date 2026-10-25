@@ -11,7 +11,7 @@ Run commands from this repository. Start only one server:
 
 Open `http://<Pi LAN address>:8000/`. Use `--no-animal-analysis` if the optional
 model is not installed. Automatic microphone capture starts stopped after restart.
-Sensor sampling continues every ten seconds without a dashboard client.
+Lux sampling continues every second and presence logging every ten seconds without a dashboard client.
 
 ## Project map
 

@@ -143,6 +143,28 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(self.service.reading_history.recent('light')), 3)
         self.assertEqual(self.service.reading_history.recent('light')[-1]['http_status'], 503)
 
+    def test_lux_schedule_is_separate_from_presence_and_keeps_passive_reads(self):
+        scheduler = self.service.collection_schedule
+        self.assertEqual(scheduler.sensor_interval, 10)
+        self.assertEqual(scheduler.light_interval, 1)
+        self.assertEqual(scheduler.collect_sensors, self.service.presence_reading)
+        self.assertEqual(scheduler.collect_light, self.service.light_reading)
+        self.service.lighting = MagicMock()
+        self.service.light_sensor.response = MagicMock(return_value=(200, {'lux': 5}))
+        self.service.presence_sensor.response = MagicMock(return_value=(503, {'fresh': False}))
+        scheduler.collect_sensors()
+        for _ in range(3):
+            scheduler.collect_light()
+        self.assertEqual(len(self.service.reading_history.recent('light')), 3)
+        self.assertEqual(len(self.service.reading_history.recent('radar')), 1)
+        self.service.lighting.status.return_value = {}
+        self.service.latest()
+        self.assertEqual(self.service.light_sensor.response.call_count, 3)
+        self.assertEqual(self.service.presence_sensor.response.call_count, 2)
+        # latest() may read passive radar state outside lighting Auto.
+        self.assertEqual(len(self.service.reading_history.recent('radar')), 1)
+        self.assertEqual(self.service.latest()['collection']['light_interval_seconds'], 1)
+
     def test_lux_collection_and_latest_are_passive(self):
         self.service.lighting = MagicMock()
         self.service.light_sensor.response = MagicMock(return_value=(200, {"lux": 12, "ambient_counts": 24, "white_counts": 36}))

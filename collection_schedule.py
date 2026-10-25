@@ -6,9 +6,11 @@ from datetime import datetime, timedelta, timezone
 
 
 class CollectionSchedule:
-    def __init__(self, collect_sensors, record, sensor_interval=10, recording_interval=120):
+    def __init__(self, collect_sensors, record, sensor_interval=10, recording_interval=120,
+                 *, collect_light=None, light_interval=1):
         self.collect_sensors, self.record = collect_sensors, record
         self.sensor_interval, self.recording_interval = sensor_interval, recording_interval
+        self.collect_light, self.light_interval = collect_light, light_interval
         self.condition = threading.Condition()
         self.stopped = False
         self.enabled = False
@@ -21,8 +23,11 @@ class CollectionSchedule:
         with self.condition:
             if self.threads or self.stopped:
                 return
-            self.threads = [threading.Thread(target=target, daemon=True, name=name) for target, name in
-                            ((self._sensors, "sensor-sampling"), (self._microphone, "microphone-schedule"))]
+            workers = [(self._sensors, "sensor-sampling"), (self._microphone, "microphone-schedule")]
+            if self.collect_light is not None:
+                workers.append((self._light, "lux-sampling"))
+            self.threads = [threading.Thread(target=target, daemon=True, name=name)
+                            for target, name in workers]
             for thread in self.threads:
                 thread.start()
 
@@ -46,7 +51,9 @@ class CollectionSchedule:
                 next_at = (datetime.now(timezone.utc)+timedelta(seconds=max(0,self.next_run-time.monotonic()))).isoformat().replace("+00:00", "Z")
             return {"enabled": self.enabled, "recording": self.recording, "next_recording_at": next_at,
                     "interval_seconds": self.recording_interval, "duration_seconds": 5,
-                    "sensor_interval_seconds": self.sensor_interval, "error": self.last_error}
+                    "sensor_interval_seconds": self.sensor_interval,
+                    "light_interval_seconds": self.light_interval if self.collect_light is not None else self.sensor_interval,
+                    "error": self.last_error}
 
     def stop(self):
         with self.condition:
@@ -62,15 +69,21 @@ class CollectionSchedule:
             return not self.stopped
 
     def _sensors(self):
+        self._sample(self.collect_sensors, self.sensor_interval, "sensor")
+
+    def _light(self):
+        self._sample(self.collect_light, self.light_interval, "lux")
+
+    def _sample(self, collect, interval, label):
         deadline = time.monotonic()
         while self._wait_until(deadline):
             try:
-                self.collect_sensors()
+                collect()
             except Exception:
-                logging.getLogger(__name__).exception("Scheduled sensor collection failed")
-            deadline += self.sensor_interval
+                logging.getLogger(__name__).exception("Scheduled %s collection failed", label)
+            deadline += interval
             if deadline <= time.monotonic():
-                deadline = time.monotonic()+self.sensor_interval
+                deadline = time.monotonic()+interval
 
     def _microphone(self):
         while True:

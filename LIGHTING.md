@@ -101,7 +101,7 @@ unreachable lighting never blocks lux sampling or `/v1/latest`. The API reports
 `pending` until WLED acknowledges, `ok` on success, and `controller_unavailable`
 on failure. `/v1/latest` exposes cached lighting state without USB traffic.
 
-Auto uses the latest valid VEML7700 reading from the existing ten-second sampler.
+Auto uses the latest valid VEML7700 reading from the server-owned one-second sampler.
 At **less than 10 lux**, distance control is enabled. At **more than 30 lux**, the
 strip is off. From 10 through 30 lux, including both boundaries, the previous dark/light
 classification is retained. Startup in this band stays off. The 30-second rolling average remains

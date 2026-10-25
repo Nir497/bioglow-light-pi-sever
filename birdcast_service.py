@@ -70,7 +70,8 @@ class Service:
         self._latest_lock = threading.Lock()
         self._cache_file = self.root / ".runtime" / "latest.json"
         self._latest: dict[str, Any] = {}
-        self.collection_schedule = CollectionSchedule(self.collect_sensors, self.start_recording)
+        self.collection_schedule = CollectionSchedule(self.presence_reading, self.start_recording,
+                                                      collect_light=self.light_reading)
         try:
             cached = json.loads(self._cache_file.read_text(encoding="utf-8"))
             if isinstance(cached, dict):

@@ -246,6 +246,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(len(self.service.reading_history.recent("light")), 1)
         self.assertEqual(len(self.service.reading_history.recent("radar")), 1)
         self.assertEqual(self.service.collection_schedule.sensor_interval, 10)
+        self.assertEqual(self.service.collection_schedule.light_interval, 1)
         self.assertEqual(self.service.collection_schedule.recording_interval, 120)
         status, _, raw = self.request("POST", "/v1/recording-schedule", {"enabled": True})
         self.assertEqual(status, 200)
