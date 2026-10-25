@@ -10,7 +10,7 @@ Work only in `/home/nir/bioglow-birdcast`, the repository root. `birdcast_servic
 
 ## Collection, History & Dashboard Behavior
 
-The repository server samples and logs presence and light every ten seconds, independently of dashboard clients. BirdCast stays manual. Radar still receives UART frames continuously; freshness requires valid frames within two seconds and an open connection. `/v1/latest` reads passive/cached state without adding log entries or measuring light. Explicit sensor reads may add measurements outside the scheduled cadence.
+The repository server samples and logs presence every ten seconds and light every second, independently of dashboard clients. BirdCast stays manual. Radar still receives UART frames continuously; freshness requires valid frames within two seconds and an open connection. `/v1/latest` reads passive/cached state without adding log entries or measuring light. Explicit sensor reads may add measurements outside the scheduled cadence.
 
 Automatic microphone recording starts stopped after each server restart. Start records immediately, then every 120 seconds; Stop prevents future captures while an active capture finishes. Scheduling is server-owned and shared by clients. Preserve capture locking, analysis pause/resume behavior, error reporting, and shutdown cleanup.
 
@@ -37,6 +37,18 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest test_dashboard_browser -v
 
 Run checks relevant to the change. Frontend state tests require Node; browser tests require Chromium. HTTP and Chromium checks may require execution outside the sandbox. Optional animal analysis requires `requirements-animal.txt` and `setup_animal_model.py`; use `--no-animal-analysis` to run the server without identification. Run only one server entry point; the legacy combined server also uses port 8000. No build step is required.
 
+## Cloudflare Tunnel & Favicon
+
+The user authorized public dashboard access without a login through Cloudflare Tunnel. The verified public address on October 25, 2026 is `http://glow.ultraviolet.nirtech.org`; HTTPS returned a TLS handshake failure. Do not assume HTTPS works or replace working HTTP links without verifying the hostname's certificate setup. All existing dashboard controls are available to public visitors.
+
+Preserve the existing Python server on port 8000 and LAN access. The remotely managed tunnel routes to `http://127.0.0.1:8000`. Cloudflare's official Debian ARM64 `cloudflared` package and boot-enabled `/etc/systemd/system/cloudflared.service` are installed. The service runs `cloudflared --no-autoupdate tunnel run --token-file /etc/cloudflared/tunnel-token`, waits for that file to exist, and restarts after failures. The root-owned token directory is mode 0700 and the token file must be mode 0600. Never print, commit, or include tokens in command arguments. `.runtime/cloudflared-token` is an ignored staging location; clear it after installing the protected token. See `CLOUDFLARE.md` for operations and UI steps.
+
+Do not rerun `cloudflared service install`: the service already exists. Update its protected token file and restart the existing service. The tunnel service does not start the dashboard; the Python server currently runs separately in a login/SSH session. Server-side route changes require restarting that Python process. Restarting only the connector does not reload application code.
+
+When giving SSH instructions, provide copyable commands and explicitly identify where each Cloudflare value comes from. The tunnel token is the long value after `service install` in Cloudflare's connector command, not the Tunnel ID. Explain when to paste it into a hidden `read` prompt; do not tell the user to replace the prompt text. Cloudflare's UI manages the published hostname and route.
+
+`web/favicon.png` is the user-provided Glow image. `web/index.html` references `/glow-favicon.png?v=d359af34`; the static allowlist also serves `/favicon.png` and `/favicon.ico` as `image/png` from the same PNG. Preserve the correct MIME type and update the version when replacing the image. Static responses use `Cache-Control: no-store`, but browsers may retain favicon caches. Verify both local and public image responses before attributing failures to caching. Dashboard asset tests cover the favicon aliases and HTML link.
+
 ## Coding Style & Naming Conventions
 
 Use Python with four-space indentation, `snake_case` functions and variables, and `PascalCase` classes. Match surrounding code and use type annotations where established. Keep hardware access separate from parsing and HTTP response handling. No project formatter or linter configuration is established.
@@ -51,4 +63,4 @@ Use concise, imperative commit subjects. Describe behavior changes, validation r
 
 ## Hardware & Configuration
 
-Consult `presence/README.md` before UART testing. Never treat unavailable radar data as absence. New microphone captures/downloads are `audio/wav`: five seconds, mono, 48 kHz, 16-bit PCM (240,000 frames; 480,044 bytes for the canonical WAV). Preserve support for retained ten-second WAVs and the legacy combined-server tests. Do not change external runtime files. Keep services on the local network and avoid committing credentials, virtual environments, or private captures.
+Consult `presence/README.md` before UART testing. Never treat unavailable radar data as absence. New microphone captures/downloads are `audio/wav`: five seconds, mono, 48 kHz, 16-bit PCM (240,000 frames; 480,044 bytes for the canonical WAV). Preserve support for retained ten-second WAVs and the legacy combined-server tests. Do not change external runtime files except the explicitly authorized Cloudflare package, connector service, and protected token configuration. Public access uses the authorized tunnel; do not add router port forwarding. Avoid committing credentials, virtual environments, or private captures.
