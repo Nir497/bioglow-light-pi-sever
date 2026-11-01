@@ -28,6 +28,14 @@ The server enforces explicit runtime station modes (`normal`, `direction_config`
 
 Station mode is managed through `GET` and `POST /v1/station-mode`, broadcast via `/v1/latest`, and selectable in the dashboard sidebar as well as through dedicated page toggles (such as the Directionality and WLED lighting switches). When a mode is not active, controls belonging to that regime (e.g. manual WLED lighting sliders and presets when not in `manual_control` mode) must be locked or greyed out in the interface to prevent inadvertent commands from overriding or competing with active station behavior.
 
+## Direction Calibration & Rollback Baseline
+
+On November 1, 2026, the user requested restoration to `c1b27ef6ed4330487f4177189ad8e0135d060d37`. Rollback commit `2edbecc` restores that commit's tracked contents while preserving Git history. The subsequent JSON preference persistence, explicit pixel rendering, and direction-request queue changes were reverted. Do not reintroduce those changes unless requested.
+
+Direction calibration must let the user adjust spiral spacing until the three light points, one per physical wrap, form a vertical column. Preserve the spacing slider and presets, beam-width controls, and the separate Output → Direction dial and nudges. At width 1 and offset 0, spacing 51 selects LEDs 1, 52, and 103 on the 144-pixel logical strip; this is an example, not a fixed calibration. Physical alignment requires visual verification. A successful WLED acknowledgement or mocked test does not prove that all three points are visible or aligned.
+
+The restored implementation uses WLED segment grouping, spacing, and offset (`grp`, `spc`, `of`). Lamp preferences currently remain in memory and reset on server restart; JSON autosaving is not active. An ignored `.runtime/lamp_config.json` may remain from the reverted implementation but is not loaded. If persistence is requested again, preserve the existing calibration controls and rendering behavior and verify adjustments and restart restoration before reporting success.
+
 ## Development & Test Commands
 
 Run commands from `/home/nir/bioglow-birdcast`:
@@ -43,13 +51,15 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest test_dashboard_browser -v
 
 Run checks relevant to the change. Frontend state tests require Node; browser tests require Chromium. HTTP and Chromium checks may require execution outside the sandbox. Optional animal analysis requires `requirements-animal.txt` and `setup_animal_model.py`; use `--no-animal-analysis` to run the server without identification. Run only one server entry point; the legacy combined server also uses port 8000. No build step is required.
 
+The rollback validation ran 87 tests across `test_wled_serial`, `test_lighting_control`, and `test_dashboard_frontend`: 86 passed and one frontend test failed because its DOM mock lacks `querySelectorAll` in `syncStationModeUI`. Treat this as a known failure in the restored baseline, not evidence that the physical direction controls work or fail.
+
 ## Cloudflare Tunnel & Favicon
 
 The user authorized public dashboard access without a login through Cloudflare Tunnel. The verified public address on October 25, 2026 is `http://glow.ultraviolet.nirtech.org`; HTTPS returned a TLS handshake failure. Do not assume HTTPS works or replace working HTTP links without verifying the hostname's certificate setup. All existing dashboard controls are available to public visitors.
 
 Preserve the existing Python server on port 8000 and LAN access. The remotely managed tunnel routes to `http://127.0.0.1:8000`. Cloudflare's official Debian ARM64 `cloudflared` package and boot-enabled `/etc/systemd/system/cloudflared.service` are installed. The service runs `cloudflared --no-autoupdate tunnel run --token-file /etc/cloudflared/tunnel-token`, waits for that file to exist, and restarts after failures. The root-owned token directory is mode 0700 and the token file must be mode 0600. Never print, commit, or include tokens in command arguments. `.runtime/cloudflared-token` is an ignored staging location; clear it after installing the protected token. See `CLOUDFLARE.md` for operations and UI steps.
 
-Do not rerun `cloudflared service install`: the service already exists. Update its protected token file and restart the existing service. The tunnel service does not start the dashboard; the Python server currently runs separately in a login/SSH session. Server-side route changes require restarting that Python process. Restarting only the connector does not reload application code.
+Do not rerun `cloudflared service install`: the service already exists. Update its protected token file and restart the existing service. The tunnel service does not start the dashboard. As verified on November 1, 2026, the dashboard runs under `bioglow.service`, using this repository's virtual environment and `birdcast_service.py --port 8000` as user `nir`. After server-side changes, run `sudo systemctl restart bioglow.service` and verify `/v1/latest` responds. The service was restarted after rollback `2edbecc`. Restarting only the connector does not reload application code. Do not launch a second dashboard process alongside the service. See `scripts/install_service.sh` and `scripts/uninstall_service.sh` for the existing dashboard service setup.
 
 When giving SSH instructions, provide copyable commands and explicitly identify where each Cloudflare value comes from. The tunnel token is the long value after `service install` in Cloudflare's connector command, not the Tunnel ID. Explain when to paste it into a hidden `read` prompt; do not tell the user to replace the prompt text. Cloudflare's UI manages the published hostname and route.
 
