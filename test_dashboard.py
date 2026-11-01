@@ -54,8 +54,7 @@ class DashboardTests(unittest.TestCase):
     def test_dashboard_assets_and_empty_data_never_probe_hardware(self):
         self.service.light_sensor.response = Mock(side_effect=AssertionError("hardware probe"))
         self.service.runner = Mock(side_effect=AssertionError("scrape"))
-        with patch.object(self.service, "get_services_status", return_value={}), \
-                patch("birdcast_service.subprocess.run", side_effect=AssertionError("record")):
+        with patch("birdcast_service.subprocess.run", side_effect=AssertionError("record")):
             for path, content_type in [("/", "text/html"), ("/distance-test", "text/html"), ("/dashboard.css", "text/css"),
                                        ("/dashboard.js", "text/javascript"), ("/favicon.png", "image/png"),
                                        ("/glow-favicon.png?v=d359af34", "image/png"),

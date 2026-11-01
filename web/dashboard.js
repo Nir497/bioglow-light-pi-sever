@@ -7,23 +7,6 @@ const descriptions = {'wled-log':'USB traffic observed by this server · Latest 
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '', stationMode = 'normal', directionAlignment = 144, directionBeamWidth = 1, directionOffset = 0, systemServices = {};
 let histories = {};
 let lighting = {};
-let lampConfiguration = {};
-function lampSaveMessage() {
-  return lampConfiguration.error || (lampConfiguration.persistence_status === 'saved'
-    ? 'Settings saved automatically.' : 'Settings will be saved automatically when changed.');
-}
-function lampSaveStatus() {
-  return `<p data-lamp-save-status role="status" class="${lampConfiguration.error ? 'error-message' : 'timestamp'}">${escapeHtml(lampSaveMessage())}</p>`;
-}
-function updateLampSaveStatus(configuration) {
-  if (configuration) lampConfiguration = configuration;
-  const status = content.querySelector('[data-lamp-save-status]');
-  if (status) {
-    status.textContent = lampSaveMessage();
-    status.classList.toggle('error-message', Boolean(lampConfiguration.error));
-    status.classList.toggle('timestamp', !lampConfiguration.error);
-  }
-}
 const historyRanges = {radar:'1h',light:'1h',birdcast:'1d',microphone:'1d'};
 const rangeOptions = [['30m','Half hour'],['1h','Hour'],['6h','6 hours'],['12h','12 hours'],['1d','Day'],['7d','Week'],['all','All time']];
 const historyInfo = {}, historyErrors = {}, historyRequests = {}, historyKeys = {};
@@ -130,7 +113,6 @@ function scheduleRadarPoll() {
       entry = latest.sources.radar;
       if (generation === radarPollGeneration && view() === 'distance-test') {
         lighting = latest.lighting || {};
-        updateLampSaveStatus(latest.lamp_configuration);
         syncLightingControls();
       }
     } catch (error) {
@@ -255,7 +237,6 @@ function lightingControls() {
   const color = /^#[0-9a-f]{6}$/i.test(lighting.color || '') ? lighting.color : '#ffa028';
   return `<section class="lighting-controls" aria-label="WLED lighting controls">
     <h2>SP803E · WLED-ESP32 · USB</h2>
-    ${lampSaveStatus()}
     <p class="timestamp" data-lighting-summary>${escapeHtml(lightingSummary())}</p>
     ${lightingLuxRule()}
     <div class="card-actions"><button class="button" data-lighting-mode="on">On</button><button class="button secondary" data-lighting-mode="off">Off</button><button class="button secondary" data-lighting-mode="auto">Auto</button><button class="button secondary" data-lighting-mode="distance_test">Distance test</button><button class="button secondary" data-lighting-max>Full brightness · 100%</button></div>
@@ -750,7 +731,6 @@ function scheduleCollectionPoll() {
       if (generation!==collectionGeneration) return;
       collection = latest.collection || collection;
       lighting = latest.lighting || {};
-      updateLampSaveStatus(latest.lamp_configuration);
       if (latest.services) {
         systemServices = latest.services;
         if (view() === 'overview') updateServicesSection();
@@ -915,45 +895,44 @@ function updateBeamWidthDisplay(bwVal, nVal) {
   const tickMax = document.querySelector('#beam-width-tick-max');
   if (tickMax) tickMax.textContent = `Max: ${maxBw} pixels`;
 }
-let directionRequestQueue = Promise.resolve();
-let directionRequestRevision = 0;
-function saveDirectionParameters(path, parameters) {
-  const revision = ++directionRequestRevision;
-  directionRequestQueue = directionRequestQueue.then(async () => {
-    try {
-      const res = await api(path, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(parameters)
-      });
-      // A response to an older drag must not overwrite a newer local edit.
-      if (revision !== directionRequestRevision) return;
-      updateLampSaveStatus(res.lamp_configuration);
-      if (res.alignment) directionAlignment = res.alignment;
-      if (res.beam_width) directionBeamWidth = res.beam_width;
-      if (res.offset != null) directionOffset = res.offset;
-    } catch (err) {
-      if (revision !== directionRequestRevision) return;
-      updateLampSaveStatus(err.data?.lamp_configuration);
-      notice(`Could not set direction parameters: ${err.message}`, true);
-    }
-  });
-  return directionRequestQueue;
+async function sendAlignment(n, bw) {
+  const alignmentVal = parseInt(n || directionAlignment || 144, 10);
+  const beamWidthVal = parseInt(bw || directionBeamWidth || 1, 10);
+  const offsetVal = directionOffset % alignmentVal;
+  try {
+    const res = await api('/v1/direction/alignment', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({alignment: alignmentVal, beam_width: beamWidthVal, offset: offsetVal})
+    });
+    if (res.alignment) directionAlignment = res.alignment;
+    if (res.beam_width) directionBeamWidth = res.beam_width;
+    if (res.offset != null) directionOffset = res.offset;
+  } catch (err) {
+    notice(`Could not set direction parameters: ${err.message}`, true);
+  }
 }
-function sendAlignment(n, bw) {
-  const alignment = parseInt(n || directionAlignment || 144, 10);
-  const beam_width = parseInt(bw || directionBeamWidth || 1, 10);
-  return saveDirectionParameters('/v1/direction/alignment', {
-    alignment, beam_width, offset: directionOffset % alignment
-  });
-}
-function sendDirection(offset) {
-  const alignment = parseInt(directionAlignment || 144, 10);
-  const beam_width = parseInt(directionBeamWidth || 1, 10);
-  directionOffset = ((parseInt(offset, 10) % alignment) + alignment) % alignment;
-  return saveDirectionParameters('/v1/direction', {
-    alignment, beam_width, offset: directionOffset
-  });
+async function sendDirection(offset) {
+  const alignmentVal = parseInt(directionAlignment || 144, 10);
+  const beamWidthVal = parseInt(directionBeamWidth || 1, 10);
+  const offsetVal = ((parseInt(offset, 10) % alignmentVal) + alignmentVal) % alignmentVal;
+  directionOffset = offsetVal;
+  try {
+    const res = await api('/v1/direction', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        alignment: alignmentVal,
+        beam_width: beamWidthVal,
+        offset: offsetVal
+      })
+    });
+    if (res.offset != null) directionOffset = res.offset;
+    if (res.alignment) directionAlignment = res.alignment;
+    if (res.beam_width) directionBeamWidth = res.beam_width;
+  } catch (err) {
+    notice(`Could not set direction: ${err.message}`, true);
+  }
 }
 function getDialGeometry(offset, alignment, beamWidth) {
   const n = parseInt(alignment || directionAlignment || 144, 10);
@@ -1051,7 +1030,7 @@ function directionOutputPage() {
     }
   }
 
-  return `<article class="card directionality-mode-card">${lampSaveStatus()}` +
+  return `<article class="card directionality-mode-card">` +
     `<div class="directionality-toggle-row">` +
       `<div class="directionality-toggle-info">` +
         `<h2>Direction Config Mode</h2>` +
@@ -1190,7 +1169,7 @@ function directionalityPage() {
   directionBeamWidth = bw;
   const radius = Math.floor((bw - 1) / 2);
   const bwDesc = bw === 1 ? '1 pixel (original LED only)' : `${bw} pixels (±${radius} on each side plus original LED)`;
-  return `<article class="card directionality-mode-card">${lampSaveStatus()}` +
+  return `<article class="card directionality-mode-card">` +
     `<div class="directionality-toggle-row">` +
       `<div class="directionality-toggle-info">` +
         `<h2>Direction Config Mode</h2>` +
@@ -1362,7 +1341,6 @@ async function loadCache() {
     const data = await api('/v1/latest');
     sources = data.sources;
     lighting = data.lighting || {};
-    updateLampSaveStatus(data.lamp_configuration);
     collection = data.collection || collection;
     if (data.mode) stationMode = data.mode;
     if (data.services) systemServices = data.services;
@@ -1411,7 +1389,6 @@ async function setLightingMode(mode, settings = {}) {
   try {
     const data = await api('/v1/lighting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mode ? {...settings,mode} : settings)});
     lighting = data.lighting;
-    updateLampSaveStatus(data.lamp_configuration);
     notice('Lighting settings saved.');
     if (mode === 'distance_test' && view() !== 'distance-test') location.href = '/distance-test';
     const form = content.querySelector('[data-lighting-settings]');

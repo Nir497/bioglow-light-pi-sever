@@ -10,41 +10,6 @@ from pathlib import Path
 
 @unittest.skipUnless(shutil.which("node"), "Node is unavailable for the JavaScript state check")
 class FrontendTests(unittest.TestCase):
-    def test_direction_drags_save_in_order_without_restoring_old_values(self):
-        script = r'''
-const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const fs = require('node:fs');
-const source = fs.readFileSync('web/dashboard.js', 'utf8');
-const requests = [], replies = [];
-const context = vm.createContext({
-  api: (path, options) => new Promise(resolve => {
-    requests.push(JSON.parse(options.body)); replies.push(resolve);
-  }), updateLampSaveStatus() {}, notice() {}
-});
-vm.runInContext('let directionAlignment=51, directionBeamWidth=1, directionOffset=0;'+
-  source.slice(source.indexOf('let directionRequestQueue'), source.indexOf('function getDialGeometry')), context);
-async function main() {
-  const first = vm.runInContext('sendDirection(1)', context);
-  await Promise.resolve();
-  const last = vm.runInContext('sendDirection(17)', context);
-  assert.equal(requests.length, 1);
-  replies[0]({alignment:51, beam_width:1, offset:1});
-  await first;
-  assert.equal(vm.runInContext('directionOffset', context), 17);
-  await Promise.resolve();
-  assert.deepEqual(requests.map(r => r.offset), [1,17]);
-  replies[1]({alignment:51, beam_width:1, offset:17});
-  await last;
-  assert.equal(vm.runInContext('directionOffset', context), 17);
-}
-main().catch(error => {console.error(error); process.exitCode=1;});
-'''
-        result = subprocess.run([shutil.which("node"), "-e", script],
-                                cwd=Path(__file__).resolve().parent,
-                                capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
     def test_cached_load_navigation_actions_and_local_radar_expiry(self):
         script = r'''
 const assert = require('node:assert/strict');
@@ -59,10 +24,9 @@ function element() {
   const classes = new Set();
   return {innerHTML:'',textContent:'',hidden:false,dataset:{},inert:false,
     classList:{toggle(name,on){if(on)classes.add(name);else classes.delete(name);return on;},contains(name){return classes.has(name);},remove(name){classes.delete(name);}},
-    querySelectorAll(){return [];},
     addEventListener(name,fn){this.listeners ??= {};this.listeners[name]=fn;},
     setAttribute(){},removeAttribute(){},focus(){},
-    querySelector(selector){queried.push(selector);if(selector==='[data-lamp-save-status]')return null;return {html:this.innerHTML,querySelector:()=>null,replaceWith(node){replacement=node.html;}};},
+    querySelector(selector){queried.push(selector);return {html:this.innerHTML,querySelector:()=>null,replaceWith(node){replacement=node.html;}};},
     get firstElementChild(){return {html:this.innerHTML};}};
 }
 const document = {
@@ -108,13 +72,6 @@ const context=vm.createContext({document,console,URL,Object,Date,AbortController
 async function main(){
   vm.runInContext(fs.readFileSync('web/dashboard.js','utf8'),context);
   await new Promise(resolve=>setImmediate(resolve));
-  vm.runInContext("updateLampSaveStatus({persistence_status:'saved',error:null})",context);
-  assert.match(vm.runInContext('lampSaveStatus()',context),/Settings saved automatically/);
-  const focusedControl=document.querySelector('#wled-color');
-  vm.runInContext("updateLampSaveStatus({persistence_status:'error',error:'Disk full <retry>'})",context);
-  assert.match(vm.runInContext('lampSaveStatus()',context),/Disk full &lt;retry&gt;/);
-  assert.equal(document.querySelector('#wled-color'),focusedControl,'Save status preserves controls');
-  vm.runInContext('updateLampSaveStatus({})',context);
   assert.deepEqual(requests.map(r=>r.path),['/v1/latest','/v1/recordings']);
   assert.match(document.querySelector('#content').innerHTML,/Fresh frame/);
   assert.ok(!document.querySelector('#content').innerHTML.includes('data-history-metric'), 'Overview contains no graphs or graph controls');

@@ -2,35 +2,12 @@ import unittest
 import json
 import threading
 import socket
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lighting_control import LightingControl, distance_brightness
-from lamp_configuration import LampConfiguration
 
 
 class LightingTests(unittest.TestCase):
-    def test_saved_direction_pattern_matches_original_after_reload(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            configuration = LampConfiguration(root)
-            for width, offset in ((1, 0), (3, 0), (1, 17)):
-                with self.subTest(width=width, offset=offset):
-                    transport = MagicMock()
-                    transport.send.return_value = {}
-                    original = LightingControl(transport=transport)
-                    original.set_direction_alignment(51, beam_width=width, offset=offset)
-                    expected = transport.send.call_args.args[0]
-                    configuration.save({"alignment": 51, "beam_width": width, "offset": offset})
-                    restored = LightingControl(transport=transport)
-                    restored.restore_preferences(LampConfiguration(root).settings)
-                    restored.set_mode("direction_config")
-                    self.assertEqual(transport.send.call_args.args[0], expected)
-                    segment = expected["seg"][0]
-                    self.assertEqual(list(range(0, 144, segment["grp"] + segment["spc"])),
-                                     [0, 51, 102])
-
     def setUp(self):
         self.now = 0
         self.opener = MagicMock()

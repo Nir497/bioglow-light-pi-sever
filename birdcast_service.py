@@ -25,7 +25,6 @@ from animal_names import AnimalNames
 from collection_schedule import CollectionSchedule
 from light_sensor import LightSensor
 from lighting_control import LightingControl
-from lamp_configuration import ConfigurationSaveError, LampConfiguration
 from wled_serial import WLEDSerial
 from presence import PresenceSensor
 from reading_history import ReadingHistory
@@ -121,12 +120,9 @@ class Service:
     def __init__(self, root: Path, config: Path, runner=None, recorder: str = DEFAULT_RECORDER,
                  animal_analysis: bool = True):
         self.root = root.resolve()
-        self._configuration_lock = threading.RLock()
-        self.lamp_configuration = LampConfiguration(self.root)
         self.light_sensor = LightSensor()
         self.wled = WLEDSerial()
         self.lighting = LightingControl(background=True, transport=self.wled)
-        self.lighting.restore_preferences(self.lamp_configuration.settings)
         self.presence_sensor = PresenceSensor()
         self.reading_history = ReadingHistory(self.root)
         self.animal_names = AnimalNames(self.root)
@@ -135,9 +131,9 @@ class Service:
         self._services_status_cache: dict[str, Any] | None = None
         self._services_status_time: float = 0.0
         self._mode_lock = threading.Lock()
-        self.direction_alignment = self.lamp_configuration.settings["alignment"]
-        self.direction_beam_width = self.lamp_configuration.settings["beam_width"]
-        self.direction_offset = self.lamp_configuration.settings["offset"]
+        self.direction_alignment = 144
+        self.direction_beam_width = 1
+        self.direction_offset = 0
         self.runner = runner or self._run_scraper
         self._lock = threading.Lock()
         self.recorder = recorder
@@ -177,25 +173,7 @@ class Service:
                 # A cache failure must not turn a completed sensor read or capture into a failure.
                 logging.getLogger(__name__).warning("Latest results remain in memory; cache write failed: %s", exc)
 
-    def configure_lighting(self, **body):
-        with self._configuration_lock:
-            self.lighting.validate_preferences_update(**body)
-            changes = {}
-            if "brightness" in body:
-                changes["manual_brightness"] = body["brightness"]
-            if "color" in body:
-                changes["color"] = body["color"]
-            if changes:
-                self.lamp_configuration.save(changes)
-            if set(body) == {"mode"}:
-                return self.lighting.set_mode(body["mode"])
-            return self.lighting.configure(**body)
-
     def set_station_mode(self, mode: str) -> str:
-        with self._configuration_lock:
-            return self._set_station_mode(mode)
-
-    def _set_station_mode(self, mode: str) -> str:
         if mode not in self.SUPPORTED_MODES:
             raise ValueError(f"Unknown mode: {mode}. Choose from: {', '.join(self.SUPPORTED_MODES)}.")
         with self._mode_lock:
@@ -214,10 +192,6 @@ class Service:
             return self.mode
 
     def set_direction_alignment(self, spacing: int, beam_width: int = None, offset: int = None) -> dict[str, Any]:
-        with self._configuration_lock:
-            return self._set_direction_alignment(spacing, beam_width, offset)
-
-    def _set_direction_alignment(self, spacing: int, beam_width: int = None, offset: int = None) -> dict[str, Any]:
         if not (type(spacing) is int and 1 <= spacing <= 144):
             raise ValueError("alignment must be an integer from 1 to 144")
         max_w = min(143, 2 * (spacing // 2) + 1)
@@ -229,7 +203,6 @@ class Service:
             offset = self.direction_offset % spacing
         elif not (type(offset) is int and 0 <= offset < spacing):
             raise ValueError(f"offset must be an integer from 0 to {spacing - 1}")
-        self.lamp_configuration.save({"alignment": spacing, "beam_width": beam_width, "offset": offset})
         self.direction_alignment = spacing
         self.direction_beam_width = beam_width
         self.direction_offset = offset
@@ -246,10 +219,6 @@ class Service:
         return copy.deepcopy(status)
 
     def latest(self) -> dict[str, Any]:
-        with self._configuration_lock:
-            return self._latest_snapshot()
-
-    def _latest_snapshot(self) -> dict[str, Any]:
         with self._latest_lock:
             result = copy.deepcopy(self._latest)
         # Radar is passive: this reads worker state without opening UART or sending commands.
@@ -262,7 +231,6 @@ class Service:
             result["radar"] = {"http_status": status, "result": radar}
         return {"status": "ok", "sources": result, "lighting": lighting,
                 "collection": self.collection_schedule.status(),
-                "lamp_configuration": self.lamp_configuration.status(),
                 "mode": self.mode, "modes": list(self.SUPPORTED_MODES),
                 "directionality": {
                     "alignment": self.direction_alignment,
@@ -494,18 +462,6 @@ def make_handler(service: Service):
             return body
 
         def do_POST(self):
-            if self.path in ("/v1/lighting", "/v1/direction", "/v1/direction/alignment",
-                             "/v1/directionality/alignment", "/v1/station-mode", "/v1/mode"):
-                with service._configuration_lock:
-                    try:
-                        self._do_POST()
-                    except ConfigurationSaveError as exc:
-                        self._send(500, {**error_payload("configuration_save_failed", str(exc)),
-                                         "lamp_configuration": service.lamp_configuration.status()})
-            else:
-                self._do_POST()
-
-        def _do_POST(self):
             if self.path in ("/v1/direction", "/v1/direction/alignment", "/v1/directionality/alignment"):
                 try:
                     body = self._body()
@@ -545,8 +501,7 @@ def make_handler(service: Service):
                         "offset": service.direction_offset,
                         "max_beam_width": max_w,
                         "angle_degrees": round(service.direction_offset / service.direction_alignment * 360, 1),
-                        "lighting": lighting,
-                        "lamp_configuration": service.lamp_configuration.status()
+                        "lighting": lighting
                     })
                 except ValueError as exc:
                     self._send(400, error_payload("malformed_request", str(exc)))
@@ -583,13 +538,12 @@ def make_handler(service: Service):
                             return
                         lighting = service.set_direction_alignment(spacing, beam_width=bw, offset=offset)
                     elif set(body) == {"mode"}:
-                        lighting = service.configure_lighting(mode=body["mode"])
+                        lighting = service.lighting.set_mode(body["mode"])
                     else:
-                        lighting = service.configure_lighting(**body)
+                        lighting = service.lighting.configure(**body)
                     self._send(503 if lighting["status"] == "controller_unavailable" else 200,
                                {"status": "ok" if lighting["status"] != "controller_unavailable" else "error",
-                                "lighting": lighting,
-                                "lamp_configuration": service.lamp_configuration.status()})
+                                "lighting": lighting})
                 except ValueError as exc:
                     self._send(400, error_payload("malformed_request", str(exc)))
                 return
