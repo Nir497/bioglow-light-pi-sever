@@ -32,7 +32,7 @@ window.fetch=async(path,options={})=>{
     body={session:logSession,latest_id:logEvents.at(-1)?.id||0,oldest_id:logEvents[0]?.id||1,expired:false,reset:after>(logEvents.at(-1)?.id||0),events:logEvents.filter(e=>e.id>after)};
     if(body.reset)body.events=logEvents;
   }
-  else if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},lighting:browserLighting,collection:browserCollection,regions:[{code:'US-CA',name:'California'}]};
+  else if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},lighting:browserLighting,collection:browserCollection,services:{bioglow_service:{installed:true,enabled:true,started:true},cloudflare_tunnel:{installed:false,token_configured:false,started:false,set_up:false}},regions:[{code:'US-CA',name:'California'}]};
   else if(path==='/v1/lighting'){
     browserLighting={mode:JSON.parse(options.body).mode,status:'ok',on:true,distance_cm:350,
       led_index:96,confirmed_led_index:96,test_state:'tracking'};
@@ -67,6 +67,9 @@ const check=(ok,message)=>{if(!ok)throw new Error(message);};
 setTimeout(async()=>{
   try {
     check(!document.querySelector('[data-history-metric]'),'Overview must not show graphs');
+    check(document.querySelector('[data-station-services]'),'Services section container missing on overview page');
+    check(document.querySelector('[data-service-card="bioglow"]'),'BioGlow service card missing on overview page');
+    check(document.querySelector('[data-service-card="cloudflare"]'),'Cloudflare tunnel card missing on overview page');
     location.hash='#radar';await pause(100);
     check(document.querySelector('.radar-locator .locator-target')?.getAttribute('data-estimated-range')==='120','Top radar object position graphic missing target at 120 cm');
     check(document.querySelector('.radar-banner').textContent.includes('PRESENT_ACTIVE'),'Derived presence state missing on Radar page');

@@ -4,7 +4,7 @@ const sectionMap = {light:'Input',radar:'Input',recordings:'Input',birdcast:'Inp
 const itemNames = {light:'Lux sensor',radar:'Radar',recordings:'Recordings',birdcast:'BirdCast',lighting:'WLED light',direction:'Direction','distance-test':'Distance test',overview:'Station overview','config-direction':'Direction','config-directionality':'Direction','config-schedule':'Recording schedule','config-lighting':'WLED hardware','wled-log':'WLED log','logs-sensors':'Sensor histories'};
 const titles = {'wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',direction:'Lamp beam direction',birdcast:'Migration outlook',recordings:'Sound library','config-direction':'Direction configuration','config-directionality':'Direction configuration','config-schedule':'Audio collection schedule','config-lighting':'WLED hardware settings','logs-sensors':'Sensor history logs'};
 const descriptions = {'wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',direction:'Overhead aerial view to steer the vertical light beam in any direction around the lamp.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.','config-direction':'Configure spiral wrap spacing and beam width to align the vertical column of light.','config-directionality':'Configure spiral wrap spacing and beam width to align the vertical column of light.','config-schedule':'Automate microphone sampling every two minutes across all clients.','config-lighting':'Hardware parameters, serial connection details, and output bounds for WLED.','logs-sensors':'Historical readings collected from presence, light, and migration sensors.'};
-let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '', stationMode = 'normal', directionAlignment = 144, directionBeamWidth = 1, directionOffset = 0;
+let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '', stationMode = 'normal', directionAlignment = 144, directionBeamWidth = 1, directionOffset = 0, systemServices = {};
 let histories = {};
 let lighting = {};
 const historyRanges = {radar:'1h',light:'1h',birdcast:'1d',microphone:'1d'};
@@ -508,6 +508,71 @@ function scheduleHistoryPoll() {
   },10000);
 }
 function facts(items) { return `<dl class="facts">${items.map(([label,value])=>`<div class="fact"><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>`; }
+function stationServicesCards() {
+  const bg = systemServices.bioglow_service || {};
+  const cf = systemServices.cloudflare_tunnel || {};
+
+  const bgBadge = bg.started
+    ? '<span class="badge">Running</span>'
+    : (bg.installed ? '<span class="badge unavailable">Stopped</span>' : '<span class="badge empty">Not installed</span>');
+
+  const cfBadge = cf.started
+    ? '<span class="badge">Active & connected</span>'
+    : (cf.set_up ? '<span class="badge unavailable">Configured (stopped)</span>'
+      : (cf.installed ? '<span class="badge unavailable">Token missing</span>'
+        : '<span class="badge empty">Not set up</span>'));
+
+  const bgFacts = facts([
+    ['Service installed', bg.installed ? 'Yes (bioglow.service)' : 'No (not installed)'],
+    ['Auto-start on boot', bg.enabled ? 'Enabled' : (bg.installed ? 'Disabled' : 'Not installed')],
+    ['Service status', bg.started ? 'Active (running)' : (bg.installed ? 'Inactive (stopped)' : 'Not started')],
+    ['Install command', '<code>sudo ./scripts/install_service.sh</code>']
+  ]);
+
+  const cfFacts = facts([
+    ['Tunnel connector', cf.installed ? 'Installed (cloudflared)' : 'Not installed'],
+    ['Tunnel token', cf.token_configured ? 'Configured (tunnel-token)' : 'Not configured'],
+    ['Tunnel status', cf.started ? 'Active (connected)' : (cf.set_up ? 'Inactive (stopped)' : 'Not running')],
+    ['Public access', cf.started ? '<a href="http://glow.ultraviolet.nirtech.org" target="_blank" rel="noopener noreferrer">glow.ultraviolet.nirtech.org ↗</a>' : 'See CLOUDFLARE.md']
+  ]);
+
+  return `
+    <article class="card" data-service-card="bioglow">
+      <div class="card-header">
+        <div class="source-label">
+          <div class="source-icon" aria-hidden="true">⚡</div>
+          <div>
+            <h2>BioGlow service</h2>
+            <small>systemd · bioglow.service</small>
+          </div>
+        </div>
+        ${bgBadge}
+      </div>
+      ${bgFacts}
+      <p class="timestamp">${bg.installed ? (bg.started ? 'The server is running as a systemd boot service.' : 'Service unit exists but is stopped. Run: sudo systemctl start bioglow') : 'Start the server automatically whenever the Pi boots with the install script.'}</p>
+    </article>
+    <article class="card" data-service-card="cloudflare">
+      <div class="card-header">
+        <div class="source-label">
+          <div class="source-icon" aria-hidden="true">☁</div>
+          <div>
+            <h2>Cloudflare tunnel</h2>
+            <small>cloudflared · remote access</small>
+          </div>
+        </div>
+        ${cfBadge}
+      </div>
+      ${cfFacts}
+      <p class="timestamp">${cf.set_up ? (cf.started ? 'Remote tunnel is running and forwarding public traffic to port 8000.' : 'Tunnel is configured but connector is stopped. Run: sudo systemctl start cloudflared') : 'Enables public dashboard access without open router ports. Follow CLOUDFLARE.md to configure.'}</p>
+    </article>
+  `;
+}
+function updateServicesSection() {
+  const container = content.querySelector('[data-station-services]');
+  if (container) {
+    container.innerHTML = stationServicesCards();
+  }
+}
 function animalResults(item) {
   const analysis = item.analysis || {state:'not_analyzed'};
   const busy = ['queued','running'].includes(analysis.state) || analysisRequests.has(item.recording_id);
@@ -666,6 +731,10 @@ function scheduleCollectionPoll() {
       if (generation!==collectionGeneration) return;
       collection = latest.collection || collection;
       lighting = latest.lighting || {};
+      if (latest.services) {
+        systemServices = latest.services;
+        if (view() === 'overview') updateServicesSection();
+      }
       syncLightingControls();
       sources.light = latest.sources.light;
       const reading = content.querySelector('[data-reading="light"]');
@@ -1222,7 +1291,7 @@ function render() {
       link.removeAttribute('aria-current');
     }
   });
-  if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div><div data-recording-library>${library(3)}</div>`;
+  if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div><div data-recording-library>${library(3)}</div><div class="section-heading"><div><h2>Station & system services</h2><p>Background boot service and remote Cloudflare tunnel status.</p></div></div><div class="grid services-grid" data-station-services>${stationServicesCards()}</div>`;
   else if (current === 'distance-test') content.innerHTML = distanceTestPage();
   else if (current === 'wled-log') content.innerHTML = '<article class="card"><div class="wled-log-header"><h2>WLED USB Traffic</h2><p data-wled-message role="status">Loading USB traffic…</p></div><div class="wled-table-container"><table class="wled-log-table"><thead><tr><th class="wled-th-time">Time</th><th class="wled-th-dir">Direction</th><th class="wled-th-outcome">Outcome</th><th class="wled-th-message">Message (click row to expand)</th></tr></thead><tbody data-wled-events></tbody></table></div></article>';
   else if (current === 'lighting') {
@@ -1274,6 +1343,7 @@ async function loadCache() {
     lighting = data.lighting || {};
     collection = data.collection || collection;
     if (data.mode) stationMode = data.mode;
+    if (data.services) systemServices = data.services;
     if (data.directionality?.alignment) directionAlignment = data.directionality.alignment;
     else if (data.lighting?.alignment) directionAlignment = data.lighting.alignment;
     if (data.directionality?.beam_width) directionBeamWidth = data.directionality.beam_width;

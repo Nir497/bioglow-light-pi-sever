@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -48,6 +49,71 @@ class BusyError(Exception):
     pass
 
 
+def detect_system_services_status(
+    bioglow_unit: str = "/etc/systemd/system/bioglow.service",
+    cloudflared_unit: str = "/etc/systemd/system/cloudflared.service",
+    cloudflared_token: str = "/etc/cloudflared/tunnel-token",
+) -> dict[str, Any]:
+    """Inspect systemd unit files and active states for BioGlow and Cloudflare."""
+    bg_installed = os.path.isfile(bioglow_unit)
+    bg_enabled = False
+    bg_started = False
+    if bg_installed:
+        try:
+            r_en = subprocess.run(
+                ["systemctl", "is-enabled", "bioglow.service"],
+                capture_output=True, text=True, timeout=1.5
+            )
+            bg_enabled = (r_en.stdout.strip() == "enabled")
+        except (OSError, subprocess.SubprocessError):
+            bg_enabled = False
+
+        try:
+            r_act = subprocess.run(
+                ["systemctl", "is-active", "bioglow.service"],
+                capture_output=True, text=True, timeout=1.5
+            )
+            bg_started = (r_act.stdout.strip() == "active")
+        except (OSError, subprocess.SubprocessError):
+            bg_started = False
+
+    cf_bin = bool(shutil.which("cloudflared") or os.path.isfile("/usr/bin/cloudflared"))
+    cf_unit_installed = os.path.isfile(cloudflared_unit)
+    cf_installed = cf_bin or cf_unit_installed
+
+    cf_token_configured = False
+    if os.path.isfile(cloudflared_token):
+        try:
+            cf_token_configured = os.path.getsize(cloudflared_token) > 0
+        except OSError:
+            cf_token_configured = False
+
+    cf_started = False
+    if cf_unit_installed:
+        try:
+            r_cf = subprocess.run(
+                ["systemctl", "is-active", "cloudflared.service"],
+                capture_output=True, text=True, timeout=1.5
+            )
+            cf_started = (r_cf.stdout.strip() == "active")
+        except (OSError, subprocess.SubprocessError):
+            cf_started = False
+
+    return {
+        "bioglow_service": {
+            "installed": bg_installed,
+            "enabled": bg_enabled,
+            "started": bg_started,
+        },
+        "cloudflare_tunnel": {
+            "installed": cf_installed,
+            "token_configured": cf_token_configured,
+            "started": cf_started,
+            "set_up": cf_installed and cf_token_configured,
+        },
+    }
+
+
 class Service:
     SUPPORTED_MODES = ("normal", "direction_config", "manual_control")
 
@@ -62,6 +128,8 @@ class Service:
         self.animal_names = AnimalNames(self.root)
         self.config = config
         self.mode = "normal"
+        self._services_status_cache: dict[str, Any] | None = None
+        self._services_status_time: float = 0.0
         self._mode_lock = threading.Lock()
         self.direction_alignment = 144
         self.direction_beam_width = 1
@@ -140,6 +208,16 @@ class Service:
         self.direction_offset = offset
         return self.lighting.set_direction_alignment(spacing, beam_width=beam_width, offset=offset)
 
+    def get_services_status(self, force_refresh: bool = False) -> dict[str, Any]:
+        import time as _time
+        now = _time.monotonic()
+        if not force_refresh and self._services_status_cache is not None and (now - self._services_status_time < 5.0):
+            return copy.deepcopy(self._services_status_cache)
+        status = detect_system_services_status()
+        self._services_status_cache = status
+        self._services_status_time = now
+        return copy.deepcopy(status)
+
     def latest(self) -> dict[str, Any]:
         with self._latest_lock:
             result = copy.deepcopy(self._latest)
@@ -161,6 +239,7 @@ class Service:
                     "max_beam_width": min(143, 2 * (self.direction_alignment // 2) + 1),
                     "angle_degrees": round(self.direction_offset / self.direction_alignment * 360, 1),
                 },
+                "services": self.get_services_status(),
                 "regions": [{"code": f"US-{code}", "name": name}
                             for code, name in birdcast_scraper.STATE_NAMES.items()]}
 

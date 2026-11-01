@@ -12,7 +12,8 @@ import wave
 from unittest.mock import MagicMock, patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from birdcast_service import BusyError, RecordingError, Service, SUPPORTED_REGIONS, make_handler, RECORDING_BYTES
+from birdcast_service import (BusyError, RecordingError, Service, SUPPORTED_REGIONS,
+                              make_handler, RECORDING_BYTES, detect_system_services_status)
 
 
 class ServiceTests(unittest.TestCase):
@@ -475,6 +476,40 @@ class ServiceTests(unittest.TestCase):
                     res = conn.getresponse(); self.assertEqual(res.status, 400)
             finally:
                 server.shutdown(); thread.join(); server.server_close()
+
+    def test_system_services_status_and_latest_broadcast(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / "config.json"
+            service = Service(root, config, animal_analysis=False)
+            status = service.get_services_status()
+            self.assertIn("bioglow_service", status)
+            self.assertIn("cloudflare_tunnel", status)
+            self.assertIsInstance(status["bioglow_service"]["installed"], bool)
+            self.assertIsInstance(status["bioglow_service"]["started"], bool)
+            self.assertIsInstance(status["cloudflare_tunnel"]["set_up"], bool)
+
+            latest = service.latest()
+            self.assertIn("services", latest)
+            self.assertEqual(latest["services"], status)
+
+            # Test detect_system_services_status with simulated paths
+            mock_bg = root / "mock_bioglow.service"
+            mock_bg.write_text("[Unit]\nDescription=Test\n")
+            mock_cf = root / "mock_cloudflared.service"
+            mock_cf.write_text("[Unit]\nDescription=CF\n")
+            mock_token = root / "mock_token"
+            mock_token.write_text("dummy-token-content")
+
+            custom_status = detect_system_services_status(
+                bioglow_unit=str(mock_bg),
+                cloudflared_unit=str(mock_cf),
+                cloudflared_token=str(mock_token),
+            )
+            self.assertTrue(custom_status["bioglow_service"]["installed"])
+            self.assertTrue(custom_status["cloudflare_tunnel"]["installed"])
+            self.assertTrue(custom_status["cloudflare_tunnel"]["token_configured"])
+            self.assertTrue(custom_status["cloudflare_tunnel"]["set_up"])
 
 if __name__ == "__main__":
     unittest.main()
