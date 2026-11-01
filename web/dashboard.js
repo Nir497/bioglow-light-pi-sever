@@ -915,48 +915,45 @@ function updateBeamWidthDisplay(bwVal, nVal) {
   const tickMax = document.querySelector('#beam-width-tick-max');
   if (tickMax) tickMax.textContent = `Max: ${maxBw} pixels`;
 }
-async function sendAlignment(n, bw) {
-  const alignmentVal = parseInt(n || directionAlignment || 144, 10);
-  const beamWidthVal = parseInt(bw || directionBeamWidth || 1, 10);
-  const offsetVal = directionOffset % alignmentVal;
-  try {
-    const res = await api('/v1/direction/alignment', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({alignment: alignmentVal, beam_width: beamWidthVal, offset: offsetVal})
-    });
-    updateLampSaveStatus(res.lamp_configuration);
-    if (res.alignment) directionAlignment = res.alignment;
-    if (res.beam_width) directionBeamWidth = res.beam_width;
-    if (res.offset != null) directionOffset = res.offset;
-  } catch (err) {
-    updateLampSaveStatus(err.data?.lamp_configuration);
-    notice(`Could not set direction parameters: ${err.message}`, true);
-  }
+let directionRequestQueue = Promise.resolve();
+let directionRequestRevision = 0;
+function saveDirectionParameters(path, parameters) {
+  const revision = ++directionRequestRevision;
+  directionRequestQueue = directionRequestQueue.then(async () => {
+    try {
+      const res = await api(path, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(parameters)
+      });
+      // A response to an older drag must not overwrite a newer local edit.
+      if (revision !== directionRequestRevision) return;
+      updateLampSaveStatus(res.lamp_configuration);
+      if (res.alignment) directionAlignment = res.alignment;
+      if (res.beam_width) directionBeamWidth = res.beam_width;
+      if (res.offset != null) directionOffset = res.offset;
+    } catch (err) {
+      if (revision !== directionRequestRevision) return;
+      updateLampSaveStatus(err.data?.lamp_configuration);
+      notice(`Could not set direction parameters: ${err.message}`, true);
+    }
+  });
+  return directionRequestQueue;
 }
-async function sendDirection(offset) {
-  const alignmentVal = parseInt(directionAlignment || 144, 10);
-  const beamWidthVal = parseInt(directionBeamWidth || 1, 10);
-  const offsetVal = ((parseInt(offset, 10) % alignmentVal) + alignmentVal) % alignmentVal;
-  directionOffset = offsetVal;
-  try {
-    const res = await api('/v1/direction', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        alignment: alignmentVal,
-        beam_width: beamWidthVal,
-        offset: offsetVal
-      })
-    });
-    if (res.offset != null) directionOffset = res.offset;
-    updateLampSaveStatus(res.lamp_configuration);
-    if (res.alignment) directionAlignment = res.alignment;
-    if (res.beam_width) directionBeamWidth = res.beam_width;
-  } catch (err) {
-    updateLampSaveStatus(err.data?.lamp_configuration);
-    notice(`Could not set direction: ${err.message}`, true);
-  }
+function sendAlignment(n, bw) {
+  const alignment = parseInt(n || directionAlignment || 144, 10);
+  const beam_width = parseInt(bw || directionBeamWidth || 1, 10);
+  return saveDirectionParameters('/v1/direction/alignment', {
+    alignment, beam_width, offset: directionOffset % alignment
+  });
+}
+function sendDirection(offset) {
+  const alignment = parseInt(directionAlignment || 144, 10);
+  const beam_width = parseInt(directionBeamWidth || 1, 10);
+  directionOffset = ((parseInt(offset, 10) % alignment) + alignment) % alignment;
+  return saveDirectionParameters('/v1/direction', {
+    alignment, beam_width, offset: directionOffset
+  });
 }
 function getDialGeometry(offset, alignment, beamWidth) {
   const n = parseInt(alignment || directionAlignment || 144, 10);

@@ -10,6 +10,41 @@ from pathlib import Path
 
 @unittest.skipUnless(shutil.which("node"), "Node is unavailable for the JavaScript state check")
 class FrontendTests(unittest.TestCase):
+    def test_direction_drags_save_in_order_without_restoring_old_values(self):
+        script = r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const source = fs.readFileSync('web/dashboard.js', 'utf8');
+const requests = [], replies = [];
+const context = vm.createContext({
+  api: (path, options) => new Promise(resolve => {
+    requests.push(JSON.parse(options.body)); replies.push(resolve);
+  }), updateLampSaveStatus() {}, notice() {}
+});
+vm.runInContext('let directionAlignment=51, directionBeamWidth=1, directionOffset=0;'+
+  source.slice(source.indexOf('let directionRequestQueue'), source.indexOf('function getDialGeometry')), context);
+async function main() {
+  const first = vm.runInContext('sendDirection(1)', context);
+  await Promise.resolve();
+  const last = vm.runInContext('sendDirection(17)', context);
+  assert.equal(requests.length, 1);
+  replies[0]({alignment:51, beam_width:1, offset:1});
+  await first;
+  assert.equal(vm.runInContext('directionOffset', context), 17);
+  await Promise.resolve();
+  assert.deepEqual(requests.map(r => r.offset), [1,17]);
+  replies[1]({alignment:51, beam_width:1, offset:17});
+  await last;
+  assert.equal(vm.runInContext('directionOffset', context), 17);
+}
+main().catch(error => {console.error(error); process.exitCode=1;});
+'''
+        result = subprocess.run([shutil.which("node"), "-e", script],
+                                cwd=Path(__file__).resolve().parent,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_cached_load_navigation_actions_and_local_radar_expiry(self):
         script = r'''
 const assert = require('node:assert/strict');

@@ -188,6 +188,21 @@ class WLEDSerial:
                 raise OSError("Requested LED offset is invalid")
             full.update(id=0, start=start, stop=stop, grp=grp, spc=spc, of=of,
                         on=True, bri=255, fx=0, pal=0, frz=False, rev=False, mi=False)
+            if spc:
+                # Paint the complete direction pattern, including dark gaps.
+                # Do not depend on firmware clearing pixels left by an earlier
+                # group size or full-strip command.
+                color = list(full["col"][0])
+                pixels = [[0, 0, 0, 0] for _ in range(stop - start)]
+                for anchor in range(0, len(pixels), grp + spc):
+                    for index in range(anchor, min(anchor + grp, len(pixels))):
+                        pixels[(index + of) % len(pixels)] = color
+                full["i"] = [0, len(pixels), [0, 0, 0, 0]]
+                for index, pixel in enumerate(pixels):
+                    if pixel != [0, 0, 0, 0]:
+                        full["i"].extend([index, pixel])
+                grp, spc, of = 1, 0, 0
+                full.update(grp=grp, spc=spc, of=of, frz=True)
             # Consolidate the entire strip into segment 0 so overlapping old
             # spotlight/music segments cannot override part of the output.
             command["seg"] = [full] + [
@@ -210,7 +225,7 @@ class WLEDSerial:
                 raise OSError("WLED did not acknowledge the requested RGBW color")
             if any(segment.get(key) != value for key, value in
                    {"start": start, "stop": stop, "grp": grp, "spc": spc,
-                    "on": True, "bri": 255, "fx": 0, "pal": 0, "frz": False, "of": of}.items()):
+                    "on": True, "bri": 255, "fx": 0, "pal": 0, "frz": full["frz"], "of": of}.items()):
                 raise OSError("WLED did not acknowledge full-strip coverage or requested LED range with a solid color")
             if any(item.get("id", 0) != 0 and item.get("stop", 0) > item.get("start", 0)
                    for item in segments):

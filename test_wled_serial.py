@@ -117,7 +117,7 @@ class WLEDSerialTests(unittest.TestCase):
     def test_custom_segment_spacing_and_grouping(self):
         light = WLEDSerial(port='test')
         reply = json.loads(json.dumps(self.reply))
-        reply['state']['seg'][0]['spc'] = 143
+        reply['state']['seg'][0]['frz'] = True
         self.connection.read_until.side_effect = [json.dumps(reply).encode() + b'\n', json.dumps(reply).encode() + b'\n']
         params = {
             'on': True, 'bri': 80,
@@ -127,11 +127,30 @@ class WLEDSerialTests(unittest.TestCase):
         writes = [json.loads(call.args[0]) for call in self.connection.write.call_args_list]
         cmd = writes[1]
         self.assertEqual(cmd['seg'][0]['grp'], 1)
-        self.assertEqual(cmd['seg'][0]['spc'], 143)
+        self.assertEqual(cmd['seg'][0]['spc'], 0)
+        self.assertTrue(cmd['seg'][0]['frz'])
+        self.assertEqual(cmd['seg'][0]['i'], [0, 144, [0, 0, 0, 0], 0, [0, 255, 68, 0]])
         self.assertEqual(cmd['seg'][0]['of'], 0)
         self.assertEqual(cmd['mainseg'], 0)
         self.assertEqual(result['covered_leds'], 144)
         self.assertEqual(result['led_count'], 144)
+
+    def test_direction_explicitly_clears_gaps_and_moves_all_three_anchors(self):
+        light = WLEDSerial(port='test')
+        reply = json.loads(json.dumps(self.reply))
+        reply['state']['seg'][0]['frz'] = True
+        self.connection.read_until.return_value = json.dumps(reply).encode() + b'\n'
+        for width, offset in ((1, 0), (1, 17), (3, 50)):
+            with self.subTest(width=width, offset=offset):
+                params = json.loads(json.dumps(self.params))
+                params['seg'][0].update(grp=width, spc=51-width, of=offset)
+                light.send(params)
+                command = json.loads(self.connection.write.call_args.args[0])
+                instructions = command['seg'][0]['i']
+                self.assertEqual(instructions[:3], [0, 144, [0, 0, 0, 0]])
+                self.assertEqual(instructions[3::2], sorted(
+                    (anchor + pixel + offset) % 144
+                    for anchor in (0, 51, 102) for pixel in range(width)))
 
     def test_wled_color_and_full_brightness_payloads(self):
         from lighting_control import LightingControl
