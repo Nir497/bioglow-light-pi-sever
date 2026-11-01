@@ -19,7 +19,7 @@ For public HTTPS access through Cloudflare Tunnel, see
 the host firewall and network; the hostname is not a verified reachability claim.
 
 The separate **WLED light** page (`/#lighting`) provides SP803E WLED-ESP32 USB
-power, brightness, and color controls plus coverage of the 192-pixel strip.
+power, brightness, and color controls plus coverage of the 144-pixel strip.
 The **Lux sensor** page (`/#light`) displays calculated lux, raw ambient-light
 counts, and raw white-channel counts, along with gain, integration time, and
 lux-per-count resolution. Its graph selector includes all three light readings.
@@ -158,7 +158,7 @@ access from another device remain to be verified on the host.
 
 ### Automatic distance brightness
 
-Auto (the startup default, API `{"mode":"auto"}`) controls all 192 LEDs using the
+Auto (the startup default, API `{"mode":"auto"}`) controls all 144 LEDs using the
 dashboard color. At 1 m or closer brightness is 15% (38/255); between 1 and 6 m
 it rises linearly, reaching 50% (128/255) at 6 m or farther. At 3.5 m it is
 83/255. Changes fade over 0.3 seconds. No target, stale/unavailable radar, or an
@@ -192,9 +192,9 @@ the lights. Use **Start distance test** or **Off · stop test** on that page.
 
 The mode tests the LD2410C distance sensor with one LED. The server checks the existing radar receiver every 0.5 seconds,
 even with the browser closed; sensor history keeps its normal 10-second cadence.
-LED 1 lights at 1 m or closer; LED 192 lights at 6 m or farther.
-Between 1–6 m, distance maps linearly onto the strip, constrained to LEDs 2–191
-so rounding cannot light an endpoint before its threshold (API indices 0–191). The dot stays amber (`#ffa028`) at 25% brightness
+LED 1 lights at 1 m or closer; LED 144 lights at 6 m or farther.
+Between 1–6 m, distance maps linearly onto the strip, constrained to LEDs 2–143
+so rounding cannot light an endpoint before its threshold (API indices 0–143). The dot stays amber (`#ffa028`) at 25% brightness
 (64/255). This development mode tests position independently of Auto brightness.
 
 The LED and radar map use the same `range_estimate_cm` and the exact same sampled

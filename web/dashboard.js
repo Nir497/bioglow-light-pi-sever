@@ -4,7 +4,7 @@ const sectionMap = {light:'Input',radar:'Input',recordings:'Input',birdcast:'Inp
 const itemNames = {light:'Lux sensor',radar:'Radar',recordings:'Recordings',birdcast:'BirdCast',lighting:'WLED light','distance-test':'Distance test',overview:'Station overview','config-directionality':'Directionality','config-schedule':'Recording schedule','config-lighting':'WLED hardware','wled-log':'WLED log','logs-sensors':'Sensor histories'};
 const titles = {'wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library','config-directionality':'Directionality configuration','config-schedule':'Audio collection schedule','config-lighting':'WLED hardware settings','logs-sensors':'Sensor history logs'};
 const descriptions = {'wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.','config-directionality':'Configure sensor directionality and orientation.','config-schedule':'Automate microphone sampling every two minutes across all clients.','config-lighting':'Hardware parameters, serial connection details, and output bounds for WLED.','logs-sensors':'Historical readings collected from presence, light, and migration sensors.'};
-let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '', stationMode = 'normal';
+let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '', stationMode = 'normal', directionAlignment = 144, directionBeamWidth = 1;
 let histories = {};
 let lighting = {};
 const historyRanges = {radar:'1h',light:'1h',birdcast:'1d',microphone:'1d'};
@@ -182,7 +182,7 @@ function sourceCard(source, expanded = false) {
 }
 function lightingDevice() {
   const device = lighting.device || {};
-  return facts([['Connection','Pi server → USB serial → SP803E'],['USB port',escapeHtml(device.serial_port || 'Not selected yet')],['Serial speed',`${number(device.baudrate ?? 115200)} baud`],['Strip length','3.2 ft · 192 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 192)} pixels`],['Confirmed color',escapeHtml(device.confirmed_color || 'Not verified yet')],['Confirmed brightness',device.confirmed_brightness == null ? 'Not verified yet' : device.confirmed_on === false ? 'Off' : `${Math.round(device.confirmed_brightness / 255 * 100)}% (${number(device.confirmed_brightness)} / 255)`],['Segment brightness',device.segment_brightness == null ? 'Not verified yet' : `${number(device.segment_brightness)} / 255`],['WLED current limit',device.current_limit_ma == null ? 'Not reported' : device.current_limit_ma === 0 ? 'Disabled in WLED' : `${number(device.current_limit_ma)} mA`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Normal modes cover pixels 1–192 with a solid color and no spacing; Distance test lights one pixel. WLED must be configured for at least 192 pixels; a shorter configured output is reported as an error.</p>';
+  return facts([['Connection','Pi server → USB serial → SP803E'],['USB port',escapeHtml(device.serial_port || 'Not selected yet')],['Serial speed',`${number(device.baudrate ?? 115200)} baud`],['Strip length','3.2 ft · 144 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 144)} pixels`],['Confirmed color',escapeHtml(device.confirmed_color || 'Not verified yet')],['Confirmed brightness',device.confirmed_brightness == null ? 'Not verified yet' : device.confirmed_on === false ? 'Off' : `${Math.round(device.confirmed_brightness / 255 * 100)}% (${number(device.confirmed_brightness)} / 255)`],['Segment brightness',device.segment_brightness == null ? 'Not verified yet' : `${number(device.segment_brightness)} / 255`],['WLED current limit',device.current_limit_ma == null ? 'Not reported' : device.current_limit_ma === 0 ? 'Disabled in WLED' : `${number(device.current_limit_ma)} mA`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Normal modes cover pixels 1–144 with a solid color and no spacing; Distance test lights one pixel. WLED must be configured for at least 144 pixels; a shorter configured output is reported as an error.</p>';
 }
 function lightingLuxReading() {
   if (lighting.lux == null) return 'Unavailable';
@@ -216,14 +216,14 @@ function lightingSummary() {
   if (lighting.mode === 'auto') return `${base}${lighting.test_state === 'idle' ? ' · Idle · no distance change' : ''} · Distance ${lighting.distance_cm == null ? '—' : lighting.distance_cm + ' cm'} · Target ${lighting.target_brightness ?? '—'}/255 · Acknowledged ${lighting.brightness ?? '—'}/255 · Sample ${lighting.sample_age_seconds == null ? 'waiting' : lighting.sample_age_seconds.toFixed(1) + ' s ago'} · Ack ${lighting.ack_age_seconds == null ? 'waiting' : lighting.ack_age_seconds.toFixed(1) + ' s ago'}`;
   if (lighting.mode !== 'distance_test') return base;
   const unavailable = currentEntry('radar')?.http_status === 503;
-  const detail = unavailable ? 'Radar unavailable' : lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · Target LED ${lighting.led_index + 1} / 192`;
+  const detail = unavailable ? 'Radar unavailable' : lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · Target LED ${lighting.led_index + 1} / 144`;
   const confirmed = lighting.on === false ? 'Off' : lighting.confirmed_led_index == null ? 'Awaiting acknowledgment' : `LED ${lighting.confirmed_led_index + 1}`;
   return `${base} · ${detail} · Confirmed: ${confirmed} · 25% amber · every 0.5 s`;
 }
 function distanceTestPage() {
   return `<article class="card"><h2>Single-LED test</h2><p class="timestamp" data-lighting-summary>${escapeHtml(lightingSummary())}</p>
     <p>The LED target and radar map use the same filtered range and sampled frame. Confirmed shows the last controller acknowledgment; pending output may lag the target.</p>
-    <p>LED 1: 1 m or closer. LED 192: 6 m or farther. Distances between move the dot along LEDs 2–191. One amber LED stays at 25% brightness. No target turns the strip off; the radar’s absence delay still applies.</p>
+    <p>LED 1: 1 m or closer. LED 144: 6 m or farther. Distances between move the dot along LEDs 2–143. One amber LED stays at 25% brightness. No target turns the strip off; the radar’s absence delay still applies.</p>
     <div class="card-actions"><button class="button" data-lighting-mode="distance_test">Start distance test</button><button class="button secondary" data-lighting-mode="off">Off · stop test</button><a class="section-link" href="#lighting">Lighting controls ↗</a></div>
     <p class="error-message" data-lighting-error ${(lighting.error || lighting.sensor_error) ? '' : 'hidden'}>${escapeHtml([lighting.error, lighting.sensor_error].filter(Boolean).join(' '))}</p>
     <div data-lighting-device>${lightingDevice()}</div></article>${sourceCard('radar',true)}`;
@@ -248,9 +248,9 @@ function lightingControls() {
       <button class="button secondary" type="submit">Apply color &amp; brightness</button>
       </fieldset>
     </form>
-    <p class="timestamp">Distance test: LED 1 at 1 m or closer; LED 192 at 6 m or farther. Between 1–6 m, the dot moves along LEDs 2–191 at 25% amber. No target turns lights off; the radar’s own absence delay still applies. Stale readings turn lights off and show an error.</p>
+    <p class="timestamp">Distance test: LED 1 at 1 m or closer; LED 144 at 6 m or farther. Between 1–6 m, the dot moves along LEDs 2–143 at 25% amber. No target turns lights off; the radar’s own absence delay still applies. Stale readings turn lights off and show an error.</p>
     <p class="timestamp">Auto allows distance control below 10 lux and turns the strip off above 30 lux. From 10 through 30 lux it keeps the previous ambient state. Missing, invalid, or over-30-second-old lux keeps Auto off until darkness is confirmed. Manual On and Distance test bypass this rule.</p>
-    <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Auto uses distance for all 192 LEDs: 15% at 1 m or closer, rising to 50% at 6 m. After 5 seconds without a distance change, lights turn off. No target or unavailable radar turns lights off. Color changes preserve Auto.</p>
+    <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Auto uses distance for all 144 LEDs: 15% at 1 m or closer, rising to 50% at 6 m. After 5 seconds without a distance change, lights turn off. No target or unavailable radar turns lights off. Color changes preserve Auto.</p>
     <p class="timestamp">Commands go from this server to the USB controller. Status shows whether WLED acknowledged the command. At 100%, both master and segment brightness are 255/255. WLED’s configured power limits and global brightness factor can still reduce physical output.</p>
   </section>`;
 }
@@ -760,6 +760,163 @@ function syncStationModeUI() {
     const noticeEl = lightingCard.querySelector('.lighting-disabled-notice');
     if (noticeEl) noticeEl.hidden = stationMode === 'manual_control';
   }
+  const dirCard = document.querySelector('.direction-controls-card');
+  if (dirCard) {
+    dirCard.classList.toggle('controls-disabled', stationMode !== 'direction_config');
+    const noticeEl = dirCard.querySelector('.direction-disabled-notice');
+    if (noticeEl) noticeEl.hidden = stationMode === 'direction_config';
+    const slider = dirCard.querySelector('#direction-alignment-slider');
+    if (slider) slider.disabled = stationMode !== 'direction_config';
+    dirCard.querySelectorAll('[data-preset-alignment]').forEach(btn => {
+      btn.disabled = stationMode !== 'direction_config';
+    });
+    const bwSlider = dirCard.querySelector('#direction-beam-width-slider');
+    if (bwSlider) bwSlider.disabled = stationMode !== 'direction_config';
+    const maxBw = maxBeamWidthForAlignment(directionAlignment || 144);
+    dirCard.querySelectorAll('[data-preset-beam-width]').forEach(btn => {
+      const targetBw = parseInt(btn.dataset.presetBeamWidth, 10);
+      btn.disabled = stationMode !== 'direction_config' || targetBw > maxBw;
+    });
+  }
+}
+function maxBeamWidthForAlignment(n) {
+  const spacing = parseInt(n || 144, 10);
+  return Math.min(143, 2 * Math.floor(spacing / 2) + 1);
+}
+let alignmentDebounceTimer = null;
+function updateAlignmentDisplay(val) {
+  const n = parseInt(val, 10);
+  const count = Math.floor((144 - 1) / n) + 1;
+  const litText = count === 1 ? '1 LED lit (LED #1)' : `${count} of 144 LEDs lit`;
+  const output = document.querySelector('#direction-alignment-value');
+  if (output) output.textContent = `n = ${n} (${litText})`;
+  const nextEl = document.querySelector('#alignment-next-led');
+  if (nextEl) nextEl.textContent = n >= 144 ? 'None (1+144 = 145 > 144)' : `LED #${1 + n}`;
+  const countEl = document.querySelector('#alignment-lit-count');
+  if (countEl) countEl.textContent = `${count} / 144`;
+}
+function updateBeamWidthDisplay(bwVal, nVal) {
+  const bw = parseInt(bwVal, 10);
+  const n = parseInt(nVal || directionAlignment || 144, 10);
+  const maxBw = maxBeamWidthForAlignment(n);
+  const radius = Math.floor((bw - 1) / 2);
+  const desc = bw === 1 ? '1 pixel (original LED only)' : `${bw} pixels (±${radius} on each side plus original LED)`;
+  const output = document.querySelector('#direction-beam-width-value');
+  if (output) output.textContent = `Width = ${bw} (${desc})`;
+  const radiusEl = document.querySelector('#beam-width-radius');
+  if (radiusEl) radiusEl.textContent = radius === 0 ? 'None (0 on each side)' : `±${radius} LEDs on each side`;
+  const totalEl = document.querySelector('#beam-width-total');
+  if (totalEl) totalEl.textContent = `${bw} LEDs per anchor`;
+  const maxEl = document.querySelector('#beam-width-max');
+  if (maxEl) maxEl.textContent = `${maxBw} LEDs (max for n=${n})`;
+  const tickMax = document.querySelector('#beam-width-tick-max');
+  if (tickMax) tickMax.textContent = `Max: ${maxBw} pixels`;
+}
+async function sendAlignment(n, bw) {
+  const alignmentVal = parseInt(n || directionAlignment || 144, 10);
+  const beamWidthVal = parseInt(bw || directionBeamWidth || 1, 10);
+  try {
+    const res = await api('/v1/direction/alignment', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({alignment: alignmentVal, beam_width: beamWidthVal})
+    });
+    if (res.alignment) directionAlignment = res.alignment;
+    if (res.beam_width) directionBeamWidth = res.beam_width;
+  } catch (err) {
+    notice(`Could not set direction parameters: ${err.message}`, true);
+  }
+}
+function directionalityPage() {
+  const isDirConfig = stationMode === 'direction_config';
+  const val = directionAlignment || 144;
+  const count = Math.floor((144 - 1) / val) + 1;
+  const litText = count === 1 ? '1 LED lit (LED #1)' : `${count} of 144 LEDs lit`;
+  const maxBw = maxBeamWidthForAlignment(val);
+  const bw = Math.min(directionBeamWidth || 1, maxBw);
+  directionBeamWidth = bw;
+  const radius = Math.floor((bw - 1) / 2);
+  const bwDesc = bw === 1 ? '1 pixel (original LED only)' : `${bw} pixels (±${radius} on each side plus original LED)`;
+  return `<article class="card directionality-mode-card">` +
+    `<div class="directionality-toggle-row">` +
+      `<div class="directionality-toggle-info">` +
+        `<h2>Direction Config Mode</h2>` +
+        `<p class="timestamp">Toggle Direction Config mode on or off. When active, the station operates in direction configuration mode.</p>` +
+      `</div>` +
+      `<label class="switch-control" for="direction-config-toggle">` +
+        `<input type="checkbox" id="direction-config-toggle" ${isDirConfig ? 'checked' : ''}>` +
+        `<span class="switch-slider" aria-hidden="true"></span>` +
+        `<span class="switch-label">${isDirConfig ? 'Active' : 'Inactive'}</span>` +
+      `</label>` +
+    `</div>` +
+  `</article>` +
+  `<article class="card direction-controls-card ${isDirConfig ? '' : 'controls-disabled'}">` +
+    `<div class="direction-disabled-notice" ${isDirConfig ? 'hidden' : ''}><span aria-hidden="true">🔒</span> Direction config mode is inactive. Activate Direction config mode above to enable direction controls.</div>` +
+    `<div class="card-header">` +
+      `<div>` +
+        `<h2>LED Strip Alignment</h2>` +
+        `<p class="timestamp">Align LEDs according to spacing <em>n</em>. Begins with only the first LED lit (<em>n</em> = 144). Reduce the slider to light up every <em>n</em> LEDs until all are lit (<em>n</em> = 1).</p>` +
+      `</div>` +
+      `<span class="badge ${isDirConfig ? 'badge-recv' : 'empty'}">${isDirConfig ? 'Mode: Direction Config' : 'Mode: Normal'}</span>` +
+    `</div>` +
+    `<form class="direction-alignment-form" data-alignment-form onsubmit="return false;">` +
+      `<div class="slider-field">` +
+        `<div class="slider-label-row">` +
+          `<label for="direction-alignment-slider"><strong>Alignment Spacing (<em>n</em>)</strong></label>` +
+          `<output id="direction-alignment-value" for="direction-alignment-slider" class="slider-output">n = ${val} (${litText})</output>` +
+        `</div>` +
+        `<input id="direction-alignment-slider" name="alignment" type="range" min="1" max="144" step="1" value="${val}" ${isDirConfig ? '' : 'disabled'}>` +
+        `<div class="slider-ticks-row">` +
+          `<span>All lit (n=1)</span>` +
+          `<span>Thirds (n=48)</span>` +
+          `<span>Halves (n=72)</span>` +
+          `<span>Only 1st LED (n=144)</span>` +
+        `</div>` +
+      `</div>` +
+      `<div class="alignment-summary-row">` +
+        `<div class="alignment-stat"><span class="stat-label">First Lit LED</span><span class="stat-value">LED #1</span></div>` +
+        `<div class="alignment-stat"><span class="stat-label">Next Lit LED</span><span class="stat-value" id="alignment-next-led">${val >= 144 ? 'None (1+144 = 145 > 144)' : 'LED #' + (1 + val)}</span></div>` +
+        `<div class="alignment-stat"><span class="stat-label">Total Lit LEDs</span><span class="stat-value" id="alignment-lit-count">${count} / 144</span></div>` +
+      `</div>` +
+      `<div class="alignment-presets-row">` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="144" ${isDirConfig ? '' : 'disabled'}>1st LED only (n=144)</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="72" ${isDirConfig ? '' : 'disabled'}>Halves (n=72)</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="48" ${isDirConfig ? '' : 'disabled'}>Thirds (n=48)</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="36" ${isDirConfig ? '' : 'disabled'}>Quarters (n=36)</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="12" ${isDirConfig ? '' : 'disabled'}>Twelfths (n=12)</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="1" ${isDirConfig ? '' : 'disabled'}>All lit (n=1)</button>` +
+      `</div>` +
+      `<div class="direction-section-divider"></div>` +
+      `<div class="card-header">` +
+        `<div>` +
+          `<h2>Beam Width</h2>` +
+          `<p class="timestamp">Increase the number of pixels lit around each anchor LED (±neighbours on each side). The maximum width dynamically adjusts based on alignment spacing <em>n</em> (max = ${maxBw} for <em>n</em> = ${val}).</p>` +
+        `</div>` +
+      `</div>` +
+      `<div class="slider-field">` +
+        `<div class="slider-label-row">` +
+          `<label for="direction-beam-width-slider"><strong>Beam Width (pixels)</strong></label>` +
+          `<output id="direction-beam-width-value" for="direction-beam-width-slider" class="slider-output">Width = ${bw} (${bwDesc})</output>` +
+        `</div>` +
+        `<input id="direction-beam-width-slider" name="beam_width" type="range" min="1" max="${maxBw}" step="2" value="${bw}" ${isDirConfig ? '' : 'disabled'}>` +
+        `<div class="slider-ticks-row">` +
+          `<span>1 pixel (center only)</span>` +
+          `<span id="beam-width-tick-max">Max: ${maxBw} pixels</span>` +
+        `</div>` +
+      `</div>` +
+      `<div class="alignment-summary-row">` +
+        `<div class="alignment-stat"><span class="stat-label">Neighbours per Side</span><span class="stat-value" id="beam-width-radius">${radius === 0 ? 'None (0 on each side)' : '±' + radius + ' LEDs on each side'}</span></div>` +
+        `<div class="alignment-stat"><span class="stat-label">Beam Width</span><span class="stat-value" id="beam-width-total">${bw} LEDs per anchor</span></div>` +
+        `<div class="alignment-stat"><span class="stat-label">Max Allowed Width</span><span class="stat-value" id="beam-width-max">${maxBw} LEDs (max for n=${val})</span></div>` +
+      `</div>` +
+      `<div class="alignment-presets-row">` +
+        `<button type="button" class="button secondary btn-sm" data-preset-beam-width="1" ${isDirConfig ? '' : 'disabled'}>Width = 1 (original only)</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-beam-width="3" ${isDirConfig && maxBw >= 3 ? '' : 'disabled'}>Width = 3 (±1)</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-beam-width="5" ${isDirConfig && maxBw >= 5 ? '' : 'disabled'}>Width = 5 (±2)</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-beam-width="${maxBw}" ${isDirConfig ? '' : 'disabled'}>Max Width (${maxBw})</button>` +
+      `</div>` +
+    `</form>` +
+  `</article>`;
 }
 async function setStationMode(mode) {
   const previous = stationMode;
@@ -826,29 +983,7 @@ function render() {
   }
   else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div><div data-recording-library>${library()}</div>`;
   else if (current === 'config-directionality') {
-    content.innerHTML = `<article class="card directionality-mode-card">` +
-      `<div class="directionality-toggle-row">` +
-        `<div class="directionality-toggle-info">` +
-          `<h2>Direction Config Mode</h2>` +
-          `<p class="timestamp">Toggle Direction Config mode on or off. When active, the station operates in direction configuration mode.</p>` +
-        `</div>` +
-        `<label class="switch-control" for="direction-config-toggle">` +
-          `<input type="checkbox" id="direction-config-toggle" ${stationMode === 'direction_config' ? 'checked' : ''}>` +
-          `<span class="switch-slider" aria-hidden="true"></span>` +
-          `<span class="switch-label">${stationMode === 'direction_config' ? 'Active' : 'Inactive'}</span>` +
-        `</label>` +
-      `</div>` +
-    `</article>` +
-    `<article class="card">` +
-      `<div class="card-header">` +
-        `<div>` +
-          `<h2>Directional Calibration & Settings</h2>` +
-          `<p class="timestamp">Configure radar target direction, orientation offsets, and directional filters.</p>` +
-        `</div>` +
-        `<span class="badge ${stationMode === 'direction_config' ? 'badge-recv' : 'empty'}">${stationMode === 'direction_config' ? 'Mode: Direction Config' : 'Mode: Normal'}</span>` +
-      `</div>` +
-      `<p style="color:var(--muted); margin-top:12px;">Direction configuration tools ready for setup.</p>` +
-    `</article>`;
+    content.innerHTML = directionalityPage();
   }
   else if (current === 'config-schedule') content.innerHTML = `<article class="card audio-summary"><div class="audio-copy"><h2>Automatic microphone collection</h2><p>Audio recording runs on a shared server-side schedule. When enabled, the station captures 5 seconds of audio every 120 seconds.</p>${resultError('microphone')}</div><div class="audio-tools"><div data-recording-schedule>${scheduleControls()}</div><span class="badge empty" data-recording-count>${recordings.length} saved</span></div></article><article class="card"><h2>Recording schedule settings</h2>${facts([['Interval','120 seconds (2 minutes)'],['Sample duration','5 seconds'],['Audio format','WAV 48 kHz mono 16-bit PCM'],['State',collection.enabled ? 'Active (running)' : 'Stopped (manual captures only)'],['Next capture',collection.next_recording_at ? time(collection.next_recording_at) : 'None scheduled']])}</article>`;
   else if (current === 'config-lighting') content.innerHTML = `<article class="card"><h2>WLED USB controller configuration</h2>${wledFacts()}</article><article class="card"><h2>Lighting quick controls</h2>${lightingControls()}</article>`;
@@ -872,6 +1007,10 @@ async function loadCache() {
     lighting = data.lighting || {};
     collection = data.collection || collection;
     if (data.mode) stationMode = data.mode;
+    if (data.directionality?.alignment) directionAlignment = data.directionality.alignment;
+    else if (data.lighting?.alignment) directionAlignment = data.lighting.alignment;
+    if (data.directionality?.beam_width) directionBeamWidth = data.directionality.beam_width;
+    else if (data.lighting?.beam_width) directionBeamWidth = data.lighting.beam_width;
     syncStationModeUI();
     Object.keys(historyKeys).forEach(source=>historyKeys[source]='');
     radarLoadedAt = requestedAt;
@@ -933,6 +1072,36 @@ async function setLightingMode(mode, settings = {}) {
   }
 }
 content.addEventListener('input', event=>{
+  if (event.target.id === 'direction-alignment-slider') {
+    const n = parseInt(event.target.value, 10);
+    directionAlignment = n;
+    const maxBw = maxBeamWidthForAlignment(n);
+    const bwSlider = document.querySelector('#direction-beam-width-slider');
+    if (bwSlider) {
+      bwSlider.max = maxBw;
+      if (directionBeamWidth > maxBw) {
+        directionBeamWidth = maxBw;
+        bwSlider.value = maxBw;
+      }
+    }
+    updateAlignmentDisplay(n);
+    updateBeamWidthDisplay(directionBeamWidth, n);
+    clearTimeout(alignmentDebounceTimer);
+    alignmentDebounceTimer = setTimeout(() => {
+      sendAlignment(n, directionBeamWidth);
+    }, 60);
+    return;
+  }
+  if (event.target.id === 'direction-beam-width-slider') {
+    const bw = parseInt(event.target.value, 10);
+    directionBeamWidth = bw;
+    updateBeamWidthDisplay(bw, directionAlignment);
+    clearTimeout(alignmentDebounceTimer);
+    alignmentDebounceTimer = setTimeout(() => {
+      sendAlignment(directionAlignment, bw);
+    }, 60);
+    return;
+  }
   const form = event.target.closest('[data-lighting-settings]');
   if (!form) return;
   form.dataset.dirty = 'true';
@@ -945,6 +1114,38 @@ content.addEventListener('submit', event=>{
   setLightingMode(null, {...(lighting.mode === 'auto' ? {} : {brightness:Number(form.querySelector('[name="brightness"]').value)}),color:form.querySelector('[name="color"]').value});
 });
 content.addEventListener('click',event=>{
+  const presetBtn = event.target.closest('[data-preset-alignment]');
+  if (presetBtn) {
+    const n = parseInt(presetBtn.dataset.presetAlignment, 10);
+    directionAlignment = n;
+    const slider = document.querySelector('#direction-alignment-slider');
+    if (slider) slider.value = n;
+    const maxBw = maxBeamWidthForAlignment(n);
+    const bwSlider = document.querySelector('#direction-beam-width-slider');
+    if (bwSlider) {
+      bwSlider.max = maxBw;
+      if (directionBeamWidth > maxBw) {
+        directionBeamWidth = maxBw;
+        bwSlider.value = maxBw;
+      }
+    }
+    updateAlignmentDisplay(n);
+    updateBeamWidthDisplay(directionBeamWidth, n);
+    clearTimeout(alignmentDebounceTimer);
+    sendAlignment(n, directionBeamWidth);
+    return;
+  }
+  const presetBwBtn = event.target.closest('[data-preset-beam-width]');
+  if (presetBwBtn) {
+    const bw = parseInt(presetBwBtn.dataset.presetBeamWidth, 10);
+    directionBeamWidth = bw;
+    const bwSlider = document.querySelector('#direction-beam-width-slider');
+    if (bwSlider) bwSlider.value = bw;
+    updateBeamWidthDisplay(bw, directionAlignment);
+    clearTimeout(alignmentDebounceTimer);
+    sendAlignment(directionAlignment, bw);
+    return;
+  }
   const maximum = event.target.closest('[data-lighting-max]');
   if (maximum) {
     const form = content.querySelector('[data-lighting-settings]');
@@ -969,6 +1170,32 @@ content.addEventListener('click',event=>{
   const button = event.target.closest('[data-action]'); if (button) run(button.dataset.action);
 });
 content.addEventListener('change',event=>{
+  if (event.target.id === 'direction-alignment-slider') {
+    const n = parseInt(event.target.value, 10);
+    directionAlignment = n;
+    const maxBw = maxBeamWidthForAlignment(n);
+    const bwSlider = document.querySelector('#direction-beam-width-slider');
+    if (bwSlider) {
+      bwSlider.max = maxBw;
+      if (directionBeamWidth > maxBw) {
+        directionBeamWidth = maxBw;
+        bwSlider.value = maxBw;
+      }
+    }
+    updateAlignmentDisplay(n);
+    updateBeamWidthDisplay(directionBeamWidth, n);
+    clearTimeout(alignmentDebounceTimer);
+    sendAlignment(n, directionBeamWidth);
+    return;
+  }
+  if (event.target.id === 'direction-beam-width-slider') {
+    const bw = parseInt(event.target.value, 10);
+    directionBeamWidth = bw;
+    updateBeamWidthDisplay(bw, directionAlignment);
+    clearTimeout(alignmentDebounceTimer);
+    sendAlignment(directionAlignment, bw);
+    return;
+  }
   if (event.target.id === 'direction-config-toggle') {
     setStationMode(event.target.checked ? 'direction_config' : 'normal');
     return;

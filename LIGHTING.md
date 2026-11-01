@@ -42,10 +42,10 @@ retry discovery. No firmware, GPIO, LED-output bus, or configured LED count is c
 Commands consolidate the strip into one segment covering all configured pixels.
 WLED must have serial JSON support available on its configured serial pins.
 
-The controller profile is the SP803E WLED-ESP32 driving the confirmed 3.2 ft, 192-pixel strip.
+The controller profile is the SP803E WLED-ESP32 driving the confirmed 3.2 ft, 144-pixel strip.
 It uses WLED's native JSON-over-serial API, not the archived ESPHome endpoints.
 Before each command, the server reads `info.leds.count` and current segments.
-It expands segment 0 from `start: 0` to `stop: 192` (exclusive), sets solid
+It expands segment 0 from `start: 0` to `stop: 144` (exclusive), sets solid
 RGB with `grp: 1`, `spc: 0`, full segment brightness, zero offset, and unfreezes
 output. Other active segments are removed so old spotlight or music layouts
 cannot override the strip. Playlists and nightlight are stopped. The white
@@ -57,10 +57,10 @@ white zero), preventing an unwanted white channel from washing out the color. Co
 sync notifications and override incoming live streams. WLED's response must acknowledge power, brightness when on, and
 color and the full segment range before the server reports success. The page
 shows the firmware version, configured LED count, and last acknowledged pixel
-coverage out of 192. If WLED reports fewer than 192 configured pixels, On and
+coverage out of 144. If WLED reports fewer than 144 configured pixels, On and
 color/brightness commands fail with a configuration message instead of silently
 lighting a partial strip. Off remains available and discloses partial configured
-coverage. Set the actual LED-output length to 192 in WLED LED Preferences if
+coverage. Set the actual LED-output length to 144 in WLED LED Preferences if
 needed; WLED's USB serial state API does not expose hardware bus configuration.
 The server leaves data GPIO, bus type, voltage, and current limits unchanged.
 The page shows acknowledged RGB color, master brightness, segment brightness,
@@ -74,10 +74,10 @@ This acknowledgement verifies controller state, not physical light output.
 ## Verification
 
 Automated tests cover the separate page, On/Off/Auto requests, manual color and
-brightness, 192-pixel bounds, spacing, frozen segments, overlapping segments,
+brightness, 144-pixel bounds, spacing, frozen segments, overlapping segments,
 configuration mismatches, unplugged USB, serial parsing, and acknowledgement
 failures. Physical verification requires access to the Pi's USB device and
-observation of the strip. On the WLED light page, check 192/192 coverage, apply
+observation of the strip. On the WLED light page, check 144/144 coverage, apply
 red/green/blue at moderate brightness, vary brightness, test Off/On, then select
 Auto when finished. A reported coverage value alone cannot verify physical LED
 wiring or light output.

@@ -87,7 +87,7 @@ class ServiceTests(unittest.TestCase):
         self.service.lighting.update_distance(200, {"fresh": True, "presence": "moving", "moving_distance_cm": 600, "range_estimate_cm": 600})
         self.service.presence_sensor.response = MagicMock(return_value=(200, {"fresh": True}))
         latest = self.service.latest()
-        self.assertEqual(latest["lighting"]["led_index"], 191)
+        self.assertEqual(latest["lighting"]["led_index"], 143)
         self.assertEqual(latest["sources"]["radar"]["result"]["range_estimate_cm"],
                          latest["lighting"]["distance_cm"])
         self.service.presence_sensor.response.assert_not_called()
@@ -384,6 +384,67 @@ class ServiceTests(unittest.TestCase):
 
                 conn.request("POST", "/v1/station-mode", json.dumps({"mode": "invalid_mode"}), {"Content-Type": "application/json"})
                 res = conn.getresponse(); self.assertEqual(res.status, 400)
+            finally:
+                server.shutdown(); thread.join(); server.server_close()
+
+    def test_direction_alignment_endpoint_and_mode_gating(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = Service(Path(directory), Path(directory) / "config.json")
+            service.lighting._background = False
+            service.lighting.transport = MagicMock()
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(service))
+            thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                # GET initial alignment and beam width
+                conn.request("GET", "/v1/direction/alignment")
+                res = conn.getresponse(); self.assertEqual(res.status, 200)
+                body = json.loads(res.read())
+                self.assertEqual(body["alignment"], 144)
+                self.assertEqual(body["beam_width"], 1)
+                self.assertEqual(body["max_beam_width"], 143)
+                self.assertEqual(body["mode"], "normal")
+
+                # POST while in normal mode is rejected with 409
+                conn.request("POST", "/v1/direction/alignment", json.dumps({"alignment": 72}), {"Content-Type": "application/json"})
+                res = conn.getresponse(); self.assertEqual(res.status, 409)
+                body = json.loads(res.read())
+                self.assertEqual(body["error"]["code"], "invalid_mode")
+
+                # Switch to direction_config
+                service.set_station_mode("direction_config")
+
+                # POST with valid alignment and beam_width succeeds
+                conn.request("POST", "/v1/direction/alignment", json.dumps({"alignment": 10, "beam_width": 3}), {"Content-Type": "application/json"})
+                res = conn.getresponse(); self.assertEqual(res.status, 200)
+                body = json.loads(res.read())
+                self.assertEqual(body["alignment"], 10)
+                self.assertEqual(body["beam_width"], 3)
+                self.assertEqual(body["max_beam_width"], 11)
+                self.assertEqual(service.direction_alignment, 10)
+                self.assertEqual(service.direction_beam_width, 3)
+
+                # POST beam_width only
+                conn.request("POST", "/v1/direction/alignment", json.dumps({"beam_width": 5}), {"Content-Type": "application/json"})
+                res = conn.getresponse(); self.assertEqual(res.status, 200)
+                body = json.loads(res.read())
+                self.assertEqual(body["beam_width"], 5)
+                self.assertEqual(service.direction_beam_width, 5)
+
+                # Latest reflects alignment and beam width
+                self.assertEqual(service.latest()["directionality"]["alignment"], 10)
+                self.assertEqual(service.latest()["directionality"]["beam_width"], 5)
+                self.assertEqual(service.latest()["directionality"]["max_beam_width"], 11)
+
+                # Bounds checks for alignment
+                for invalid in (0, 145, "invalid"):
+                    conn.request("POST", "/v1/direction/alignment", json.dumps({"alignment": invalid}), {"Content-Type": "application/json"})
+                    res = conn.getresponse(); self.assertEqual(res.status, 400)
+
+                # Bounds checks for beam_width (even number, zero, negative, exceeding max)
+                for invalid_bw in (0, 2, 4, 13, -1, "three"):
+                    conn.request("POST", "/v1/direction/alignment", json.dumps({"beam_width": invalid_bw}), {"Content-Type": "application/json"})
+                    res = conn.getresponse(); self.assertEqual(res.status, 400)
             finally:
                 server.shutdown(); thread.join(); server.server_close()
 

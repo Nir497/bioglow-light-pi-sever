@@ -44,7 +44,7 @@ class WLEDLog:
 
 
 class WLEDSerial:
-    def __init__(self, port=None, baudrate=115200, led_count=192, clock=time.monotonic):
+    def __init__(self, port=None, baudrate=115200, led_count=144, clock=time.monotonic):
         self.log = WLEDLog()
         self.port = port or os.environ.get("BIOGLOW_WLED_PORT")
         self.baudrate = baudrate
@@ -177,7 +177,16 @@ class WLEDSerial:
             start, stop = full.get("start", 0), full.get("stop", coverage)
             if type(start) is not int or type(stop) is not int or not 0 <= start < stop <= coverage:
                 raise OSError("Requested LED range is outside the configured strip")
-            full.update(id=0, start=start, stop=stop, grp=1, spc=0, of=0,
+            grp = full.get("grp", 1)
+            spc = full.get("spc", 0)
+            of = full.get("of", 0)
+            if type(grp) is not int or not 1 <= grp <= coverage:
+                raise OSError("Requested LED group size is invalid")
+            if type(spc) is not int or not 0 <= spc <= 65535:
+                raise OSError("Requested LED spacing is invalid")
+            if type(of) is not int or not 0 <= of <= coverage:
+                raise OSError("Requested LED offset is invalid")
+            full.update(id=0, start=start, stop=stop, grp=grp, spc=spc, of=of,
                         on=True, bri=255, fx=0, pal=0, frz=False, rev=False, mi=False)
             # Consolidate the entire strip into segment 0 so overlapping old
             # spotlight/music segments cannot override part of the output.
@@ -200,8 +209,8 @@ class WLEDSerial:
             if reported_color != requested_color:
                 raise OSError("WLED did not acknowledge the requested RGBW color")
             if any(segment.get(key) != value for key, value in
-                   {"start": start, "stop": stop, "grp": 1, "spc": 0,
-                    "on": True, "bri": 255, "fx": 0, "pal": 0, "frz": False, "of": 0}.items()):
+                   {"start": start, "stop": stop, "grp": grp, "spc": spc,
+                    "on": True, "bri": 255, "fx": 0, "pal": 0, "frz": False, "of": of}.items()):
                 raise OSError("WLED did not acknowledge full-strip coverage or requested LED range with a solid color")
             if any(item.get("id", 0) != 0 and item.get("stop", 0) > item.get("start", 0)
                    for item in segments):

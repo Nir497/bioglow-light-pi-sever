@@ -75,7 +75,11 @@ class LightingControl:
                 "lux_stale_after_seconds": LUX_STALE_AFTER_SECONDS}
 
     def _lighting_state(self):
-        return {**self._state, **self._ambient_status()}
+        state = {**self._state, **self._ambient_status()}
+        if self._state.get("mode") == "direction_config":
+            state["alignment"] = self._state.get("alignment", 144)
+            state["beam_width"] = self._state.get("beam_width", 1)
+        return state
 
     def _auto_allowed(self):
         return self._ambient_status()["ambient_state"] == "dark"
@@ -106,14 +110,21 @@ class LightingControl:
         return self.configure(mode=mode)
 
     def configure(self, mode=None, brightness=None, color=None):
-        if mode is not None and mode not in ("on", "off", "auto", "distance_test"):
-            raise ValueError('mode must be "on", "off", "auto", or "distance_test"')
+        if mode is not None and mode not in ("on", "off", "auto", "distance_test", "direction_config"):
+            raise ValueError('mode must be "on", "off", "auto", "distance_test", or "direction_config"')
         if brightness is not None and (type(brightness) is not int or not 1 <= brightness <= 255):
             raise ValueError("brightness must be an integer from 1 to 255")
         if color is not None and (not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
             raise ValueError("color must be a hex RGB value such as #ff8000")
         if mode is None and brightness is None and color is None:
             raise ValueError("Provide mode, brightness, or color")
+        if mode == "direction_config":
+            return self.set_direction_alignment(
+                self._state.get("alignment", 144),
+                beam_width=self._state.get("beam_width", 1),
+                brightness=brightness,
+                color=color
+            )
         with self._lock:
             if self._stopped:
                 raise ValueError("Lighting control has stopped")
@@ -156,6 +167,50 @@ class LightingControl:
                         "confirmed_distance_cm", "confirmed_radar_timestamp"):
                 self._state.pop(key, None)
             self._send(self._state["manual_brightness"] if mode == "on" else 0)
+            return self._lighting_state()
+
+    def set_direction_alignment(self, spacing: int, beam_width: int = 1, brightness: int = 64, color: str = None):
+        if type(spacing) is not int or not 1 <= spacing <= 144:
+            raise ValueError("alignment spacing must be an integer from 1 to 144")
+        max_beam_width = min(143, 2 * (spacing // 2) + 1)
+        if type(beam_width) is not int or beam_width < 1 or beam_width > max_beam_width or beam_width % 2 == 0:
+            raise ValueError(f"beam_width must be an odd integer from 1 to {max_beam_width} for alignment spacing {spacing}")
+        if brightness is not None and (type(brightness) is not int or not 1 <= brightness <= 255):
+            raise ValueError("brightness must be an integer from 1 to 255")
+        if color is not None and (not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
+            raise ValueError("color must be a hex RGB value such as #ff8000")
+        with self._lock:
+            if self._stopped:
+                raise ValueError("Lighting control has stopped")
+            self._state["mode"] = "direction_config"
+            self._state["alignment"] = spacing
+            self._state["beam_width"] = beam_width
+            if brightness is not None:
+                self._state["alignment_brightness"] = brightness
+            if color is not None:
+                self._state["color"] = color.lower()
+            self._revision += 1
+            self._pending = None
+            self._radar_snapshot = None
+            self._radar_sampled_at = None
+            self._auto_last_distance = None
+            self._auto_last_change = None
+            self._last_distance_command = None
+            for key in ("distance_cm", "led_index", "test_state", "test_brightness", "test_color",
+                        "sample_interval_seconds", "distance_source", "radar_timestamp",
+                        "confirmed_led_index", "confirmed_distance_cm", "confirmed_radar_timestamp"):
+                self._state.pop(key, None)
+            target_bri = self._state.get("alignment_brightness", 64)
+            chosen_color = self._state.get("color", "#ffa028")
+            if beam_width >= spacing:
+                grp = 1
+                spc = 0
+                of = 0
+            else:
+                grp = beam_width
+                spc = spacing - beam_width
+                of = 0
+            self._send(target_bri, color=chosen_color, instant=True, grp=grp, spc=spc, of=of)
             return self._lighting_state()
 
     def update(self, lux):
@@ -241,16 +296,20 @@ class LightingControl:
                 if type(distance) not in (int, float) or not math.isfinite(distance) or distance <= 0:
                     distance = None
                     error = "Radar target has no usable distance; requesting lights off."
+            led_count = getattr(self.transport, "led_count", None)
+            if not isinstance(led_count, int) or led_count <= 0:
+                led_count = 144
+            max_index = led_count - 1
             if distance is None:
                 index = None
             elif distance <= 100:
                 index = 0
             elif distance >= 600:
-                index = 191
+                index = max_index
             else:
                 # Reserve the end LEDs for their distance thresholds, even
                 # when rounding a nearby distance would reach an endpoint.
-                index = max(1, min(190, round((distance - 100) / 500 * 191)))
+                index = max(1, min(max_index - 1, round((distance - 100) / 500 * max_index)))
             self._state.update(distance_cm=distance, led_index=index if self._state["mode"] == "distance_test" else None,
                                test_state="sensor_unavailable" if error else "no_target" if index is None else "tracking")
             if error:
@@ -334,8 +393,20 @@ class LightingControl:
                     self._pending = self._desired
                     self._state["status"] = "pending"
                 command, self._pending = self._pending, None
-                target, color, led_index, instant, revision, sample = command
-            error = self._request(target, color, led_index, instant)
+                target, color, led_index, instant, revision, sample = command[:6]
+                grp = command[6] if len(command) > 6 else 1
+                spc = command[7] if len(command) > 7 else 0
+                of = command[8] if len(command) > 8 else 0
+            if grp == 1 and spc == 0 and of == 0:
+                error = self._request(target, color, led_index, instant)
+            else:
+                try:
+                    error = self._request(target, color, led_index, instant, grp=grp, spc=spc, of=of)
+                except TypeError:
+                    try:
+                        error = self._request(target, color, led_index, instant, grp=grp, spc=spc)
+                    except TypeError:
+                        error = self._request(target, color, led_index, instant)
             with self._lock:
                 last_attempt = self._clock()
                 retry = error is not None
@@ -349,7 +420,7 @@ class LightingControl:
         if self.transport:
             self.transport.close()
 
-    def _send(self, target, color=None, led_index=None, instant=False):
+    def _send(self, target, color=None, led_index=None, instant=False, grp=1, spc=0, of=0):
         if self._state["mode"] == "auto" and not self._auto_allowed():
             # Gate all Auto paths, including appearance changes and watchdogs.
             if self._state["target_brightness"]:
@@ -359,12 +430,12 @@ class LightingControl:
             self._auto_target = 0
             self._auto_last_distance = self._auto_last_change = None
         color = color or self._state["color"]
-        signature = (target, color, led_index)
+        signature = (target, color, led_index, grp, spc, of)
         now = self._clock()
         sample = {"confirmed_led_index": led_index if target else None,
                   "confirmed_distance_cm": self._state.get("distance_cm") if target else None,
                   "confirmed_radar_timestamp": self._state.get("radar_timestamp")}
-        self._desired = (target, color, led_index, instant, self._revision, sample)
+        self._desired = (target, color, led_index, instant, self._revision, sample, grp, spc, of)
         if (self._state["mode"] in ("auto", "distance_test")
                 and signature == self._last_distance_command
                 and self._state["status"] != "controller_unavailable"
@@ -382,14 +453,25 @@ class LightingControl:
                 self._worker.start()
             self._condition.notify()
         else:
-            self._apply_result(target, self._request(target, color, led_index, instant), sample)
+            if grp == 1 and spc == 0 and of == 0:
+                res = self._request(target, color, led_index, instant)
+            else:
+                try:
+                    res = self._request(target, color, led_index, instant, grp=grp, spc=spc, of=of)
+                except TypeError:
+                    try:
+                        res = self._request(target, color, led_index, instant, grp=grp, spc=spc)
+                    except TypeError:
+                        res = self._request(target, color, led_index, instant)
+            self._apply_result(target, res, sample)
 
-    def _request(self, target, color="#ffa028", led_index=None, instant=False):
+    def _request(self, target, color="#ffa028", led_index=None, instant=False, grp=1, spc=0, of=0):
         # Periodic reassertion restores output after fixture restarts or other
         # streams; unchanged distance commands are coalesced in _send.
         params = {"on": bool(target), "bri": target, "transition": 3,
                   "lor": 2, "live": False, "udpn": {"nn": True},
                   "seg": [{"id": 0, "on": True, "bri": 255, "fx": 0, "pal": 0,
+                           "grp": grp, "spc": spc, "of": of,
                            "col": [[int(color[index:index + 2], 16) for index in (1, 3, 5)] + [0]]}]}
         if instant:
             params["transition"] = 0

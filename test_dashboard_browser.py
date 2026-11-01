@@ -41,6 +41,14 @@ window.fetch=async(path,options={})=>{
     body={lighting:browserLighting};
   }
   else if(path==='/v1/recording-schedule'){browserCollection.enabled=JSON.parse(options.body).enabled;body={collection:browserCollection};}
+  else if(path==='/v1/station-mode'){
+    const req=JSON.parse(options.body||'{}');
+    body={status:'ok',mode:req.mode||'normal',modes:['normal','direction_config','manual_control']};
+  }
+  else if(path==='/v1/direction/alignment'){
+    const req=JSON.parse(options.body||'{}');
+    body={status:'ok',alignment:req.alignment||144};
+  }
   else if(path==='/v1/recordings')body={recordings:browserRecordings};
   else if(path==='/v1/recordings/'+recordingId && options.method==='DELETE'){browserRecordings=[];body={deleted:true};}
   else if(path.startsWith('/v1/animal-names'))body={names:{'Buteo jamaicensis':'Red-tailed Hawk'}};
@@ -168,6 +176,33 @@ setTimeout(async()=>{
     const logReads=browserRequests.filter(p=>p.startsWith('/v1/wled-log')).length;
     await pause(650);
     check(browserRequests.filter(p=>p.startsWith('/v1/wled-log')).length===logReads,'Log polling continued after navigation');
+    location.hash='#config-directionality';await pause(100);
+    const alignSlider=document.querySelector('#direction-alignment-slider');
+    check(alignSlider,'Direction alignment slider missing');
+    check(alignSlider.disabled,'Alignment slider must be disabled in normal mode');
+    const bwSlider=document.querySelector('#direction-beam-width-slider');
+    check(bwSlider,'Direction beam width slider missing');
+    check(bwSlider.disabled,'Beam width slider must be disabled in normal mode');
+    const dirToggle=document.querySelector('#direction-config-toggle');
+    dirToggle.checked=true;dirToggle.dispatchEvent(new Event('change',{bubbles:true}));await pause(50);
+    const activeSlider=document.querySelector('#direction-alignment-slider');
+    check(!activeSlider.disabled,'Alignment slider must be enabled when direction_config mode is active');
+    const activeBwSlider=document.querySelector('#direction-beam-width-slider');
+    check(!activeBwSlider.disabled,'Beam width slider must be enabled when direction_config mode is active');
+    check(activeBwSlider.value==='1','Default beam width must be 1');
+    activeSlider.value='10';activeSlider.dispatchEvent(new Event('input',{bubbles:true}));
+    check(activeBwSlider.max==='11','Beam width max for n=10 should be 11');
+    activeBwSlider.value='5';activeBwSlider.dispatchEvent(new Event('input',{bubbles:true}));
+    check(document.querySelector('#direction-beam-width-value').textContent.includes('Width = 5'),'Beam width output not updated');
+    check(document.querySelector('#beam-width-radius').textContent.includes('±2'),'Beam width radius should be 2 for width 5');
+    activeSlider.value='2';activeSlider.dispatchEvent(new Event('input',{bubbles:true}));
+    check(activeBwSlider.max==='3','Beam width max for n=2 should be 3');
+    check(activeBwSlider.value==='3','Beam width should auto-clamp to 3 when alignment reduces to 2');
+    activeSlider.value='72';activeSlider.dispatchEvent(new Event('input',{bubbles:true}));
+    check(document.querySelector('#direction-alignment-value').textContent.includes('n = 72'),'Alignment value output not updated');
+    check(document.querySelector('#alignment-lit-count').textContent.includes('2 / 144'),'Total lit count for n=72 should be 2');
+    await pause(100);
+    check(browserRequests.includes('/v1/direction/alignment'),'Alignment change did not POST to /v1/direction/alignment');
     document.body.dataset.browserCheck='passed';
   }catch(error){document.body.dataset.browserCheck='failed: '+error.message;}
 },50);

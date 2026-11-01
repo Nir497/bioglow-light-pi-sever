@@ -188,7 +188,7 @@ class DistanceLightingTests(unittest.TestCase):
                     stationary_distance_cm=distance, **extra)
 
     def test_mapping_and_fixed_appearance(self):
-        for distance, index in ((1, 0), (99, 0), (100, 0), (101, 1), (350, 96), (599, 190), (600, 191), (700, 191)):
+        for distance, index in ((1, 0), (99, 0), (100, 0), (101, 1), (350, 72), (599, 142), (600, 143), (700, 143)):
             with self.subTest(distance=distance):
                 self.light.update_distance(200, self.reading(distance))
                 state = self.light.status()
@@ -316,14 +316,14 @@ class DistanceLightingTests(unittest.TestCase):
             self.assertTrue(entered.wait(1))
             light.update_distance(200, self.reading(650, timestamp='far'))
             status = light.status()
-            self.assertEqual(status['led_index'], 191)
+            self.assertEqual(status['led_index'], 143)
             self.assertIsNone(status['confirmed_led_index'])
             release.set()
             self.assertTrue(final_ack.wait(2))
         finally:
             release.set()
             light.stop()
-        self.assertEqual(calls[2]['seg'][0]['start'], 191)
+        self.assertEqual(calls[2]['seg'][0]['start'], 143)
 
     def test_sampling_interval_and_shutdown_off(self):
         import time
@@ -787,6 +787,105 @@ class LuxGatedAutoTests(unittest.TestCase):
             light._condition.notify_all()
             self.assertTrue(light._condition.wait_for(lambda: light._state['brightness'] == 0, timeout=2))
         self.assertEqual([c['bri'] for c in commands], [83, 0])
+
+    def test_direction_alignment_spacing_and_spc_calculation(self):
+        transport = MagicMock()
+        commands = []
+        transport.send.side_effect = lambda cmd: commands.append(cmd) or {}
+        light = LightingControl(transport=transport, background=False)
+        self.addCleanup(light.stop)
+        
+        # Test max alignment 144 (spc=143)
+        status = light.set_direction_alignment(144)
+        self.assertEqual(status['mode'], 'direction_config')
+        self.assertEqual(status['alignment'], 144)
+        self.assertEqual(commands[-1]['seg'][0]['spc'], 143)
+        self.assertEqual(commands[-1]['seg'][0]['grp'], 1)
+        
+        # Test min alignment 1 (spc=0)
+        status = light.set_direction_alignment(1)
+        self.assertEqual(status['alignment'], 1)
+        self.assertEqual(commands[-1]['seg'][0]['spc'], 0)
+        
+        # Test alignment 72 (spc=71)
+        status = light.set_direction_alignment(72)
+        self.assertEqual(status['alignment'], 72)
+        self.assertEqual(commands[-1]['seg'][0]['spc'], 71)
+        
+        # Bounds validation
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment(0)
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment(145)
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment("not_a_number")
+
+    def test_direction_beam_width_calculation(self):
+        transport = MagicMock()
+        commands = []
+        transport.send.side_effect = lambda cmd: commands.append(cmd) or {}
+        light = LightingControl(transport=transport, background=False)
+        self.addCleanup(light.stop)
+
+        # Spacing 10, default beam_width=1 -> grp=1, spc=9, of=0
+        status = light.set_direction_alignment(10)
+        self.assertEqual(status['beam_width'], 1)
+        self.assertEqual(commands[-1]['seg'][0]['grp'], 1)
+        self.assertEqual(commands[-1]['seg'][0]['spc'], 9)
+        self.assertEqual(commands[-1]['seg'][0]['of'], 0)
+
+        # Spacing 10, beam_width=3 -> grp=3, spc=7, of=0
+        status = light.set_direction_alignment(10, beam_width=3)
+        self.assertEqual(status['beam_width'], 3)
+        self.assertEqual(commands[-1]['seg'][0]['grp'], 3)
+        self.assertEqual(commands[-1]['seg'][0]['spc'], 7)
+        self.assertEqual(commands[-1]['seg'][0]['of'], 0)
+
+        # Spacing 10, beam_width=5 -> grp=5, spc=5, of=0
+        status = light.set_direction_alignment(10, beam_width=5)
+        self.assertEqual(status['beam_width'], 5)
+        self.assertEqual(commands[-1]['seg'][0]['grp'], 5)
+        self.assertEqual(commands[-1]['seg'][0]['spc'], 5)
+        self.assertEqual(commands[-1]['seg'][0]['of'], 0)
+
+        # Spacing 10, beam_width=11 -> gap fully lit, grp=1, spc=0, of=0
+        status = light.set_direction_alignment(10, beam_width=11)
+        self.assertEqual(status['beam_width'], 11)
+        self.assertEqual(commands[-1]['seg'][0]['grp'], 1)
+        self.assertEqual(commands[-1]['seg'][0]['spc'], 0)
+        self.assertEqual(commands[-1]['seg'][0]['of'], 0)
+
+        # Spacing 144, beam_width=3 -> grp=3, spc=141, of=0
+        status = light.set_direction_alignment(144, beam_width=3)
+        self.assertEqual(commands[-1]['seg'][0]['grp'], 3)
+        self.assertEqual(commands[-1]['seg'][0]['spc'], 141)
+        self.assertEqual(commands[-1]['seg'][0]['of'], 0)
+
+        # Invalid beam_width validations
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment(10, beam_width=0)
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment(10, beam_width=2)  # Even width not allowed
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment(10, beam_width=13)  # Exceeds max 11 for spacing 10
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment(1, beam_width=3)  # Exceeds max 1 for spacing 1
+
+    def test_direction_config_mode_ignores_radar_and_lux(self):
+        transport = MagicMock()
+        commands = []
+        transport.send.side_effect = lambda cmd: commands.append(cmd) or {}
+        light = LightingControl(transport=transport, background=False)
+        self.addCleanup(light.stop)
+        
+        light.set_direction_alignment(144)
+        initial_commands_count = len(commands)
+        
+        # Lux updates should be ignored in direction_config mode
+        light.update(0)
+        light.update(100)
+        self.assertEqual(len(commands), initial_commands_count)
+        self.assertEqual(light.status()['mode'], 'direction_config')
 
 
 # Share behaviors without inheriting single-LED-specific assertions.
