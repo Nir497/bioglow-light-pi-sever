@@ -201,6 +201,32 @@ button:focus-visible,a:focus-visible,select:focus-visible {
     outline: 2px solid var(--green, #287c54);
     outline-offset: 2px;
 }
+.lighting-controls-card {
+    transition: opacity .2s ease, filter .2s ease;
+}
+.lighting-controls-card.controls-disabled {
+    opacity: 0.45;
+    filter: grayscale(0.6);
+    user-select: none;
+    position: relative;
+}
+.lighting-controls-card.controls-disabled button,
+.lighting-controls-card.controls-disabled input {
+    cursor: not-allowed;
+}
+.lighting-disabled-notice {
+    padding: 10px 14px;
+    background: #eef2eb;
+    border: 1px solid #dce2d8;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #4b5d51;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 550;
+}
 .nav-section {
     display:flex;
     flex-direction:column;

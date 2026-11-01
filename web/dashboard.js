@@ -742,11 +742,23 @@ function scheduleWledLog() {
 function syncStationModeUI() {
   const select = document.querySelector('#station-mode');
   if (select && select.value !== stationMode) select.value = stationMode;
-  const toggle = document.querySelector('#direction-config-toggle');
-  if (toggle) {
-    toggle.checked = stationMode === 'direction_config';
-    const label = toggle.closest?.('.switch-control')?.querySelector?.('.switch-label');
+  const dirToggle = document.querySelector('#direction-config-toggle');
+  if (dirToggle) {
+    dirToggle.checked = stationMode === 'direction_config';
+    const label = dirToggle.closest?.('.switch-control')?.querySelector?.('.switch-label');
     if (label) label.textContent = stationMode === 'direction_config' ? 'Active' : 'Inactive';
+  }
+  const manualToggle = document.querySelector('#manual-control-toggle');
+  if (manualToggle) {
+    manualToggle.checked = stationMode === 'manual_control';
+    const label = manualToggle.closest?.('.switch-control')?.querySelector?.('.switch-label');
+    if (label) label.textContent = stationMode === 'manual_control' ? 'Active' : 'Inactive';
+  }
+  const lightingCard = document.querySelector('.lighting-controls-card');
+  if (lightingCard) {
+    lightingCard.classList.toggle('controls-disabled', stationMode !== 'manual_control');
+    const noticeEl = lightingCard.querySelector('.lighting-disabled-notice');
+    if (noticeEl) noticeEl.hidden = stationMode === 'manual_control';
   }
 }
 async function setStationMode(mode) {
@@ -760,13 +772,14 @@ async function setStationMode(mode) {
       body: JSON.stringify({mode})
     });
     stationMode = res.mode || mode;
-    notice(`Station mode changed to ${stationMode === 'direction_config' ? 'Direction config' : 'Normal'}.`);
+    const modeLabels = {normal: 'Normal', direction_config: 'Direction config', manual_control: 'Manual control'};
+    notice(`Station mode changed to ${modeLabels[stationMode] || stationMode}.`);
   } catch (err) {
     stationMode = previous;
     notice(`Could not change station mode: ${err.message}`, true);
   } finally {
     syncStationModeUI();
-    if (view() === 'config-directionality') render();
+    if (['config-directionality', 'lighting'].includes(view())) render();
   }
 }
 function render() {
@@ -792,7 +805,25 @@ function render() {
   if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div><div data-recording-library>${library(3)}</div>`;
   else if (current === 'distance-test') content.innerHTML = distanceTestPage();
   else if (current === 'wled-log') content.innerHTML = '<article class="card"><div class="wled-log-header"><h2>WLED USB Traffic</h2><p data-wled-message role="status">Loading USB traffic…</p></div><div class="wled-table-container"><table class="wled-log-table"><thead><tr><th class="wled-th-time">Time</th><th class="wled-th-dir">Direction</th><th class="wled-th-outcome">Outcome</th><th class="wled-th-message">Message (click row to expand)</th></tr></thead><tbody data-wled-events></tbody></table></div></article>';
-  else if (current === 'lighting') content.innerHTML = `<article class="card">${lightingControls()}</article>`;
+  else if (current === 'lighting') {
+    content.innerHTML = `<article class="card manual-control-mode-card">` +
+      `<div class="directionality-toggle-row">` +
+        `<div class="directionality-toggle-info">` +
+          `<h2>Manual Control Mode</h2>` +
+          `<p class="timestamp">Activate Manual Control to adjust brightness, color, and power. When inactive, lighting controls are disabled.</p>` +
+        `</div>` +
+        `<label class="switch-control" for="manual-control-toggle">` +
+          `<input type="checkbox" id="manual-control-toggle" ${stationMode === 'manual_control' ? 'checked' : ''}>` +
+          `<span class="switch-slider" aria-hidden="true"></span>` +
+          `<span class="switch-label">${stationMode === 'manual_control' ? 'Active' : 'Inactive'}</span>` +
+        `</label>` +
+      `</div>` +
+    `</article>` +
+    `<article class="card lighting-controls-card ${stationMode === 'manual_control' ? '' : 'controls-disabled'}">` +
+      `<div class="lighting-disabled-notice" ${stationMode === 'manual_control' ? 'hidden' : ''}><span aria-hidden="true">🔒</span> Manual control mode is inactive. Activate Manual control mode above to enable these controls.</div>` +
+      `${lightingControls()}` +
+    `</article>`;
+  }
   else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div><div data-recording-library>${library()}</div>`;
   else if (current === 'config-directionality') {
     content.innerHTML = `<article class="card directionality-mode-card">` +
@@ -940,6 +971,10 @@ content.addEventListener('click',event=>{
 content.addEventListener('change',event=>{
   if (event.target.id === 'direction-config-toggle') {
     setStationMode(event.target.checked ? 'direction_config' : 'normal');
+    return;
+  }
+  if (event.target.id === 'manual-control-toggle') {
+    setStationMode(event.target.checked ? 'manual_control' : 'normal');
     return;
   }
   if(event.target.id === 'region') { region = event.target.value; render(); }

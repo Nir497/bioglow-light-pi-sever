@@ -366,6 +366,7 @@ class ServiceTests(unittest.TestCase):
                 body = json.loads(res.read())
                 self.assertEqual(body["mode"], "normal")
                 self.assertIn("direction_config", body["modes"])
+                self.assertIn("manual_control", body["modes"])
 
                 conn.request("POST", "/v1/station-mode", json.dumps({"mode": "direction_config"}), {"Content-Type": "application/json"})
                 res = conn.getresponse(); self.assertEqual(res.status, 200)
@@ -373,6 +374,13 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(body["mode"], "direction_config")
                 self.assertEqual(service.mode, "direction_config")
                 self.assertEqual(service.latest()["mode"], "direction_config")
+
+                conn.request("POST", "/v1/station-mode", json.dumps({"mode": "manual_control"}), {"Content-Type": "application/json"})
+                res = conn.getresponse(); self.assertEqual(res.status, 200)
+                body = json.loads(res.read())
+                self.assertEqual(body["mode"], "manual_control")
+                self.assertEqual(service.mode, "manual_control")
+                self.assertEqual(service.latest()["mode"], "manual_control")
 
                 conn.request("POST", "/v1/station-mode", json.dumps({"mode": "invalid_mode"}), {"Content-Type": "application/json"})
                 res = conn.getresponse(); self.assertEqual(res.status, 400)

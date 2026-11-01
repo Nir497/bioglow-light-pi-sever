@@ -49,7 +49,7 @@ class BusyError(Exception):
 
 
 class Service:
-    SUPPORTED_MODES = ("normal", "direction_config")
+    SUPPORTED_MODES = ("normal", "direction_config", "manual_control")
 
     def __init__(self, root: Path, config: Path, runner=None, recorder: str = DEFAULT_RECORDER,
                  animal_analysis: bool = True):
