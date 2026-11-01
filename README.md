@@ -13,6 +13,31 @@ Open `http://<Pi LAN address>:8000/`. Use `--no-animal-analysis` if the optional
 model is not installed. Automatic microphone capture starts stopped after restart.
 Lux sampling continues every second and presence logging every ten seconds without a dashboard client.
 
+## Auto-start on boot (systemd service)
+
+To automatically launch the server whenever the Raspberry Pi boots:
+
+```bash
+sudo ./scripts/install_service.sh
+```
+
+This installs `/etc/systemd/system/bioglow.service`, verifies required hardware permissions (`dialout`, `i2c`, `gpio`, `audio`), enables the service at boot, and starts it immediately.
+
+Options:
+- `--port <port>`: Set a custom HTTP port (defaults to 8000).
+- `--no-animal-analysis`: Omit the local Perch animal identification model.
+- `--user <username>`: Run under a specific user account (defaults to current user).
+- `--dry-run`: Preview the generated unit file without modifying system files.
+
+Service management commands:
+```bash
+sudo systemctl status bioglow.service
+sudo journalctl -u bioglow.service -f
+sudo systemctl restart bioglow.service
+sudo systemctl stop bioglow.service
+sudo ./scripts/uninstall_service.sh
+```
+
 ## Project map
 
 - `birdcast_service.py`: HTTP service; `web/`: dashboard with no build step.

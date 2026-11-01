@@ -25,8 +25,13 @@ The root-owned token directory has mode 0700; the token file must have mode 0600
 The service skips startup until that file exists, restarts after failures, and
 logs to the system journal. Package updates use apt rather than self-updates.
 
-The tunnel service does not start the Python dashboard. The existing dashboard
-runs in a login session; after a reboot, start it through its existing workflow.
+The tunnel service forwards traffic to port 8000. To have the Python dashboard
+server start automatically on boot alongside Cloudflare Tunnel, run:
+
+```bash
+sudo ./scripts/install_service.sh
+```
+
 Run only one dashboard server. Automatic microphone scheduling starts stopped
 after a dashboard restart, as before.
 
