@@ -14,16 +14,57 @@
   <aside class="sidebar" id="sidebar">
     <button class="sidebar-close" id="close-menu" aria-label="Close navigation">X</button>
     <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">✳</span><span>BioGlow<small>FIELD STATION</small></span></a>
-    <div class="nav-heading">WORKSPACE</div>
-    <nav aria-label="Main navigation">
-      <a href="#overview" data-view="overview"><span aria-hidden="true">◫</span> Overview</a>
-      <a href="#radar" data-view="radar"><span aria-hidden="true">◎</span> Radar</a>
-      <a href="#light" data-view="light"><span aria-hidden="true">☼</span> Lux sensor</a>
-      <a href="#lighting" data-view="lighting"><span aria-hidden="true">◉</span> WLED light</a>
-      <a href="#wled-log" data-view="wled-log"><span aria-hidden="true">≡</span> WLED log</a>
-      <a href="/distance-test" data-view="distance-test"><span aria-hidden="true">↔</span> Distance test</a>
-      <a href="#birdcast" data-view="birdcast"><span aria-hidden="true">↗</span> BirdCast</a>
-      <a href="#recordings" data-view="recordings"><span aria-hidden="true">≋</span> Recordings</a>
+    <nav aria-label="Main navigation" class="nav-sections">
+      <!-- Input Section -->
+      <div class="nav-section" data-section="input">
+        <button class="nav-section-header" type="button" aria-expanded="true">
+          <span class="nav-section-label"><span class="nav-section-icon" aria-hidden="true">↓</span>Input</span>
+          <span class="nav-section-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="nav-subitems">
+          <a href="#light" data-view="light"><span aria-hidden="true">☼</span> Lux sensor</a>
+          <a href="#radar" data-view="radar"><span aria-hidden="true">◎</span> Radar</a>
+          <a href="#recordings" data-view="recordings"><span aria-hidden="true">≋</span> Recordings</a>
+          <a href="#birdcast" data-view="birdcast"><span aria-hidden="true">↗</span> BirdCast</a>
+        </div>
+      </div>
+
+      <!-- Output Section -->
+      <div class="nav-section" data-section="output">
+        <button class="nav-section-header" type="button" aria-expanded="true">
+          <span class="nav-section-label"><span class="nav-section-icon" aria-hidden="true">↑</span>Output</span>
+          <span class="nav-section-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="nav-subitems">
+          <a href="#lighting" data-view="lighting"><span aria-hidden="true">◉</span> WLED light</a>
+          <a href="/distance-test" data-view="distance-test"><span aria-hidden="true">↔</span> Distance test</a>
+        </div>
+      </div>
+
+      <!-- Configuration Section -->
+      <div class="nav-section" data-section="configuration">
+        <button class="nav-section-header" type="button" aria-expanded="true">
+          <span class="nav-section-label"><span class="nav-section-icon" aria-hidden="true">⚙</span>Configuration</span>
+          <span class="nav-section-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="nav-subitems">
+          <a href="#overview" data-view="overview"><span aria-hidden="true">◫</span> Station overview</a>
+          <a href="#config-schedule" data-view="config-schedule"><span aria-hidden="true">⏱</span> Recording schedule</a>
+          <a href="#config-lighting" data-view="config-lighting"><span aria-hidden="true">⚡</span> WLED hardware</a>
+        </div>
+      </div>
+
+      <!-- Logs Section -->
+      <div class="nav-section" data-section="logs">
+        <button class="nav-section-header" type="button" aria-expanded="true">
+          <span class="nav-section-label"><span class="nav-section-icon" aria-hidden="true">≡</span>Logs</span>
+          <span class="nav-section-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="nav-subitems">
+          <a href="#wled-log" data-view="wled-log"><span aria-hidden="true">≡</span> WLED log</a>
+          <a href="#logs-sensors" data-view="logs-sensors"><span aria-hidden="true">📊</span> Sensor histories</a>
+        </div>
+      </div>
     </nav>
     <div class="sidebar-footer"><span class="network-dot" aria-hidden="true"></span> Local network<small>One station. A shared view.</small></div>
   </aside>
