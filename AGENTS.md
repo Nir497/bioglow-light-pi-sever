@@ -22,6 +22,12 @@ Recordings persist until explicitly deleted. Dashboard deletion requires confirm
 
 Animal predictions are unverified candidates. Show common names alongside scientific names where available, retaining scientific names as a fallback. Raw model scores have no fixed minimum or maximum, may be negative, and are not percentages or animal counts. New five-second recordings use one model window; retained ten-second recordings use two.
 
+## Runtime Station Modes & Control Regimes
+
+The server enforces explicit runtime station modes (`normal`, `direction_config`, and `manual_control`), defaulting to `normal` on startup. Modes isolate distinct control regimes, diagnostics, and calibration routines, preventing them from interfering with each other. By operating within an explicit mode, the server has permission to ignore certain sensor inputs or suppress automated behaviors, making outputs predictable and easy to reason about during debugging and configuration.
+
+Station mode is managed through `GET` and `POST /v1/station-mode`, broadcast via `/v1/latest`, and selectable in the dashboard sidebar as well as through dedicated page toggles (such as the Directionality and WLED lighting switches). When a mode is not active, controls belonging to that regime (e.g. manual WLED lighting sliders and presets when not in `manual_control` mode) must be locked or greyed out in the interface to prevent inadvertent commands from overriding or competing with active station behavior.
+
 ## Development & Test Commands
 
 Run commands from `/home/nir/bioglow-birdcast`:
