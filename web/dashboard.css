@@ -115,6 +115,92 @@ button:focus-visible,a:focus-visible,select:focus-visible {
 .nav-top-link[aria-current="page"] span {
     opacity:1;
 }
+.station-mode-widget {
+    margin: 2px 0 10px;
+    padding: 8px 10px;
+    background: #e2e8dd;
+    border-radius: 8px;
+    border: 1px solid #d4ded0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.station-mode-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #64756a;
+}
+.station-mode-select {
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid #c9d6c5;
+    border-radius: 6px;
+    background: white;
+    font-size: 13px;
+    font-weight: 550;
+    color: #1f3024;
+    cursor: pointer;
+    outline: none;
+    transition: border-color .15s ease;
+}
+.station-mode-select:focus {
+    border-color: var(--green, #287c54);
+}
+.directionality-toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+.switch-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+    font-size: 14px;
+}
+.switch-control input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.switch-slider {
+    position: relative;
+    display: inline-block;
+    width: 48px;
+    height: 26px;
+    background-color: #cbd5cb;
+    border-radius: 26px;
+    transition: background-color .2s ease;
+}
+.switch-slider::before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform .2s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+.switch-control input:checked + .switch-slider {
+    background-color: var(--green, #287c54);
+}
+.switch-control input:checked + .switch-slider::before {
+    transform: translateX(22px);
+}
+.switch-control input:focus-visible + .switch-slider {
+    outline: 2px solid var(--green, #287c54);
+    outline-offset: 2px;
+}
 .nav-section {
     display:flex;
     flex-direction:column;

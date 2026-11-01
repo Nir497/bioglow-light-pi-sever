@@ -1,10 +1,10 @@
 'use strict';
-const names = {'wled-log':'WLED log','distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',birdcast:'BirdCast',recordings:'Recordings','config-schedule':'Recording schedule','config-lighting':'WLED hardware','logs-sensors':'Sensor histories'};
-const sectionMap = {light:'Input',radar:'Input',recordings:'Input',birdcast:'Input',lighting:'Output','distance-test':'Output','config-schedule':'Configuration','config-lighting':'Configuration','wled-log':'Logs','logs-sensors':'Logs'};
-const itemNames = {light:'Lux sensor',radar:'Radar',recordings:'Recordings',birdcast:'BirdCast',lighting:'WLED light','distance-test':'Distance test',overview:'Station overview','config-schedule':'Recording schedule','config-lighting':'WLED hardware','wled-log':'WLED log','logs-sensors':'Sensor histories'};
-const titles = {'wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library','config-schedule':'Audio collection schedule','config-lighting':'WLED hardware settings','logs-sensors':'Sensor history logs'};
-const descriptions = {'wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.','config-schedule':'Automate microphone sampling every two minutes across all clients.','config-lighting':'Hardware parameters, serial connection details, and output bounds for WLED.','logs-sensors':'Historical readings collected from presence, light, and migration sensors.'};
-let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '';
+const names = {'wled-log':'WLED log','distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',birdcast:'BirdCast',recordings:'Recordings','config-directionality':'Directionality','config-schedule':'Recording schedule','config-lighting':'WLED hardware','logs-sensors':'Sensor histories'};
+const sectionMap = {light:'Input',radar:'Input',recordings:'Input',birdcast:'Input',lighting:'Output','distance-test':'Output','config-directionality':'Configuration','config-schedule':'Configuration','config-lighting':'Configuration','wled-log':'Logs','logs-sensors':'Logs'};
+const itemNames = {light:'Lux sensor',radar:'Radar',recordings:'Recordings',birdcast:'BirdCast',lighting:'WLED light','distance-test':'Distance test',overview:'Station overview','config-directionality':'Directionality','config-schedule':'Recording schedule','config-lighting':'WLED hardware','wled-log':'WLED log','logs-sensors':'Sensor histories'};
+const titles = {'wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library','config-directionality':'Directionality configuration','config-schedule':'Audio collection schedule','config-lighting':'WLED hardware settings','logs-sensors':'Sensor history logs'};
+const descriptions = {'wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.','config-directionality':'Configure sensor directionality and orientation.','config-schedule':'Automate microphone sampling every two minutes across all clients.','config-lighting':'Hardware parameters, serial connection details, and output bounds for WLED.','logs-sensors':'Historical readings collected from presence, light, and migration sensors.'};
+let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '', stationMode = 'normal';
 let histories = {};
 let lighting = {};
 const historyRanges = {radar:'1h',light:'1h',birdcast:'1d',microphone:'1d'};
@@ -739,6 +739,36 @@ function scheduleWledLog() {
   };
   poll();
 }
+function syncStationModeUI() {
+  const select = document.querySelector('#station-mode');
+  if (select && select.value !== stationMode) select.value = stationMode;
+  const toggle = document.querySelector('#direction-config-toggle');
+  if (toggle) {
+    toggle.checked = stationMode === 'direction_config';
+    const label = toggle.closest?.('.switch-control')?.querySelector?.('.switch-label');
+    if (label) label.textContent = stationMode === 'direction_config' ? 'Active' : 'Inactive';
+  }
+}
+async function setStationMode(mode) {
+  const previous = stationMode;
+  stationMode = mode;
+  syncStationModeUI();
+  try {
+    const res = await api('/v1/station-mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode})
+    });
+    stationMode = res.mode || mode;
+    notice(`Station mode changed to ${stationMode === 'direction_config' ? 'Direction config' : 'Normal'}.`);
+  } catch (err) {
+    stationMode = previous;
+    notice(`Could not change station mode: ${err.message}`, true);
+  } finally {
+    syncStationModeUI();
+    if (view() === 'config-directionality') render();
+  }
+}
 function render() {
   const current = view();
   const section = sectionMap[current];
@@ -764,6 +794,31 @@ function render() {
   else if (current === 'wled-log') content.innerHTML = '<article class="card"><div class="wled-log-header"><h2>WLED USB Traffic</h2><p data-wled-message role="status">Loading USB traffic…</p></div><div class="wled-table-container"><table class="wled-log-table"><thead><tr><th class="wled-th-time">Time</th><th class="wled-th-dir">Direction</th><th class="wled-th-outcome">Outcome</th><th class="wled-th-message">Message (click row to expand)</th></tr></thead><tbody data-wled-events></tbody></table></div></article>';
   else if (current === 'lighting') content.innerHTML = `<article class="card">${lightingControls()}</article>`;
   else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div><div data-recording-library>${library()}</div>`;
+  else if (current === 'config-directionality') {
+    content.innerHTML = `<article class="card directionality-mode-card">` +
+      `<div class="directionality-toggle-row">` +
+        `<div class="directionality-toggle-info">` +
+          `<h2>Direction Config Mode</h2>` +
+          `<p class="timestamp">Toggle Direction Config mode on or off. When active, the station operates in direction configuration mode.</p>` +
+        `</div>` +
+        `<label class="switch-control" for="direction-config-toggle">` +
+          `<input type="checkbox" id="direction-config-toggle" ${stationMode === 'direction_config' ? 'checked' : ''}>` +
+          `<span class="switch-slider" aria-hidden="true"></span>` +
+          `<span class="switch-label">${stationMode === 'direction_config' ? 'Active' : 'Inactive'}</span>` +
+        `</label>` +
+      `</div>` +
+    `</article>` +
+    `<article class="card">` +
+      `<div class="card-header">` +
+        `<div>` +
+          `<h2>Directional Calibration & Settings</h2>` +
+          `<p class="timestamp">Configure radar target direction, orientation offsets, and directional filters.</p>` +
+        `</div>` +
+        `<span class="badge ${stationMode === 'direction_config' ? 'badge-recv' : 'empty'}">${stationMode === 'direction_config' ? 'Mode: Direction Config' : 'Mode: Normal'}</span>` +
+      `</div>` +
+      `<p style="color:var(--muted); margin-top:12px;">Direction configuration tools ready for setup.</p>` +
+    `</article>`;
+  }
   else if (current === 'config-schedule') content.innerHTML = `<article class="card audio-summary"><div class="audio-copy"><h2>Automatic microphone collection</h2><p>Audio recording runs on a shared server-side schedule. When enabled, the station captures 5 seconds of audio every 120 seconds.</p>${resultError('microphone')}</div><div class="audio-tools"><div data-recording-schedule>${scheduleControls()}</div><span class="badge empty" data-recording-count>${recordings.length} saved</span></div></article><article class="card"><h2>Recording schedule settings</h2>${facts([['Interval','120 seconds (2 minutes)'],['Sample duration','5 seconds'],['Audio format','WAV 48 kHz mono 16-bit PCM'],['State',collection.enabled ? 'Active (running)' : 'Stopped (manual captures only)'],['Next capture',collection.next_recording_at ? time(collection.next_recording_at) : 'None scheduled']])}</article>`;
   else if (current === 'config-lighting') content.innerHTML = `<article class="card"><h2>WLED USB controller configuration</h2>${wledFacts()}</article><article class="card"><h2>Lighting quick controls</h2>${lightingControls()}</article>`;
   else if (current === 'logs-sensors') content.innerHTML = `<article class="card"><h2>Presence & movement history</h2>${historyGraph('radar')}</article><article class="card"><h2>Luminance history</h2>${historyGraph('light')}</article><article class="card"><h2>BirdCast migration history</h2>${historyGraph('birdcast')}</article><article class="card"><h2>Animal identification history</h2>${historyGraph('microphone')}</article>`;
@@ -776,11 +831,23 @@ function render() {
   scheduleHistoryPoll();
   scheduleCollectionPoll();
   scheduleWledLog();
+  syncStationModeUI();
 }
 async function loadCache() {
   const requestedAt = performance.now();
-  try { const data = await api('/v1/latest'); sources = data.sources; lighting = data.lighting || {}; collection = data.collection || collection; Object.keys(historyKeys).forEach(source=>historyKeys[source]=''); radarLoadedAt = requestedAt; scheduleRadarExpiry(); regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name)); cacheError = ''; }
-  catch (error) { cacheError = error.message; throw error; }
+  try {
+    const data = await api('/v1/latest');
+    sources = data.sources;
+    lighting = data.lighting || {};
+    collection = data.collection || collection;
+    if (data.mode) stationMode = data.mode;
+    syncStationModeUI();
+    Object.keys(historyKeys).forEach(source=>historyKeys[source]='');
+    radarLoadedAt = requestedAt;
+    scheduleRadarExpiry();
+    regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name));
+    cacheError = '';
+  } catch (error) { cacheError = error.message; throw error; }
 }
 async function loadLibrary() {
   try { const data = await api('/v1/recordings'); recordings = data.recordings; libraryError = ''; loadAnimalNames(recordings.flatMap(item=>(item.analysis?.candidates || []).map(candidate=>candidate.scientific_name))); }
@@ -871,6 +938,10 @@ content.addEventListener('click',event=>{
   const button = event.target.closest('[data-action]'); if (button) run(button.dataset.action);
 });
 content.addEventListener('change',event=>{
+  if (event.target.id === 'direction-config-toggle') {
+    setStationMode(event.target.checked ? 'direction_config' : 'normal');
+    return;
+  }
   if(event.target.id === 'region') { region = event.target.value; render(); }
   const source = event.target.dataset?.historyMetric;
   if (source==='microphone') { selectedAnimal = event.target.value; updateHistoryPlot(source); }
@@ -900,6 +971,9 @@ document.querySelectorAll('.nav-section-header').forEach(header => {
     header.setAttribute('aria-expanded', String(!isExpanded));
     section.classList.toggle('collapsed', isExpanded);
   });
+});
+document.querySelector('#station-mode')?.addEventListener('change', event => {
+  setStationMode(event.target.value);
 });
 mobileNavigation.addEventListener('change',()=>setMenu(false));
 setMenu(false);

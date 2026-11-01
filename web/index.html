@@ -16,6 +16,13 @@
     <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">✳</span><span>BioGlow<small>FIELD STATION</small></span></a>
     <nav aria-label="Main navigation" class="nav-sections">
       <a href="#overview" data-view="overview" class="nav-top-link"><span aria-hidden="true">◫</span> Station overview</a>
+      <div class="station-mode-widget">
+        <label for="station-mode" class="station-mode-label">Mode</label>
+        <select id="station-mode" class="station-mode-select" aria-label="Station runtime mode">
+          <option value="normal">Normal</option>
+          <option value="direction_config">Direction config</option>
+        </select>
+      </div>
 
       <!-- Input Section -->
       <div class="nav-section" data-section="input">
@@ -50,6 +57,7 @@
           <span class="nav-section-arrow" aria-hidden="true">▾</span>
         </button>
         <div class="nav-subitems">
+          <a href="#config-directionality" data-view="config-directionality"><span aria-hidden="true">🧭</span> Directionality</a>
           <a href="#config-schedule" data-view="config-schedule"><span aria-hidden="true">⏱</span> Recording schedule</a>
           <a href="#config-lighting" data-view="config-lighting"><span aria-hidden="true">⚡</span> WLED hardware</a>
         </div>

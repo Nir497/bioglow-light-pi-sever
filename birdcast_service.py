@@ -49,6 +49,8 @@ class BusyError(Exception):
 
 
 class Service:
+    SUPPORTED_MODES = ("normal", "direction_config")
+
     def __init__(self, root: Path, config: Path, runner=None, recorder: str = DEFAULT_RECORDER,
                  animal_analysis: bool = True):
         self.root = root.resolve()
@@ -59,6 +61,8 @@ class Service:
         self.reading_history = ReadingHistory(self.root)
         self.animal_names = AnimalNames(self.root)
         self.config = config
+        self.mode = "normal"
+        self._mode_lock = threading.Lock()
         self.runner = runner or self._run_scraper
         self._lock = threading.Lock()
         self.recorder = recorder
@@ -98,6 +102,13 @@ class Service:
                 # A cache failure must not turn a completed sensor read or capture into a failure.
                 logging.getLogger(__name__).warning("Latest results remain in memory; cache write failed: %s", exc)
 
+    def set_station_mode(self, mode: str) -> str:
+        if mode not in self.SUPPORTED_MODES:
+            raise ValueError(f"Unknown mode: {mode}. Choose from: {', '.join(self.SUPPORTED_MODES)}.")
+        with self._mode_lock:
+            self.mode = mode
+            return self.mode
+
     def latest(self) -> dict[str, Any]:
         with self._latest_lock:
             result = copy.deepcopy(self._latest)
@@ -111,6 +122,7 @@ class Service:
             result["radar"] = {"http_status": status, "result": radar}
         return {"status": "ok", "sources": result, "lighting": lighting,
                 "collection": self.collection_schedule.status(),
+                "mode": self.mode, "modes": list(self.SUPPORTED_MODES),
                 "regions": [{"code": f"US-{code}", "name": name}
                             for code, name in birdcast_scraper.STATE_NAMES.items()]}
 
@@ -357,6 +369,16 @@ def make_handler(service: Service):
                 except ValueError:
                     self._send(400, error_payload("malformed_request", "Use {\"enabled\": true} or {\"enabled\": false}."))
                 return
+            if self.path in ("/v1/station-mode", "/v1/mode"):
+                try:
+                    body = self._body()
+                    if not isinstance(body, dict) or set(body) != {"mode"} or not isinstance(body["mode"], str):
+                        raise ValueError(f"Expected JSON object with 'mode'. Choose from: {', '.join(service.SUPPORTED_MODES)}.")
+                    mode = service.set_station_mode(body["mode"])
+                    self._send(200, {"status": "ok", "mode": mode, "modes": list(service.SUPPORTED_MODES)})
+                except ValueError as exc:
+                    self._send(400, error_payload("malformed_request", str(exc)))
+                return
             if self.path.startswith("/v1/recordings/") and self.path.endswith("/analysis"):
                 try:
                     if self._body(optional=True):
@@ -438,6 +460,9 @@ def make_handler(service: Service):
                     self._send(400, error_payload("invalid_cursor", "Use a nonnegative integer after cursor."))
                     return
                 self._send(200, service.wled.log.snapshot(int(values[0])))
+                return
+            if path in ("/v1/station-mode", "/v1/mode"):
+                self._send(200, {"status": "ok", "mode": service.mode, "modes": list(service.SUPPORTED_MODES)})
                 return
             if path == "/v1/latest":
                 self._send(200, service.latest())

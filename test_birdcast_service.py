@@ -352,5 +352,32 @@ class ServiceTests(unittest.TestCase):
             finally:
                 server.shutdown(); thread.join(); server.server_close()
 
+    def test_station_mode_defaults_to_normal_and_can_be_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = Service(Path(directory), Path(directory) / "config.json")
+            self.assertEqual(service.mode, "normal")
+            self.assertEqual(service.latest()["mode"], "normal")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(service))
+            thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                conn.request("GET", "/v1/station-mode")
+                res = conn.getresponse(); self.assertEqual(res.status, 200)
+                body = json.loads(res.read())
+                self.assertEqual(body["mode"], "normal")
+                self.assertIn("direction_config", body["modes"])
+
+                conn.request("POST", "/v1/station-mode", json.dumps({"mode": "direction_config"}), {"Content-Type": "application/json"})
+                res = conn.getresponse(); self.assertEqual(res.status, 200)
+                body = json.loads(res.read())
+                self.assertEqual(body["mode"], "direction_config")
+                self.assertEqual(service.mode, "direction_config")
+                self.assertEqual(service.latest()["mode"], "direction_config")
+
+                conn.request("POST", "/v1/station-mode", json.dumps({"mode": "invalid_mode"}), {"Content-Type": "application/json"})
+                res = conn.getresponse(); self.assertEqual(res.status, 400)
+            finally:
+                server.shutdown(); thread.join(); server.server_close()
+
 if __name__ == "__main__":
     unittest.main()
