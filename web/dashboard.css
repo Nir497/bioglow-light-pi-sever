@@ -84,6 +84,37 @@ button:focus-visible,a:focus-visible,select:focus-visible {
     gap:14px;
     margin:28px 0 20px;
 }
+.nav-top-link {
+    display:flex;
+    align-items:center;
+    gap:11px;
+    padding:10px 14px;
+    text-decoration:none;
+    color:#415246;
+    border-radius:8px;
+    font-size:14px;
+    font-weight:600;
+    transition:background .15s ease, color .15s ease;
+    margin-bottom:2px;
+}
+.nav-top-link span {
+    font-size:18px;
+    width:20px;
+    text-align:center;
+    opacity:0.85;
+}
+.nav-top-link:hover {
+    background:#e2e9de;
+    color:#172e21;
+}
+.nav-top-link[aria-current="page"] {
+    background:var(--green);
+    color:white;
+    box-shadow:0 3px 10px #285b4618;
+}
+.nav-top-link[aria-current="page"] span {
+    opacity:1;
+}
 .nav-section {
     display:flex;
     flex-direction:column;

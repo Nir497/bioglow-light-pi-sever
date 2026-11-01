@@ -15,6 +15,8 @@
     <button class="sidebar-close" id="close-menu" aria-label="Close navigation">X</button>
     <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">✳</span><span>BioGlow<small>FIELD STATION</small></span></a>
     <nav aria-label="Main navigation" class="nav-sections">
+      <a href="#overview" data-view="overview" class="nav-top-link"><span aria-hidden="true">◫</span> Station overview</a>
+
       <!-- Input Section -->
       <div class="nav-section" data-section="input">
         <button class="nav-section-header" type="button" aria-expanded="true">
@@ -48,7 +50,6 @@
           <span class="nav-section-arrow" aria-hidden="true">▾</span>
         </button>
         <div class="nav-subitems">
-          <a href="#overview" data-view="overview"><span aria-hidden="true">◫</span> Station overview</a>
           <a href="#config-schedule" data-view="config-schedule"><span aria-hidden="true">⏱</span> Recording schedule</a>
           <a href="#config-lighting" data-view="config-lighting"><span aria-hidden="true">⚡</span> WLED hardware</a>
         </div>
@@ -69,7 +70,7 @@
     <div class="sidebar-footer"><span class="network-dot" aria-hidden="true"></span> Local network<small>One station. A shared view.</small></div>
   </aside>
   <div class="workspace">
-    <header class="topbar"><button class="menu-button" id="menu" aria-controls="sidebar" aria-expanded="false" aria-label="Toggle navigation">☰</button><span>BioGlow / <strong id="breadcrumb">Overview</strong></span><span class="station-label">SENSOR STATION <span aria-hidden="true">·</span> AUTO COLLECTION</span></header>
+    <header class="topbar"><button class="menu-button" id="menu" aria-controls="sidebar" aria-expanded="false" aria-label="Toggle navigation">☰</button><span>BioGlow / <strong id="breadcrumb">Station overview</strong></span><span class="station-label">SENSOR STATION <span aria-hidden="true">·</span> AUTO COLLECTION</span></header>
     <main id="main" tabindex="-1">
       <div class="page-heading"><div><div class="eyebrow">OBSERVE YOUR ENVIRONMENT</div><h1 id="page-title">Station overview</h1><p id="page-description">Your sensors, migration data, and sound — in one place.</p></div><button class="button secondary" id="refresh-cache">↻ Refresh view</button></div>
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>

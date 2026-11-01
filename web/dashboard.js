@@ -1,6 +1,6 @@
 'use strict';
 const names = {'wled-log':'WLED log','distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',birdcast:'BirdCast',recordings:'Recordings','config-schedule':'Recording schedule','config-lighting':'WLED hardware','logs-sensors':'Sensor histories'};
-const sectionMap = {light:'Input',radar:'Input',recordings:'Input',birdcast:'Input',lighting:'Output','distance-test':'Output',overview:'Configuration','config-schedule':'Configuration','config-lighting':'Configuration','wled-log':'Logs','logs-sensors':'Logs'};
+const sectionMap = {light:'Input',radar:'Input',recordings:'Input',birdcast:'Input',lighting:'Output','distance-test':'Output','config-schedule':'Configuration','config-lighting':'Configuration','wled-log':'Logs','logs-sensors':'Logs'};
 const itemNames = {light:'Lux sensor',radar:'Radar',recordings:'Recordings',birdcast:'BirdCast',lighting:'WLED light','distance-test':'Distance test',overview:'Station overview','config-schedule':'Recording schedule','config-lighting':'WLED hardware','wled-log':'WLED log','logs-sensors':'Sensor histories'};
 const titles = {'wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library','config-schedule':'Audio collection schedule','config-lighting':'WLED hardware settings','logs-sensors':'Sensor history logs'};
 const descriptions = {'wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.','config-schedule':'Automate microphone sampling every two minutes across all clients.','config-lighting':'Hardware parameters, serial connection details, and output bounds for WLED.','logs-sensors':'Historical readings collected from presence, light, and migration sensors.'};
@@ -733,9 +733,9 @@ function scheduleWledLog() {
 }
 function render() {
   const current = view();
-  const section = sectionMap[current] || 'Station';
+  const section = sectionMap[current];
   const label = itemNames[current] || names[current];
-  document.querySelector('#breadcrumb').textContent = `${section} > ${label}`;
+  document.querySelector('#breadcrumb').textContent = section ? `${section} > ${label}` : label;
   document.querySelector('#page-title').textContent = titles[current] || titles.overview;
   document.querySelector('#page-description').textContent = descriptions[current] || descriptions.overview;
   document.querySelectorAll('[data-view]').forEach(link => {
