@@ -45,9 +45,9 @@ window.fetch=async(path,options={})=>{
     const req=JSON.parse(options.body||'{}');
     body={status:'ok',mode:req.mode||'normal',modes:['normal','direction_config','manual_control']};
   }
-  else if(path==='/v1/direction/alignment'){
+  else if(path==='/v1/direction' || path==='/v1/direction/alignment'){
     const req=JSON.parse(options.body||'{}');
-    body={status:'ok',alignment:req.alignment||144};
+    body={status:'ok',alignment:req.alignment||144,beam_width:req.beam_width||1,offset:req.offset||0};
   }
   else if(path==='/v1/recordings')body={recordings:browserRecordings};
   else if(path==='/v1/recordings/'+recordingId && options.method==='DELETE'){browserRecordings=[];body={deleted:true};}
@@ -203,6 +203,18 @@ setTimeout(async()=>{
     check(document.querySelector('#alignment-lit-count').textContent.includes('2 / 144'),'Total lit count for n=72 should be 2');
     await pause(100);
     check(browserRequests.includes('/v1/direction/alignment'),'Alignment change did not POST to /v1/direction/alignment');
+    location.hash='#direction';await pause(100);
+    const dial = document.querySelector('#lamp-dial-svg');
+    check(dial,'Lamp dial SVG must be rendered on #direction page');
+    const outCard = document.querySelector('.direction-output-card');
+    check(outCard,'Direction output card missing');
+    check(!outCard.classList.contains('controls-disabled'),'Direction output card must be enabled when direction_config mode is active');
+    const angleOutput = document.querySelector('#direction-angle-value');
+    check(angleOutput,'Direction angle value missing');
+    const btn90 = document.querySelector('[data-preset-direction="90"]');
+    check(btn90,'90 degree direction preset missing');
+    btn90.click();await pause(100);
+    check(browserRequests.includes('/v1/direction'),'Clicking direction preset did not POST to /v1/direction');
     document.body.dataset.browserCheck='passed';
   }catch(error){document.body.dataset.browserCheck='failed: '+error.message;}
 },50);

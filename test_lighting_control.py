@@ -871,6 +871,39 @@ class LuxGatedAutoTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             light.set_direction_alignment(1, beam_width=3)  # Exceeds max 1 for spacing 1
 
+    def test_direction_offset_calculation(self):
+        transport = MagicMock()
+        commands = []
+        transport.send.side_effect = lambda cmd: commands.append(cmd) or {}
+        light = LightingControl(transport=transport, background=False)
+        self.addCleanup(light.stop)
+
+        # Spacing 48, default offset=0
+        status = light.set_direction_alignment(48)
+        self.assertEqual(status['direction_offset'], 0)
+        self.assertEqual(commands[-1]['seg'][0]['of'], 0)
+
+        # Spacing 48, offset=12
+        status = light.set_direction_alignment(48, offset=12)
+        self.assertEqual(status['direction_offset'], 12)
+        self.assertEqual(commands[-1]['seg'][0]['of'], 12)
+
+        # Spacing 48, beam_width=3, offset=12
+        status = light.set_direction_alignment(48, beam_width=3, offset=12)
+        self.assertEqual(status['beam_width'], 3)
+        self.assertEqual(status['direction_offset'], 12)
+        self.assertEqual(commands[-1]['seg'][0]['grp'], 3)
+        self.assertEqual(commands[-1]['seg'][0]['spc'], 45)
+        self.assertEqual(commands[-1]['seg'][0]['of'], 12)
+
+        # Offset bounds checks
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment(48, offset=-1)
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment(48, offset=48)
+        with self.assertRaises(ValueError):
+            light.set_direction_alignment(48, offset="twelve")
+
     def test_direction_config_mode_ignores_radar_and_lux(self):
         transport = MagicMock()
         commands = []

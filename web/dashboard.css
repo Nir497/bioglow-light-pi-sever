@@ -237,6 +237,58 @@ button:focus-visible,a:focus-visible,select:focus-visible {
     gap: 1.25rem;
     margin-top: 1rem;
 }
+.lamp-dial-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1.25rem 0;
+}
+.lamp-dial-svg {
+    max-width: 320px;
+    width: 100%;
+    height: auto;
+    touch-action: none;
+    user-select: none;
+    cursor: pointer;
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.08));
+}
+.lamp-dial-svg text {
+    font-family: inherit;
+}
+.dial-cardinal {
+    font-size: 11px;
+    fill: #4c6253;
+    font-weight: 700;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    letter-spacing: 0.5px;
+}
+.dial-handle {
+    cursor: grab;
+}
+.lamp-dial-svg:active .dial-handle {
+    cursor: grabbing;
+}
+.direction-presets-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 1rem;
+}
+.direction-stats-grid {
+    margin-top: 1.25rem;
+}
+@media (max-width: 650px) {
+    .direction-stats-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+@media (max-width: 480px) {
+    .direction-stats-grid {
+        grid-template-columns: 1fr;
+    }
+}
 .slider-field {
     display: grid;
     gap: 0.5rem;

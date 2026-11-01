@@ -431,14 +431,42 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(body["beam_width"], 5)
                 self.assertEqual(service.direction_beam_width, 5)
 
-                # Latest reflects alignment and beam width
+                # POST offset on /v1/direction
+                conn.request("POST", "/v1/direction", json.dumps({"offset": 3}), {"Content-Type": "application/json"})
+                res = conn.getresponse(); self.assertEqual(res.status, 200)
+                body = json.loads(res.read())
+                self.assertEqual(body["offset"], 3)
+                self.assertEqual(service.direction_offset, 3)
+                self.assertEqual(body["angle_degrees"], 108.0)
+
+                # POST angle on /v1/direction
+                conn.request("POST", "/v1/direction", json.dumps({"angle": 180}), {"Content-Type": "application/json"})
+                res = conn.getresponse(); self.assertEqual(res.status, 200)
+                body = json.loads(res.read())
+                self.assertEqual(body["offset"], 5)
+                self.assertEqual(service.direction_offset, 5)
+
+                # GET /v1/direction returns state
+                conn.request("GET", "/v1/direction")
+                res = conn.getresponse(); self.assertEqual(res.status, 200)
+                body = json.loads(res.read())
+                self.assertEqual(body["offset"], 5)
+                self.assertEqual(body["angle_degrees"], 180.0)
+
+                # Latest reflects alignment, beam width, and offset
                 self.assertEqual(service.latest()["directionality"]["alignment"], 10)
                 self.assertEqual(service.latest()["directionality"]["beam_width"], 5)
+                self.assertEqual(service.latest()["directionality"]["offset"], 5)
                 self.assertEqual(service.latest()["directionality"]["max_beam_width"], 11)
 
                 # Bounds checks for alignment
                 for invalid in (0, 145, "invalid"):
                     conn.request("POST", "/v1/direction/alignment", json.dumps({"alignment": invalid}), {"Content-Type": "application/json"})
+                    res = conn.getresponse(); self.assertEqual(res.status, 400)
+
+                # Bounds checks for offset
+                for invalid_off in (-1, 10, "five"):
+                    conn.request("POST", "/v1/direction", json.dumps({"offset": invalid_off}), {"Content-Type": "application/json"})
                     res = conn.getresponse(); self.assertEqual(res.status, 400)
 
                 # Bounds checks for beam_width (even number, zero, negative, exceeding max)

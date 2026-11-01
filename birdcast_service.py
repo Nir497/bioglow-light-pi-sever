@@ -65,6 +65,7 @@ class Service:
         self._mode_lock = threading.Lock()
         self.direction_alignment = 144
         self.direction_beam_width = 1
+        self.direction_offset = 0
         self.runner = runner or self._run_scraper
         self._lock = threading.Lock()
         self.recorder = recorder
@@ -112,7 +113,7 @@ class Service:
             self.mode = mode
             if mode == "direction_config":
                 try:
-                    self.lighting.set_direction_alignment(self.direction_alignment, beam_width=self.direction_beam_width)
+                    self.lighting.set_direction_alignment(self.direction_alignment, beam_width=self.direction_beam_width, offset=self.direction_offset)
                 except Exception as exc:
                     logging.getLogger(__name__).warning("Could not set direction alignment: %s", exc)
             elif previous_mode == "direction_config" and mode == "normal":
@@ -122,7 +123,7 @@ class Service:
                     logging.getLogger(__name__).warning("Could not restore auto lighting: %s", exc)
             return self.mode
 
-    def set_direction_alignment(self, spacing: int, beam_width: int = None) -> dict[str, Any]:
+    def set_direction_alignment(self, spacing: int, beam_width: int = None, offset: int = None) -> dict[str, Any]:
         if not (type(spacing) is int and 1 <= spacing <= 144):
             raise ValueError("alignment must be an integer from 1 to 144")
         max_w = min(143, 2 * (spacing // 2) + 1)
@@ -130,9 +131,14 @@ class Service:
             beam_width = min(self.direction_beam_width, max_w)
         elif not (type(beam_width) is int and 1 <= beam_width <= max_w and beam_width % 2 == 1):
             raise ValueError(f"beam_width must be an odd integer from 1 to {max_w}")
+        if offset is None:
+            offset = self.direction_offset % spacing
+        elif not (type(offset) is int and 0 <= offset < spacing):
+            raise ValueError(f"offset must be an integer from 0 to {spacing - 1}")
         self.direction_alignment = spacing
         self.direction_beam_width = beam_width
-        return self.lighting.set_direction_alignment(spacing, beam_width=beam_width)
+        self.direction_offset = offset
+        return self.lighting.set_direction_alignment(spacing, beam_width=beam_width, offset=offset)
 
     def latest(self) -> dict[str, Any]:
         with self._latest_lock:
@@ -151,7 +157,9 @@ class Service:
                 "directionality": {
                     "alignment": self.direction_alignment,
                     "beam_width": self.direction_beam_width,
+                    "offset": self.direction_offset,
                     "max_beam_width": min(143, 2 * (self.direction_alignment // 2) + 1),
+                    "angle_degrees": round(self.direction_offset / self.direction_alignment * 360, 1),
                 },
                 "regions": [{"code": f"US-{code}", "name": name}
                             for code, name in birdcast_scraper.STATE_NAMES.items()]}
@@ -375,13 +383,13 @@ def make_handler(service: Service):
             return body
 
         def do_POST(self):
-            if self.path in ("/v1/direction/alignment", "/v1/directionality/alignment"):
+            if self.path in ("/v1/direction", "/v1/direction/alignment", "/v1/directionality/alignment"):
                 try:
                     body = self._body()
                     if not isinstance(body, dict):
                         raise ValueError("Request body must be a JSON object.")
-                    if "alignment" not in body and "beam_width" not in body:
-                        raise ValueError("Request body must include 'alignment' or 'beam_width'.")
+                    if "alignment" not in body and "beam_width" not in body and "offset" not in body and "angle" not in body and "angle_degrees" not in body:
+                        raise ValueError("Request body must include 'alignment', 'beam_width', 'offset', or 'angle'.")
                     spacing = body.get("alignment", service.direction_alignment)
                     if not (isinstance(spacing, int) and 1 <= spacing <= 144):
                         raise ValueError("Alignment must be an integer between 1 and 144.")
@@ -392,15 +400,28 @@ def make_handler(service: Service):
                             raise ValueError(f"beam_width must be an odd integer between 1 and {max_w}.")
                     else:
                         bw = min(service.direction_beam_width, max_w)
+                    offset = body.get("offset")
+                    if offset is None:
+                        angle = body.get("angle") if "angle" in body else body.get("angle_degrees")
+                        if angle is not None:
+                            if not isinstance(angle, (int, float)):
+                                raise ValueError("angle must be a number.")
+                            offset = round(((float(angle) % 360) / 360) * spacing) % spacing
+                        else:
+                            offset = service.direction_offset % spacing
+                    elif not (isinstance(offset, int) and 0 <= offset < spacing):
+                        raise ValueError(f"offset must be an integer between 0 and {spacing - 1}.")
                     if service.mode != "direction_config":
-                        self._send(409, error_payload("invalid_mode", "Direction config mode must be active to adjust direction alignment."))
+                        self._send(409, error_payload("invalid_mode", "Direction config mode must be active to adjust direction parameters."))
                         return
-                    lighting = service.set_direction_alignment(spacing, beam_width=bw)
+                    lighting = service.set_direction_alignment(spacing, beam_width=bw, offset=offset)
                     self._send(200, {
                         "status": "ok",
                         "alignment": service.direction_alignment,
                         "beam_width": service.direction_beam_width,
+                        "offset": service.direction_offset,
                         "max_beam_width": max_w,
+                        "angle_degrees": round(service.direction_offset / service.direction_alignment * 360, 1),
                         "lighting": lighting
                     })
                 except ValueError as exc:
@@ -409,9 +430,9 @@ def make_handler(service: Service):
             if self.path == "/v1/lighting":
                 try:
                     body = self._body()
-                    if not body or set(body) - {"mode", "brightness", "color", "alignment", "beam_width"} or any(value is None for value in body.values()):
-                        raise ValueError('Provide mode (on/off/auto/distance_test/direction_config), brightness (1–255), color (#RRGGBB), alignment (1–144), or beam_width.')
-                    if "alignment" in body or "beam_width" in body:
+                    if not body or set(body) - {"mode", "brightness", "color", "alignment", "beam_width", "offset", "angle", "angle_degrees"} or any(value is None for value in body.values()):
+                        raise ValueError('Provide mode (on/off/auto/distance_test/direction_config), brightness (1–255), color (#RRGGBB), alignment (1–144), beam_width, or offset.')
+                    if "alignment" in body or "beam_width" in body or "offset" in body or "angle" in body or "angle_degrees" in body:
                         spacing = body.get("alignment", service.direction_alignment)
                         if not (isinstance(spacing, int) and 1 <= spacing <= 144):
                             raise ValueError("alignment must be an integer from 1 to 144")
@@ -422,10 +443,21 @@ def make_handler(service: Service):
                                 raise ValueError(f"beam_width must be an odd integer from 1 to {max_w}")
                         else:
                             bw = min(service.direction_beam_width, max_w)
+                        offset = body.get("offset")
+                        if offset is None:
+                            angle = body.get("angle") if "angle" in body else body.get("angle_degrees")
+                            if angle is not None:
+                                if not isinstance(angle, (int, float)):
+                                    raise ValueError("angle must be a number.")
+                                offset = round(((float(angle) % 360) / 360) * spacing) % spacing
+                            else:
+                                offset = service.direction_offset % spacing
+                        elif not (isinstance(offset, int) and 0 <= offset < spacing):
+                            raise ValueError(f"offset must be an integer between 0 and {spacing - 1}.")
                         if service.mode != "direction_config":
-                            self._send(409, error_payload("invalid_mode", "Direction config mode must be active to adjust direction alignment."))
+                            self._send(409, error_payload("invalid_mode", "Direction config mode must be active to adjust direction parameters."))
                             return
-                        lighting = service.set_direction_alignment(spacing, beam_width=bw)
+                        lighting = service.set_direction_alignment(spacing, beam_width=bw, offset=offset)
                     elif set(body) == {"mode"}:
                         lighting = service.lighting.set_mode(body["mode"])
                     else:
@@ -540,12 +572,14 @@ def make_handler(service: Service):
             if path in ("/v1/station-mode", "/v1/mode"):
                 self._send(200, {"status": "ok", "mode": service.mode, "modes": list(service.SUPPORTED_MODES)})
                 return
-            if path in ("/v1/direction/alignment", "/v1/directionality/alignment"):
+            if path in ("/v1/direction", "/v1/direction/alignment", "/v1/directionality/alignment"):
                 self._send(200, {
                     "status": "ok",
                     "alignment": service.direction_alignment,
                     "beam_width": service.direction_beam_width,
+                    "offset": service.direction_offset,
                     "max_beam_width": min(143, 2 * (service.direction_alignment // 2) + 1),
+                    "angle_degrees": round(service.direction_offset / service.direction_alignment * 360, 1),
                     "mode": service.mode
                 })
                 return

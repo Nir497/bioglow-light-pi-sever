@@ -122,6 +122,7 @@ class LightingControl:
             return self.set_direction_alignment(
                 self._state.get("alignment", 144),
                 beam_width=self._state.get("beam_width", 1),
+                offset=self._state.get("direction_offset", 0),
                 brightness=brightness,
                 color=color
             )
@@ -169,12 +170,14 @@ class LightingControl:
             self._send(self._state["manual_brightness"] if mode == "on" else 0)
             return self._lighting_state()
 
-    def set_direction_alignment(self, spacing: int, beam_width: int = 1, brightness: int = 64, color: str = None):
+    def set_direction_alignment(self, spacing: int, beam_width: int = 1, offset: int = 0, brightness: int = 64, color: str = None):
         if type(spacing) is not int or not 1 <= spacing <= 144:
             raise ValueError("alignment spacing must be an integer from 1 to 144")
         max_beam_width = min(143, 2 * (spacing // 2) + 1)
         if type(beam_width) is not int or beam_width < 1 or beam_width > max_beam_width or beam_width % 2 == 0:
             raise ValueError(f"beam_width must be an odd integer from 1 to {max_beam_width} for alignment spacing {spacing}")
+        if type(offset) is not int or not 0 <= offset < spacing:
+            raise ValueError(f"offset must be an integer from 0 to {spacing - 1}")
         if brightness is not None and (type(brightness) is not int or not 1 <= brightness <= 255):
             raise ValueError("brightness must be an integer from 1 to 255")
         if color is not None and (not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
@@ -185,6 +188,7 @@ class LightingControl:
             self._state["mode"] = "direction_config"
             self._state["alignment"] = spacing
             self._state["beam_width"] = beam_width
+            self._state["direction_offset"] = offset
             if brightness is not None:
                 self._state["alignment_brightness"] = brightness
             if color is not None:
@@ -209,7 +213,7 @@ class LightingControl:
             else:
                 grp = beam_width
                 spc = spacing - beam_width
-                of = 0
+                of = offset
             self._send(target_bri, color=chosen_color, instant=True, grp=grp, spc=spc, of=of)
             return self._lighting_state()
 

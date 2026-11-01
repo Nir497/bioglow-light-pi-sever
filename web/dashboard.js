@@ -1,10 +1,10 @@
 'use strict';
-const names = {'wled-log':'WLED log','distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',birdcast:'BirdCast',recordings:'Recordings','config-directionality':'Directionality','config-schedule':'Recording schedule','config-lighting':'WLED hardware','logs-sensors':'Sensor histories'};
-const sectionMap = {light:'Input',radar:'Input',recordings:'Input',birdcast:'Input',lighting:'Output','distance-test':'Output','config-directionality':'Configuration','config-schedule':'Configuration','config-lighting':'Configuration','wled-log':'Logs','logs-sensors':'Logs'};
-const itemNames = {light:'Lux sensor',radar:'Radar',recordings:'Recordings',birdcast:'BirdCast',lighting:'WLED light','distance-test':'Distance test',overview:'Station overview','config-directionality':'Directionality','config-schedule':'Recording schedule','config-lighting':'WLED hardware','wled-log':'WLED log','logs-sensors':'Sensor histories'};
-const titles = {'wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',birdcast:'Migration outlook',recordings:'Sound library','config-directionality':'Directionality configuration','config-schedule':'Audio collection schedule','config-lighting':'WLED hardware settings','logs-sensors':'Sensor history logs'};
-const descriptions = {'wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.','config-directionality':'Configure sensor directionality and orientation.','config-schedule':'Automate microphone sampling every two minutes across all clients.','config-lighting':'Hardware parameters, serial connection details, and output bounds for WLED.','logs-sensors':'Historical readings collected from presence, light, and migration sensors.'};
-let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '', stationMode = 'normal', directionAlignment = 144, directionBeamWidth = 1;
+const names = {'wled-log':'WLED log','distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',direction:'Direction',birdcast:'BirdCast',recordings:'Recordings','config-direction':'Direction','config-directionality':'Direction','config-schedule':'Recording schedule','config-lighting':'WLED hardware','logs-sensors':'Sensor histories'};
+const sectionMap = {light:'Input',radar:'Input',recordings:'Input',birdcast:'Input',lighting:'Output',direction:'Output','distance-test':'Output','config-direction':'Configuration','config-directionality':'Configuration','config-schedule':'Configuration','config-lighting':'Configuration','wled-log':'Logs','logs-sensors':'Logs'};
+const itemNames = {light:'Lux sensor',radar:'Radar',recordings:'Recordings',birdcast:'BirdCast',lighting:'WLED light',direction:'Direction','distance-test':'Distance test',overview:'Station overview','config-direction':'Direction','config-directionality':'Direction','config-schedule':'Recording schedule','config-lighting':'WLED hardware','wled-log':'WLED log','logs-sensors':'Sensor histories'};
+const titles = {'wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',direction:'Lamp beam direction',birdcast:'Migration outlook',recordings:'Sound library','config-direction':'Direction configuration','config-directionality':'Direction configuration','config-schedule':'Audio collection schedule','config-lighting':'WLED hardware settings','logs-sensors':'Sensor history logs'};
+const descriptions = {'wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',direction:'Overhead aerial view to steer the vertical light beam in any direction around the lamp.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.','config-direction':'Configure spiral wrap spacing and beam width to align the vertical column of light.','config-directionality':'Configure spiral wrap spacing and beam width to align the vertical column of light.','config-schedule':'Automate microphone sampling every two minutes across all clients.','config-lighting':'Hardware parameters, serial connection details, and output bounds for WLED.','logs-sensors':'Historical readings collected from presence, light, and migration sensors.'};
+let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '', stationMode = 'normal', directionAlignment = 144, directionBeamWidth = 1, directionOffset = 0;
 let histories = {};
 let lighting = {};
 const historyRanges = {radar:'1h',light:'1h',birdcast:'1d',microphone:'1d'};
@@ -48,7 +48,11 @@ const content = document.querySelector('#content');
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const time = value => { if (!value) return 'No reading yet'; const date = new Date(value); return Number.isNaN(date.getTime()) ? escapeHtml(value) : escapeHtml(date.toLocaleString()); };
 const number = value => value == null ? '—' : escapeHtml(typeof value === 'number' ? value.toLocaleString(undefined,{maximumFractionDigits:2}) : value);
-const view = () => Object.hasOwn(names, location.hash.slice(1)) ? location.hash.slice(1) : location.pathname === '/distance-test' ? 'distance-test' : 'overview';
+const view = () => {
+  const hash = location.hash.slice(1);
+  if (hash === 'config-directionality') return 'config-direction';
+  return Object.hasOwn(names, hash) ? hash : location.pathname === '/distance-test' ? 'distance-test' : 'overview';
+};
 function notice(message, error = false) { const box = document.querySelector('#notice'); box.textContent = message; box.classList.toggle('error',error); box.hidden = !message; }
 async function api(path, options = {}) {
   const controller = new AbortController();
@@ -778,12 +782,22 @@ function syncStationModeUI() {
       btn.disabled = stationMode !== 'direction_config' || targetBw > maxBw;
     });
   }
+  const outDirCard = document.querySelector('.direction-output-card');
+  if (outDirCard) {
+    outDirCard.classList.toggle('controls-disabled', stationMode !== 'direction_config');
+    const noticeEl = outDirCard.querySelector('.direction-disabled-notice');
+    if (noticeEl) noticeEl.hidden = stationMode === 'direction_config';
+    outDirCard.querySelectorAll('[data-preset-direction], [data-nudge-direction]').forEach(btn => {
+      btn.disabled = stationMode !== 'direction_config';
+    });
+  }
 }
 function maxBeamWidthForAlignment(n) {
   const spacing = parseInt(n || 144, 10);
   return Math.min(143, 2 * Math.floor(spacing / 2) + 1);
 }
 let alignmentDebounceTimer = null;
+let directionDebounceTimer = null;
 function updateAlignmentDisplay(val) {
   const n = parseInt(val, 10);
   const count = Math.floor((144 - 1) / n) + 1;
@@ -815,17 +829,266 @@ function updateBeamWidthDisplay(bwVal, nVal) {
 async function sendAlignment(n, bw) {
   const alignmentVal = parseInt(n || directionAlignment || 144, 10);
   const beamWidthVal = parseInt(bw || directionBeamWidth || 1, 10);
+  const offsetVal = directionOffset % alignmentVal;
   try {
     const res = await api('/v1/direction/alignment', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({alignment: alignmentVal, beam_width: beamWidthVal})
+      body: JSON.stringify({alignment: alignmentVal, beam_width: beamWidthVal, offset: offsetVal})
     });
     if (res.alignment) directionAlignment = res.alignment;
     if (res.beam_width) directionBeamWidth = res.beam_width;
+    if (res.offset != null) directionOffset = res.offset;
   } catch (err) {
     notice(`Could not set direction parameters: ${err.message}`, true);
   }
+}
+async function sendDirection(offset) {
+  const alignmentVal = parseInt(directionAlignment || 144, 10);
+  const beamWidthVal = parseInt(directionBeamWidth || 1, 10);
+  const offsetVal = ((parseInt(offset, 10) % alignmentVal) + alignmentVal) % alignmentVal;
+  directionOffset = offsetVal;
+  try {
+    const res = await api('/v1/direction', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        alignment: alignmentVal,
+        beam_width: beamWidthVal,
+        offset: offsetVal
+      })
+    });
+    if (res.offset != null) directionOffset = res.offset;
+    if (res.alignment) directionAlignment = res.alignment;
+    if (res.beam_width) directionBeamWidth = res.beam_width;
+  } catch (err) {
+    notice(`Could not set direction: ${err.message}`, true);
+  }
+}
+function getDialGeometry(offset, alignment, beamWidth) {
+  const n = parseInt(alignment || directionAlignment || 144, 10);
+  const w = parseInt(beamWidth || directionBeamWidth || 1, 10);
+  const s = ((parseInt(offset || 0, 10) % n) + n) % n;
+  const angleDeg = (s / n) * 360;
+  const spanDeg = Math.min(360, Math.max(360 / n, (w / n) * 360));
+  const cx = 160, cy = 160, R = 108;
+  const ac = angleDeg * Math.PI / 180;
+  const a1 = (angleDeg - spanDeg / 2) * Math.PI / 180;
+  const a2 = (angleDeg + spanDeg / 2) * Math.PI / 180;
+  const x1 = cx + R * Math.sin(a1);
+  const y1 = cy - R * Math.cos(a1);
+  const x2 = cx + R * Math.sin(a2);
+  const y2 = cy - R * Math.cos(a2);
+  const largeArc = spanDeg > 180 ? 1 : 0;
+  const wedgePath = spanDeg >= 359.9
+    ? `M ${cx} ${cy - R} A ${R} ${R} 0 1 1 ${cx} ${cy + R} A ${R} ${R} 0 1 1 ${cx} ${cy - R} Z`
+    : `M ${cx} ${cy} L ${x1.toFixed(1)} ${y1.toFixed(1)} A ${R} ${R} 0 ${largeArc} 1 ${x2.toFixed(1)} ${y2.toFixed(1)} Z`;
+  const arcPath = spanDeg >= 359.9
+    ? `M ${cx} ${cy - R} A ${R} ${R} 0 1 1 ${cx} ${cy + R} A ${R} ${R} 0 1 1 ${cx} ${cy - R}`
+    : `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${R} ${R} 0 ${largeArc} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+  const nx = cx + (R - 6) * Math.sin(ac);
+  const ny = cy - (R - 6) * Math.cos(ac);
+  const hx = cx + R * Math.sin(ac);
+  const hy = cy - R * Math.cos(ac);
+
+  const anchors = [];
+  for (let a = 1 + s; a <= 144; a += n) {
+    anchors.push(a);
+  }
+
+  let cardinal = `${angleDeg.toFixed(1)}°`;
+  if (Math.abs(angleDeg - 0) < 1e-2 || Math.abs(angleDeg - 360) < 1e-2) cardinal = '0° (Front · LED #1)';
+  else if (Math.abs(angleDeg - 90) < 1e-2) cardinal = '90° (Right)';
+  else if (Math.abs(angleDeg - 180) < 1e-2) cardinal = '180° (Back)';
+  else if (Math.abs(angleDeg - 270) < 1e-2) cardinal = '270° (Left)';
+
+  return {
+    n, w, s, angleDeg, spanDeg, cx, cy, R,
+    wedgePath, arcPath, nx, ny, hx, hy,
+    anchors, cardinal
+  };
+}
+function updateDialVisuals(offset) {
+  const g = getDialGeometry(offset, directionAlignment, directionBeamWidth);
+  const wedge = document.querySelector('#dial-beam-wedge');
+  if (wedge) wedge.setAttribute('d', g.wedgePath);
+  const arc = document.querySelector('#dial-beam-arc');
+  if (arc) arc.setAttribute('d', g.arcPath);
+  const needle = document.querySelector('#dial-needle');
+  if (needle) {
+    needle.setAttribute('x2', g.nx.toFixed(1));
+    needle.setAttribute('y2', g.ny.toFixed(1));
+  }
+  const handle = document.querySelector('#dial-handle');
+  if (handle) {
+    handle.setAttribute('cx', g.hx.toFixed(1));
+    handle.setAttribute('cy', g.hy.toFixed(1));
+  }
+  const angleVal = document.querySelector('#direction-angle-value');
+  if (angleVal) angleVal.textContent = g.cardinal;
+  const offsetVal = document.querySelector('#direction-offset-value');
+  if (offsetVal) offsetVal.textContent = `+${g.s} LEDs`;
+  const anchorsVal = document.querySelector('#direction-anchors-value');
+  if (anchorsVal) anchorsVal.textContent = g.anchors.map(a => `LED #${a}`).join(', ');
+  const spanVal = document.querySelector('#direction-span-value');
+  if (spanVal) spanVal.textContent = `${g.w} px (${g.spanDeg.toFixed(1)}°)`;
+}
+function directionOutputPage() {
+  const isDirConfig = stationMode === 'direction_config';
+  const g = getDialGeometry(directionOffset, directionAlignment, directionBeamWidth);
+
+  let tickMarks = '';
+  for (let d = 0; d < 360; d += 30) {
+    const rad = d * Math.PI / 180;
+    const isMajor = d % 90 === 0;
+    const r1 = isMajor ? 138 : 142;
+    const r2 = 148;
+    const x1 = (160 + r1 * Math.sin(rad)).toFixed(1);
+    const y1 = (160 - r1 * Math.cos(rad)).toFixed(1);
+    const x2 = (160 + r2 * Math.sin(rad)).toFixed(1);
+    const y2 = (160 - r2 * Math.cos(rad)).toFixed(1);
+    tickMarks += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${isMajor ? '#496052' : '#8fa094'}" stroke-width="${isMajor ? 2 : 1}"/>`;
+  }
+
+  let ledDots = '';
+  if (g.n <= 72) {
+    for (let k = 0; k < g.n; k++) {
+      const dotRad = (k / g.n) * 2 * Math.PI;
+      const dx = (160 + 108 * Math.sin(dotRad)).toFixed(1);
+      const dy = (160 - 108 * Math.cos(dotRad)).toFixed(1);
+      const isAnchor = k === g.s;
+      ledDots += `<circle cx="${dx}" cy="${dy}" r="${isAnchor ? 3.5 : 2}" fill="${isAnchor ? '#ffa028' : '#3d5246'}" stroke="${isAnchor ? '#fff' : 'none'}" stroke-width="1"/>`;
+    }
+  }
+
+  return `<article class="card directionality-mode-card">` +
+    `<div class="directionality-toggle-row">` +
+      `<div class="directionality-toggle-info">` +
+        `<h2>Direction Config Mode</h2>` +
+        `<p class="timestamp">Toggle Direction Config mode on or off. When active, the station operates in direction configuration mode.</p>` +
+      `</div>` +
+      `<label class="switch-control" for="direction-config-toggle">` +
+        `<input type="checkbox" id="direction-config-toggle" ${isDirConfig ? 'checked' : ''}>` +
+        `<span class="switch-slider" aria-hidden="true"></span>` +
+        `<span class="switch-label">${isDirConfig ? 'Active' : 'Inactive'}</span>` +
+      `</label>` +
+    `</div>` +
+  `</article>` +
+  `<article class="card direction-output-card ${isDirConfig ? '' : 'controls-disabled'}">` +
+    `<div class="direction-disabled-notice" ${isDirConfig ? 'hidden' : ''}><span aria-hidden="true">🔒</span> Direction config mode is inactive. Activate Direction config mode above to enable direction controls.</div>` +
+    `<div class="card-header">` +
+      `<div>` +
+        `<h2>Lamp Beam Direction</h2>` +
+        `<p class="timestamp">Overhead aerial view. Click or drag anywhere on the circle to steer the vertical light beam in that direction.</p>` +
+      `</div>` +
+      `<span class="badge ${isDirConfig ? 'badge-recv' : 'empty'}">${isDirConfig ? 'Mode: Direction Config' : 'Mode: Normal'}</span>` +
+    `</div>` +
+
+    `<div class="lamp-dial-container">` +
+      `<svg id="lamp-dial-svg" class="lamp-dial-svg" viewBox="0 0 320 320" width="320" height="320" role="img" aria-label="Aerial view of the cylindrical lamp to select direction">` +
+        `<defs>` +
+          `<radialGradient id="lamp-body-grad" cx="50%" cy="50%" r="50%">` +
+            `<stop offset="0%" stop-color="#2a3832"/>` +
+            `<stop offset="85%" stop-color="#18221d"/>` +
+            `<stop offset="100%" stop-color="#0f1713"/>` +
+          `</radialGradient>` +
+          `<radialGradient id="beam-wedge-grad" cx="50%" cy="50%" r="50%">` +
+            `<stop offset="10%" stop-color="#ffb84d" stop-opacity="0.85"/>` +
+            `<stop offset="65%" stop-color="#ffa028" stop-opacity="0.45"/>` +
+            `<stop offset="100%" stop-color="#ff8800" stop-opacity="0.1"/>` +
+          `</radialGradient>` +
+        `</defs>` +
+        `<circle cx="160" cy="160" r="148" class="dial-track" fill="#f8faf7" stroke="#d5ded7" stroke-width="1.5"/>` +
+        `${tickMarks}` +
+        `<text x="160" y="24" class="dial-cardinal">0° · LED #1</text>` +
+        `<text x="296" y="164" class="dial-cardinal">90°</text>` +
+        `<text x="160" y="304" class="dial-cardinal">180°</text>` +
+        `<text x="24" y="164" class="dial-cardinal">270°</text>` +
+        `<circle cx="160" cy="160" r="108" fill="url(#lamp-body-grad)" stroke="#3e5348" stroke-width="2.5"/>` +
+        `<circle cx="160" cy="160" r="65" fill="none" stroke="#25352c" stroke-width="1" stroke-dasharray="3,3"/>` +
+        `${ledDots}` +
+        `<path id="dial-beam-wedge" class="dial-beam-wedge" d="${g.wedgePath}" fill="url(#beam-wedge-grad)"/>` +
+        `<path id="dial-beam-arc" class="dial-beam-arc" d="${g.arcPath}" fill="none" stroke="#ffa028" stroke-width="9" stroke-linecap="round"/>` +
+        `<line id="dial-needle" x1="160" y1="160" x2="${g.nx.toFixed(1)}" y2="${g.ny.toFixed(1)}" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>` +
+        `<circle cx="160" cy="160" r="20" fill="#18221d" stroke="#506b5c" stroke-width="2"/>` +
+        `<circle cx="160" cy="160" r="5" fill="#ffa028"/>` +
+        `<circle id="dial-handle" cx="${g.hx.toFixed(1)}" cy="${g.hy.toFixed(1)}" r="10" class="dial-handle" fill="#ffa028" stroke="#ffffff" stroke-width="2.5"/>` +
+      `</svg>` +
+    `</div>` +
+
+    `<div class="alignment-summary-row direction-stats-grid">` +
+      `<div class="alignment-stat"><span class="stat-label">Beam Direction</span><span class="stat-value" id="direction-angle-value">${g.cardinal}</span></div>` +
+      `<div class="alignment-stat"><span class="stat-label">Offset along Strip</span><span class="stat-value" id="direction-offset-value">+${g.s} LEDs</span></div>` +
+      `<div class="alignment-stat"><span class="stat-label">Beam Width</span><span class="stat-value" id="direction-span-value">${g.w} px (${g.spanDeg.toFixed(1)}°)</span></div>` +
+      `<div class="alignment-stat"><span class="stat-label">Active Anchors</span><span class="stat-value" id="direction-anchors-value">${g.anchors.map(a=>`LED #${a}`).join(', ')}</span></div>` +
+    `</div>` +
+
+    `<div class="direction-presets-row">` +
+      `<button type="button" class="button secondary btn-sm" data-preset-direction="0" ${isDirConfig ? '' : 'disabled'}>0° (Front · LED #1)</button>` +
+      `<button type="button" class="button secondary btn-sm" data-preset-direction="90" ${isDirConfig ? '' : 'disabled'}>90° (Right)</button>` +
+      `<button type="button" class="button secondary btn-sm" data-preset-direction="180" ${isDirConfig ? '' : 'disabled'}>180° (Back)</button>` +
+      `<button type="button" class="button secondary btn-sm" data-preset-direction="270" ${isDirConfig ? '' : 'disabled'}>270° (Left)</button>` +
+      `<button type="button" class="button secondary btn-sm" data-nudge-direction="-1" ${isDirConfig ? '' : 'disabled'}>◀ -1 LED</button>` +
+      `<button type="button" class="button secondary btn-sm" data-nudge-direction="1" ${isDirConfig ? '' : 'disabled'}>+1 LED ▶</button>` +
+    `</div>` +
+
+    `<p class="timestamp" style="margin-top:1.25rem;">` +
+      `Column wrap spacing: <strong>n = ${g.n}</strong> (${g.anchors.length} vertical wraps) · ` +
+      `Beam width: <strong>${g.w} pixel${g.w > 1 ? 's' : ''}</strong> · ` +
+      `<a class="section-link" href="#config-direction">Configure wrap spacing &amp; width ↗</a>` +
+    `</p>` +
+  `</article>`;
+}
+function attachLampDialListeners() {
+  const svg = document.querySelector('#lamp-dial-svg');
+  if (!svg) return;
+  let isDragging = false;
+
+  function pointerCoordToOffset(e) {
+    const rect = svg.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    const rad = Math.atan2(dx, -dy);
+    const deg = (rad * 180 / Math.PI + 360) % 360;
+    const n = directionAlignment || 144;
+    return Math.round((deg / 360) * n) % n;
+  }
+
+  svg.addEventListener('pointerdown', e => {
+    if (stationMode !== 'direction_config') return;
+    isDragging = true;
+    try { svg.setPointerCapture(e.pointerId); } catch {}
+    const s = pointerCoordToOffset(e);
+    directionOffset = s;
+    updateDialVisuals(s);
+    clearTimeout(directionDebounceTimer);
+    directionDebounceTimer = setTimeout(() => sendDirection(s), 40);
+  });
+
+  svg.addEventListener('pointermove', e => {
+    if (!isDragging || stationMode !== 'direction_config') return;
+    const s = pointerCoordToOffset(e);
+    if (s !== directionOffset) {
+      directionOffset = s;
+      updateDialVisuals(s);
+      clearTimeout(directionDebounceTimer);
+      directionDebounceTimer = setTimeout(() => sendDirection(s), 40);
+    }
+  });
+
+  const stopDrag = e => {
+    if (!isDragging) return;
+    isDragging = false;
+    try { svg.releasePointerCapture(e.pointerId); } catch {}
+    clearTimeout(directionDebounceTimer);
+    sendDirection(directionOffset);
+  };
+  svg.addEventListener('pointerup', stopDrag);
+  svg.addEventListener('pointercancel', stopDrag);
 }
 function directionalityPage() {
   const isDirConfig = stationMode === 'direction_config';
@@ -854,8 +1117,8 @@ function directionalityPage() {
     `<div class="direction-disabled-notice" ${isDirConfig ? 'hidden' : ''}><span aria-hidden="true">🔒</span> Direction config mode is inactive. Activate Direction config mode above to enable direction controls.</div>` +
     `<div class="card-header">` +
       `<div>` +
-        `<h2>LED Strip Alignment</h2>` +
-        `<p class="timestamp">Align LEDs according to spacing <em>n</em>. Begins with only the first LED lit (<em>n</em> = 144). Reduce the slider to light up every <em>n</em> LEDs until all are lit (<em>n</em> = 1).</p>` +
+        `<h2>LED Strip Alignment &amp; Beam Width</h2>` +
+        `<p class="timestamp">Align LEDs according to spiral wrap spacing <em>n</em> and set beam width. To steer the beam direction around the lamp, open <a class="section-link" href="#direction">Output → Direction ↗</a>.</p>` +
       `</div>` +
       `<span class="badge ${isDirConfig ? 'badge-recv' : 'empty'}">${isDirConfig ? 'Mode: Direction Config' : 'Mode: Normal'}</span>` +
     `</div>` +
@@ -936,7 +1199,7 @@ async function setStationMode(mode) {
     notice(`Could not change station mode: ${err.message}`, true);
   } finally {
     syncStationModeUI();
-    if (['config-directionality', 'lighting'].includes(view())) render();
+    if (['config-direction', 'config-directionality', 'direction', 'lighting'].includes(view())) render();
   }
 }
 function render() {
@@ -982,7 +1245,11 @@ function render() {
     `</article>`;
   }
   else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div><div data-recording-library>${library()}</div>`;
-  else if (current === 'config-directionality') {
+  else if (current === 'direction') {
+    content.innerHTML = directionOutputPage();
+    attachLampDialListeners();
+  }
+  else if (current === 'config-direction' || current === 'config-directionality') {
     content.innerHTML = directionalityPage();
   }
   else if (current === 'config-schedule') content.innerHTML = `<article class="card audio-summary"><div class="audio-copy"><h2>Automatic microphone collection</h2><p>Audio recording runs on a shared server-side schedule. When enabled, the station captures 5 seconds of audio every 120 seconds.</p>${resultError('microphone')}</div><div class="audio-tools"><div data-recording-schedule>${scheduleControls()}</div><span class="badge empty" data-recording-count>${recordings.length} saved</span></div></article><article class="card"><h2>Recording schedule settings</h2>${facts([['Interval','120 seconds (2 minutes)'],['Sample duration','5 seconds'],['Audio format','WAV 48 kHz mono 16-bit PCM'],['State',collection.enabled ? 'Active (running)' : 'Stopped (manual captures only)'],['Next capture',collection.next_recording_at ? time(collection.next_recording_at) : 'None scheduled']])}</article>`;
@@ -1011,6 +1278,8 @@ async function loadCache() {
     else if (data.lighting?.alignment) directionAlignment = data.lighting.alignment;
     if (data.directionality?.beam_width) directionBeamWidth = data.directionality.beam_width;
     else if (data.lighting?.beam_width) directionBeamWidth = data.lighting.beam_width;
+    if (data.directionality?.offset != null) directionOffset = data.directionality.offset;
+    else if (data.lighting?.direction_offset != null) directionOffset = data.lighting.direction_offset;
     syncStationModeUI();
     Object.keys(historyKeys).forEach(source=>historyKeys[source]='');
     radarLoadedAt = requestedAt;
@@ -1144,6 +1413,28 @@ content.addEventListener('click',event=>{
     updateBeamWidthDisplay(bw, directionAlignment);
     clearTimeout(alignmentDebounceTimer);
     sendAlignment(directionAlignment, bw);
+    return;
+  }
+  const presetDirBtn = event.target.closest('[data-preset-direction]');
+  if (presetDirBtn) {
+    const deg = parseFloat(presetDirBtn.dataset.presetDirection);
+    const n = directionAlignment || 144;
+    const s = Math.round((deg / 360) * n) % n;
+    directionOffset = s;
+    updateDialVisuals(s);
+    clearTimeout(directionDebounceTimer);
+    sendDirection(s);
+    return;
+  }
+  const nudgeDirBtn = event.target.closest('[data-nudge-direction]');
+  if (nudgeDirBtn) {
+    const step = parseInt(nudgeDirBtn.dataset.nudgeDirection, 10);
+    const n = directionAlignment || 144;
+    const s = ((directionOffset + step) % n + n) % n;
+    directionOffset = s;
+    updateDialVisuals(s);
+    clearTimeout(directionDebounceTimer);
+    sendDirection(s);
     return;
   }
   const maximum = event.target.closest('[data-lighting-max]');
