@@ -683,9 +683,17 @@ function scheduleCollectionPoll() {
 let wledLogTimer, wledLogGeneration = 0;
 function wledLogEvent(event) {
   let payload = event.payload;
-  try { payload = JSON.stringify(JSON.parse(payload), null, 2); } catch { /* Preserve serial text. */ }
-  const label = {sent:'Sent',received:'Received',error:'Error'}[event.direction] || event.direction;
-  return `<li class="wled-log-event" data-event-id="${event.id}"><p><time datetime="${escapeHtml(event.timestamp)}">${escapeHtml(new Date(event.timestamp).toLocaleString())}</time> · <strong>${escapeHtml(label)}</strong>${event.outcome ? ` · ${escapeHtml(event.outcome)}${event.bytes_written == null ? '' : ` (${event.bytes_written}/${event.bytes_expected} bytes)`}` : ''}</p><pre>${escapeHtml(payload)}</pre></li>`;
+  try { payload = JSON.stringify(JSON.parse(payload)); } catch { /* Preserve serial text. */ }
+  const label = {sent:'Sent',received:'Recv',error:'Error'}[event.direction] || event.direction;
+  const dirClass = event.direction === 'sent' ? 'badge-sent' : event.direction === 'error' ? 'badge-error' : 'badge-recv';
+  const outcome = event.outcome ? `${escapeHtml(event.outcome)}${event.bytes_written == null ? '' : ` (${event.bytes_written}/${event.bytes_expected})`}` : '—';
+  const timeStr = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : '';
+  return `<tr class="wled-log-event" data-event-id="${event.id}">` +
+    `<td class="wled-col-time"><time datetime="${escapeHtml(event.timestamp)}">${escapeHtml(timeStr)}</time></td>` +
+    `<td class="wled-col-dir"><span class="badge ${dirClass}">${escapeHtml(label)}</span></td>` +
+    `<td class="wled-col-outcome">${outcome}</td>` +
+    `<td class="wled-col-message" title="Click to expand/collapse"><pre>${escapeHtml(payload)}</pre></td>` +
+    `</tr>`;
 }
 function scheduleWledLog() {
   clearTimeout(wledLogTimer);
@@ -753,7 +761,7 @@ function render() {
   });
   if (current === 'overview') content.innerHTML = `<div class="grid">${['radar','light','birdcast'].map(source=>sourceCard(source)).join('')}</div><div class="section-heading"><div><h2>Sound from the station</h2><p>A permanent home for your microphone recordings.</p></div><a class="section-link" href="#recordings">Open library ↗</a></div>${microphone()}<div class="section-heading"><h2>Latest recordings</h2></div><div data-recording-library>${library(3)}</div>`;
   else if (current === 'distance-test') content.innerHTML = distanceTestPage();
-  else if (current === 'wled-log') content.innerHTML = '<article class="card"><p data-wled-message role="status">Loading USB traffic…</p><ol class="wled-log-list" data-wled-events></ol></article>';
+  else if (current === 'wled-log') content.innerHTML = '<article class="card"><div class="wled-log-header"><h2>WLED USB Traffic</h2><p data-wled-message role="status">Loading USB traffic…</p></div><div class="wled-table-container"><table class="wled-log-table"><thead><tr><th class="wled-th-time">Time</th><th class="wled-th-dir">Direction</th><th class="wled-th-outcome">Outcome</th><th class="wled-th-message">Message (click row to expand)</th></tr></thead><tbody data-wled-events></tbody></table></div></article>';
   else if (current === 'lighting') content.innerHTML = `<article class="card">${lightingControls()}</article>`;
   else if (current === 'recordings') content.innerHTML = `${microphone()}<article class="card"><h2>Animal identification over time</h2>${historyGraph('microphone')}</article><div class="section-heading"><div><h2>All recordings</h2><p>Newest first · delete individual recordings using their Delete recording button</p></div><button class="button secondary" data-action="library" ${pending.has('library') ? 'disabled' : ''}>↻ Refresh library</button></div><div data-recording-library>${library()}</div>`;
   else if (current === 'config-schedule') content.innerHTML = `<article class="card audio-summary"><div class="audio-copy"><h2>Automatic microphone collection</h2><p>Audio recording runs on a shared server-side schedule. When enabled, the station captures 5 seconds of audio every 120 seconds.</p>${resultError('microphone')}</div><div class="audio-tools"><div data-recording-schedule>${scheduleControls()}</div><span class="badge empty" data-recording-count>${recordings.length} saved</span></div></article><article class="card"><h2>Recording schedule settings</h2>${facts([['Interval','120 seconds (2 minutes)'],['Sample duration','5 seconds'],['Audio format','WAV 48 kHz mono 16-bit PCM'],['State',collection.enabled ? 'Active (running)' : 'Stopped (manual captures only)'],['Next capture',collection.next_recording_at ? time(collection.next_recording_at) : 'None scheduled']])}</article>`;
@@ -858,6 +866,8 @@ content.addEventListener('click',event=>{
   if (identify) { identifyAnimals(identify.dataset.identify); return; }
   const detail = event.target.closest('[data-analysis-details]');
   if (detail) { identifyAnimals(detail.dataset.analysisDetails,true); return; }
+  const logRow = event.target.closest('.wled-log-event');
+  if (logRow && !window.getSelection?.()?.toString()) logRow.classList.toggle('expanded');
   const button = event.target.closest('[data-action]'); if (button) run(button.dataset.action);
 });
 content.addEventListener('change',event=>{

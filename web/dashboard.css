@@ -1049,9 +1049,30 @@ select {
 .lighting-controls input[type="color"] { width: 100%; height: 3rem; padding: .2rem; cursor: pointer; }
 .lighting-controls .card-actions { flex-wrap: wrap; }
 
-.wled-log-list { list-style: none; padding: 0; margin: 0; overflow-anchor: none; }
-.wled-log-event { border-bottom: 1px solid #dce2db; padding: 12px 0; }
-.wled-log-event pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.wled-log-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+.wled-log-header h2 { margin: 0; }
+.wled-log-header p { font-size: 13px; color: var(--muted); margin: 0; }
+.wled-table-container { overflow-x: auto; border: 1px solid #dce2db; border-radius: 8px; background: white; margin-top: 4px; }
+.wled-log-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.wled-log-table th { background: #f6f8f5; padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #64756a; border-bottom: 1px solid #dce2db; white-space: nowrap; }
+.wled-th-time { width: 105px; }
+.wled-th-dir { width: 85px; }
+.wled-th-outcome { width: 140px; }
+.wled-th-message { min-width: 250px; }
+
+.wled-log-event { border-bottom: 1px solid #edf1eb; cursor: pointer; transition: background .12s ease; }
+.wled-log-event:hover { background: #f7faf5; }
+.wled-log-event td { padding: 8px 12px; vertical-align: middle; }
+.wled-col-time { white-space: nowrap; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.wled-col-dir { white-space: nowrap; }
+.wled-col-outcome { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #55665b; font-size: 12px; }
+.wled-col-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wled-col-message pre { margin: 0; padding: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #24352a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
+.wled-log-event.expanded .wled-col-message pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; max-height: 400px; overflow-y: auto; padding: 8px 10px; background: #f1f5ee; border-radius: 4px; margin-top: 4px; }
+
+.badge-sent { background: #e6f0fa; color: #1e62aa; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; }
+.badge-recv { background: #e8f5ec; color: #247545; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; }
+.badge-error { background: #fdeeee; color: #b5251d; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; }
 
 .lighting-lux { margin: 1rem 0; padding: 1rem; background: var(--surface, #f5f7f4); border: 1px solid var(--line, #ddd); border-radius: .75rem; }
 .lighting-lux h3 { margin-top: 0; }
