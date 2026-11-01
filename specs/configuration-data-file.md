@@ -1,6 +1,6 @@
 # Persistent website settings and configuration backups
 
-Status: Awaiting final user approval. Implementation is a separate task.
+Status: Approved by the user on November 1, 2026. Ready for implementation as a separate task.
 
 ## Problem
 
@@ -66,7 +66,7 @@ Sensor logs, audio recordings, animal results, full-device backups, WLED firmwar
 - User limited scope to lighting and website settings, excluding sensor readings and recordings.
 - User accepted Normal startup with recording stopped, per-browser display choices, and preview/confirmation for full restoration.
 - JSON is readable, supports validation, and fits structured settings. Version the format to reject incompatible backups clearly.
-- Proposed review details: include current browser preferences in portable backups, keep runtime modes transient, and use Configuration → Settings & backup as the interface location.
+- Approved review details: include current browser preferences in portable backups, keep runtime modes transient, and use Configuration → Settings & backup as the interface location.
 
 ## Verification
 
