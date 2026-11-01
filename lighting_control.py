@@ -310,7 +310,7 @@ class LightingControl:
                     error = "Radar target has no usable distance; requesting lights off."
             led_count = getattr(self.transport, "led_count", None)
             if not isinstance(led_count, int) or led_count <= 0:
-                led_count = 144
+                led_count = 192
             max_index = led_count - 1
             if distance is None:
                 index = None

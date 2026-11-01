@@ -44,7 +44,7 @@ class WLEDLog:
 
 
 class WLEDSerial:
-    def __init__(self, port=None, baudrate=115200, led_count=144, clock=time.monotonic):
+    def __init__(self, port=None, baudrate=115200, led_count=192, clock=time.monotonic):
         self.log = WLEDLog()
         self.port = port or os.environ.get("BIOGLOW_WLED_PORT")
         self.baudrate = baudrate

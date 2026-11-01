@@ -266,7 +266,7 @@ setTimeout(async()=>{
     check(activeBwSlider.value==='3','Beam width should auto-clamp to 3 when alignment reduces to 2');
     activeSlider.value='72';activeSlider.dispatchEvent(new Event('input',{bubbles:true}));
     check(document.querySelector('#direction-alignment-value').textContent.includes('n = 72'),'Alignment value output not updated');
-    check(document.querySelector('#alignment-lit-count').textContent.includes('2 / 144'),'Total lit count for n=72 should be 2');
+    check(document.querySelector('#alignment-lit-count').textContent.includes('3 / 192'),'Total lit count for n=72 should be 3');
     await pause(100);
     check(browserRequests.includes('/v1/direction/alignment'),'Alignment change did not POST to /v1/direction/alignment');
     location.hash='#direction';await pause(100);

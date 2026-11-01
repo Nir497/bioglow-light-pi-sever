@@ -89,7 +89,7 @@ class ServiceTests(unittest.TestCase):
         self.service.lighting.update_distance(200, {"fresh": True, "presence": "moving", "moving_distance_cm": 600, "range_estimate_cm": 600})
         self.service.presence_sensor.response = MagicMock(return_value=(200, {"fresh": True}))
         latest = self.service.latest()
-        self.assertEqual(latest["lighting"]["led_index"], 143)
+        self.assertEqual(latest["lighting"]["led_index"], 191)
         self.assertEqual(latest["sources"]["radar"]["result"]["range_estimate_cm"],
                          latest["lighting"]["distance_cm"])
         self.service.presence_sensor.response.assert_not_called()

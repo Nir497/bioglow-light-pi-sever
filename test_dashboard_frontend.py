@@ -215,7 +215,7 @@ async function main(){
   await wledPoll.fn();
   assert.equal(page.innerHTML,beforeWledPoll,'Status updates preserve controller controls');
   vm.runInContext("lighting={device:{led_count:144,covered_leds:144,firmware:'0.14.4'}}",context);
-  assert.match(vm.runInContext('lightingDevice()',context),/144 \/ 144 pixels/);
+  assert.match(vm.runInContext('lightingDevice()',context),/144 \/ 192 pixels/);
   const brightnessInput={value:'80'}, colorInput={value:'#112233'}, output={textContent:''};
   const form={dataset:{dirty:'true'},contains:()=>false,querySelector:selector=>selector==='[name="brightness"]' ? brightnessInput : selector==='[name="color"]' ? colorInput : output};
   const summary={textContent:''}, ambientSummary={textContent:''};
@@ -275,7 +275,7 @@ async function main(){
   assert.match(vm.runInContext('lightingControls()',context),/Full brightness · 100%/);
   vm.runInContext("sources.radar={http_status:200,result:{fresh:true,age_seconds:0,stale_after_seconds:2}};radarLoadedAt=performance.now();lighting.mode='distance_test';lighting.distance_cm=350;lighting.led_index=96;lighting.test_state='tracking'",context);
   assert.match(vm.runInContext('lightingControls()',context),/data-lighting-appearance disabled/);
-  assert.match(vm.runInContext('lightingSummary()',context),/350 cm · Target LED 97 \/ 144/);
+  assert.match(vm.runInContext('lightingSummary()',context),/350 cm · Target LED 97 \/ 192/);
   vm.runInContext("lighting.confirmed_led_index=20;lighting.on=true",context);
   assert.match(vm.runInContext('lightingSummary()',context),/Confirmed: LED 21/);
   assert.equal(vm.runInContext("radarRange({range_estimate_cm:null,moving_distance_cm:650})",context),null);
@@ -301,7 +301,7 @@ async function main(){
   assert.equal(vm.runInContext('view()',context),'distance-test');
   assert.match(page.innerHTML,/Single-LED test/);
   assert.match(page.innerHTML,/LED 1: 1 m or closer/);
-  assert.match(page.innerHTML,/LED 144: 6 m or farther/);
+  assert.match(page.innerHTML,/LED 192: 6 m or farther/);
   assert.match(page.innerHTML,/data-reading="radar"/);
   assert.match(page.innerHTML,/Start distance test/);
   assert.doesNotMatch(page.innerHTML,/data-history="radar"/);

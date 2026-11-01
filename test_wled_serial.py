@@ -20,7 +20,7 @@ class WLEDSerialTests(unittest.TestCase):
         self.addCleanup(self.serial.stop)
 
     def test_traffic_records_queries_commands_and_fragments_once(self):
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         reply = json.dumps(self.reply).encode() + b'\n'
         self.connection.read_until.side_effect = [b'boot: ready\n', reply[:25], reply[25:], reply]
         light.send(self.params)
@@ -36,7 +36,7 @@ class WLEDSerialTests(unittest.TestCase):
     def test_partial_and_failed_writes_are_not_successful(self):
         for written in (0, 2):
             with self.subTest(written=written):
-                light = WLEDSerial(port='test')
+                light = WLEDSerial(port='test', led_count=144)
                 self.connection.write.side_effect = None
                 self.connection.write.return_value = written
                 with self.assertRaisesRegex(OSError, 'Incomplete'):
@@ -46,13 +46,13 @@ class WLEDSerialTests(unittest.TestCase):
                 self.assertEqual(events[0]['bytes_written'], written)
                 self.assertEqual(events[-1]['direction'], 'error')
         self.connection.write.side_effect = OSError('disconnected')
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         with self.assertRaises(OSError):
             light.send(self.params)
         self.assertEqual(light.log.snapshot()['events'][0]['outcome'], 'delivery unknown')
 
     def test_log_bounds_concurrency_and_passive_snapshot(self):
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         def record(_):
             light.log.append('received', 'test')
             light.log.snapshot()
@@ -71,7 +71,7 @@ class WLEDSerialTests(unittest.TestCase):
         self.assertNotEqual(snapshot['session'], WLEDSerial().log.snapshot()['session'])
 
     def test_connection_and_timeout_errors_are_logged(self):
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         self.connection.open.side_effect = OSError('cannot open')
         with self.assertRaises(OSError):
             light.send(self.params)
@@ -83,7 +83,7 @@ class WLEDSerialTests(unittest.TestCase):
         self.assertEqual(light.log.snapshot()['events'][-1]['payload'], 'no reply')
 
     def test_identifies_wled_and_reuses_connection(self):
-        light = WLEDSerial(port='/dev/serial/by-id/wled')
+        light = WLEDSerial(port='/dev/serial/by-id/wled', led_count=144)
         light.send(self.params)
         self.assertFalse(self.connection.dtr)
         self.assertFalse(self.connection.rts)
@@ -106,7 +106,7 @@ class WLEDSerialTests(unittest.TestCase):
         current['state']['seg'] = [{'id': 0, 'start': 50, 'stop': 70, 'spc': 2},
                                    {'id': 2, 'start': 70, 'stop': 100}]
         self.connection.read_until.side_effect = [json.dumps(current).encode(), json.dumps(self.reply).encode()]
-        result = WLEDSerial(port='test').send(self.params)
+        result = WLEDSerial(port='test', led_count=144).send(self.params)
         command = json.loads(self.connection.write.call_args.args[0])
         self.assertEqual(command['seg'][0]['start'], 0)
         self.assertEqual(command['seg'][0]['stop'], 144)
@@ -115,7 +115,7 @@ class WLEDSerialTests(unittest.TestCase):
         self.assertEqual(command['seg'][1], {'id': 2, 'stop': 0})
 
     def test_custom_segment_spacing_and_grouping(self):
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         reply = json.loads(json.dumps(self.reply))
         reply['state']['seg'][0]['spc'] = 143
         self.connection.read_until.side_effect = [json.dumps(reply).encode() + b'\n', json.dumps(reply).encode() + b'\n']
@@ -145,7 +145,7 @@ class WLEDSerialTests(unittest.TestCase):
                     ack['state']['seg'][0]['col'] = [rgb + [0]]
                     ack['info']['leds'].update(maxpwr=3000, pwr=1800)
                     self.connection.read_until.side_effect = [json.dumps(self.reply).encode(), json.dumps(ack).encode()]
-                    light = LightingControl(transport=WLEDSerial(port='test'))
+                    light = LightingControl(transport=WLEDSerial(port='test', led_count=144))
                     result = light.configure(mode='on', color=color, brightness=brightness)
                     self.assertEqual(result['status'], 'ok')
                     command = json.loads(self.connection.write.call_args.args[0])
@@ -170,13 +170,13 @@ class WLEDSerialTests(unittest.TestCase):
         wrong['state']['seg'][0]['col'][0][3] = 255
         self.connection.read_until.side_effect = [json.dumps(self.reply).encode(), json.dumps(wrong).encode()]
         with self.assertRaisesRegex(OSError, 'RGBW color'):
-            WLEDSerial(port='test').send(self.params)
+            WLEDSerial(port='test', led_count=144).send(self.params)
 
     def test_configured_output_shorter_than_144_is_not_success(self):
         self.reply['info']['leds']['count'] = 100
         self.reply['state']['seg'][0]['stop'] = 100
         self.connection.read_until.return_value = json.dumps(self.reply).encode()
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         with self.assertRaisesRegex(OSError, '100 pixels, but your strip has 144'):
             light.send(self.params)
         self.assertEqual(self.connection.write.call_count, 1)
@@ -190,23 +190,38 @@ class WLEDSerialTests(unittest.TestCase):
         off = json.loads(json.dumps(current))
         off['state']['on'] = False
         self.connection.read_until.side_effect = [json.dumps(current).encode(), json.dumps(off).encode()]
-        result = WLEDSerial(port='test').send({**self.params, 'on': False, 'bri': 0})
+        result = WLEDSerial(port='test', led_count=144).send({**self.params, 'on': False, 'bri': 0})
         self.assertEqual(result['covered_leds'], 100)
         self.assertFalse(result['full_strip_confirmed'])
 
     def test_larger_configured_bus_targets_the_known_144_pixel_strip(self):
         self.reply['info']['leds']['count'] = 300
         self.connection.read_until.return_value = json.dumps(self.reply).encode()
-        result = WLEDSerial(port='test').send(self.params)
+        result = WLEDSerial(port='test', led_count=144).send(self.params)
         self.assertEqual(result['covered_leds'], 144)
         command = json.loads(self.connection.write.call_args.args[0])
         self.assertEqual(command['seg'][0]['stop'], 144)
+
+    def test_default_fixture_covers_all_192_pixels_with_direction_pattern(self):
+        self.reply['info']['leds']['count'] = 192
+        self.reply['state']['seg'][0].update(stop=192, grp=7, spc=42, of=37)
+        self.connection.read_until.return_value = json.dumps(self.reply).encode()
+        params = json.loads(json.dumps(self.params))
+        params['seg'][0].update(grp=7, spc=42, of=37)
+        result = WLEDSerial(port='test').send(params)
+        command = json.loads(self.connection.write.call_args.args[0])
+        segment = command['seg'][0]
+        self.assertEqual((segment['start'], segment['stop']), (0, 192))
+        self.assertEqual((segment['grp'], segment['spc'], segment['of']), (7, 42, 37))
+        self.assertEqual(result['covered_leds'], 192)
+        self.assertTrue(result['full_strip_confirmed'])
+        self.assertEqual(result['expected_led_count'], 192)
 
     def test_missing_count_does_not_guess_from_length(self):
         del self.reply['info']['leds']
         self.connection.read_until.return_value = json.dumps(self.reply).encode()
         with self.assertRaisesRegex(OSError, 'LED count'):
-            WLEDSerial(port='test').send(self.params)
+            WLEDSerial(port='test', led_count=144).send(self.params)
         self.assertEqual(self.connection.write.call_count, 1)
 
     def test_partial_strip_acknowledgement_is_failure(self):
@@ -215,13 +230,13 @@ class WLEDSerialTests(unittest.TestCase):
             wrong['state']['seg'][0][key] = value
             self.connection.read_until.side_effect = [json.dumps(self.reply).encode(), json.dumps(wrong).encode()]
             with self.assertRaisesRegex(OSError, 'full-strip coverage'):
-                WLEDSerial(port='test').send(self.params)
+                WLEDSerial(port='test', led_count=144).send(self.params)
 
     def test_power_off_uses_same_full_strip_command(self):
         off = json.loads(json.dumps(self.reply))
         off['state']['on'] = False
         self.connection.read_until.side_effect = [json.dumps(self.reply).encode(), json.dumps(off).encode()]
-        result = WLEDSerial(port='test').send({**self.params, 'on': False, 'bri': 0})
+        result = WLEDSerial(port='test', led_count=144).send({**self.params, 'on': False, 'bri': 0})
         self.assertEqual(result['covered_leds'], 144)
         command = json.loads(self.connection.write.call_args.args[0])
         self.assertFalse(command['on'])
@@ -231,22 +246,22 @@ class WLEDSerialTests(unittest.TestCase):
         for ports in ([], [SimpleNamespace(device='a', vid=1), SimpleNamespace(device='b', vid=2)]):
             with patch('wled_serial.list_ports.comports', return_value=ports), patch.dict('os.environ', {}, clear=True):
                 with self.assertRaisesRegex(OSError, 'BIOGLOW_WLED_PORT'):
-                    WLEDSerial().send(self.params)
+                    WLEDSerial(led_count=144).send(self.params)
         self.factory.assert_not_called()
         with patch('wled_serial.list_ports.comports', return_value=[SimpleNamespace(device='/dev/ttyUSB0', vid=1)]), patch.dict('os.environ', {}, clear=True):
-            WLEDSerial().send(self.params)
+            WLEDSerial(led_count=144).send(self.params)
         self.assertEqual(self.connection.port, '/dev/ttyUSB0')
 
     def test_wrong_firmware_is_not_sent_lighting_commands(self):
         self.connection.read_until.return_value = b'{"state": {}, "info": {"brand": "Other"}}\n'
         with self.assertRaisesRegex(OSError, 'identify as WLED'):
-            WLEDSerial(port='test').send(self.params)
+            WLEDSerial(port='test', led_count=144).send(self.params)
         self.assertEqual(self.connection.write.call_count, 1)
         self.connection.close.assert_called_once()
 
     def test_missing_acknowledgement_closes_connection(self):
         self.connection.read_until.side_effect = [json.dumps(self.reply).encode(), OSError('unplugged')]
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         with self.assertRaisesRegex(OSError, 'unplugged'):
             light.send(self.params)
         self.assertIsNone(light.connection)
@@ -258,16 +273,16 @@ class WLEDSerialTests(unittest.TestCase):
             wrong['state'][key] = value
             self.connection.read_until.side_effect = [json.dumps(self.reply).encode(), json.dumps(wrong).encode()]
             with self.assertRaisesRegex(OSError, 'acknowledge'):
-                WLEDSerial(port='test').send(self.params)
+                WLEDSerial(port='test', led_count=144).send(self.params)
 
     def test_boot_output_and_fragmented_reply(self):
         reply = json.dumps(self.reply).encode() + b'\n'
         self.connection.read_until.side_effect = [b'booting\n', reply[:25], reply[25:], reply]
-        WLEDSerial(port='test').send(self.params)
+        WLEDSerial(port='test', led_count=144).send(self.params)
         self.assertEqual(self.connection.write.call_count, 2)
 
     def test_startup_retries_without_reopening_or_resetting_the_port(self):
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         with patch.object(light, '_read_reply', side_effect=[SerialReplyTimeout('booting'), self.reply, self.reply]):
             light.send(self.params)
         self.factory.assert_called_once()
@@ -278,7 +293,7 @@ class WLEDSerialTests(unittest.TestCase):
         self.assertIn('seg', writes[2])
 
     def test_silent_startup_never_sends_lighting_commands(self):
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         with patch.object(light, '_read_reply', side_effect=SerialReplyTimeout('no data')):
             with self.assertRaises(SerialReplyTimeout):
                 light.send(self.params)
@@ -290,10 +305,10 @@ class WLEDSerialTests(unittest.TestCase):
     def test_json_after_boot_prefix_without_newline(self):
         reply = json.dumps(self.reply).encode() + b'\n'
         self.connection.read_until.side_effect = [b'\x00ESP32 boot log: ' + reply, reply]
-        WLEDSerial(port='test').send(self.params)
+        WLEDSerial(port='test', led_count=144).send(self.params)
 
     def test_no_response_reports_selected_port_baud_and_received_bytes(self):
-        light = WLEDSerial(port='/dev/serial/by-id/sp803e')
+        light = WLEDSerial(port='/dev/serial/by-id/sp803e', led_count=144)
         light.connection = self.connection
         self.connection.read_until.return_value = b''
         with patch('wled_serial.time.monotonic', side_effect=[0, 0, 4]):
@@ -301,7 +316,7 @@ class WLEDSerialTests(unittest.TestCase):
                 light._read_reply()
 
     def test_esphome_output_is_distinguished_from_silence(self):
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         light.connection = self.connection
         self.connection.read_until.return_value = b'[I][app:001]: ESPHome version 2026\n'
         with patch('wled_serial.time.monotonic', side_effect=[0, 0, 4]):
@@ -309,7 +324,7 @@ class WLEDSerialTests(unittest.TestCase):
                 light._read_reply()
 
     def test_silent_controller_times_out(self):
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         light.connection = self.connection
         self.connection.read_until.return_value = b''
         with patch('wled_serial.time.monotonic', side_effect=[0, 0, 4]):
@@ -318,7 +333,7 @@ class WLEDSerialTests(unittest.TestCase):
         self.connection.close.assert_called_once()
 
     def test_single_led_range_then_restore_full_strip(self):
-        light = WLEDSerial(port="test")
+        light = WLEDSerial(port="test", led_count=144)
         self.params["seg"][0].update(start=95, stop=96)
         single = json.loads(json.dumps(self.reply))
         single["state"]["seg"][0].update(start=95, stop=96)
@@ -336,7 +351,7 @@ class WLEDSerialTests(unittest.TestCase):
     def test_wrong_led_range_acknowledgment_rejected(self):
         self.params["seg"][0].update(start=95, stop=96)
         with self.assertRaisesRegex(OSError, "requested LED range"):
-            WLEDSerial(port="test").send(self.params)
+            WLEDSerial(port="test", led_count=144).send(self.params)
 
     def test_single_led_clears_competing_segments(self):
         current = json.loads(json.dumps(self.reply))
@@ -345,13 +360,13 @@ class WLEDSerialTests(unittest.TestCase):
         single["state"]["seg"][0].update(start=143, stop=144)
         self.params["seg"][0].update(start=143, stop=144)
         self.connection.read_until.side_effect = [json.dumps(item).encode() for item in (current, single)]
-        WLEDSerial(port="test").send(self.params)
+        WLEDSerial(port="test", led_count=144).send(self.params)
         command = json.loads(self.connection.write.call_args.args[0])
         self.assertEqual(command["seg"][1], {"id": 2, "stop": 0})
 
     def test_rapid_commands_use_one_roundtrip_and_periodic_refresh(self):
         now = [0.0]
-        light = WLEDSerial(port='test', clock=lambda: now[0])
+        light = WLEDSerial(port='test', led_count=144, clock=lambda: now[0])
         light.send(self.params)
         first_writes = self.connection.write.call_count
         light.send(self.params)
@@ -364,7 +379,7 @@ class WLEDSerialTests(unittest.TestCase):
         self.assertIsNone(light._current)
 
     def test_config_change_in_ack_invalidates_cached_state(self):
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         light.send(self.params)
         changed = json.loads(json.dumps(self.reply))
         changed['info']['leds']['count'] = 100
@@ -378,7 +393,7 @@ class WLEDSerialTests(unittest.TestCase):
         state_only = {'state': self.reply['state']}
         self.connection.read_until.side_effect = [json.dumps(item).encode() for item in
                                                  (self.reply, state_only, state_only)]
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         light.send(self.params)
         result = light.send(self.params)
         self.assertEqual(result['led_count'], 144)
@@ -388,6 +403,6 @@ class WLEDSerialTests(unittest.TestCase):
         partial = {'state': self.reply['state'], 'info': {'leds': {'pwr': 100}}}
         self.connection.read_until.side_effect = [json.dumps(item).encode() for item in
                                                  (self.reply, partial, partial)]
-        light = WLEDSerial(port='test')
+        light = WLEDSerial(port='test', led_count=144)
         light.send(self.params)
         self.assertEqual(light.send(self.params)['led_count'], 144)

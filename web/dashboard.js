@@ -187,7 +187,7 @@ function sourceCard(source, expanded = false) {
 }
 function lightingDevice() {
   const device = lighting.device || {};
-  return facts([['Connection','Pi server → USB serial → SP803E'],['USB port',escapeHtml(device.serial_port || 'Not selected yet')],['Serial speed',`${number(device.baudrate ?? 115200)} baud`],['Strip length','3.2 ft · 144 pixels'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 144)} pixels`],['Confirmed color',escapeHtml(device.confirmed_color || 'Not verified yet')],['Confirmed brightness',device.confirmed_brightness == null ? 'Not verified yet' : device.confirmed_on === false ? 'Off' : `${Math.round(device.confirmed_brightness / 255 * 100)}% (${number(device.confirmed_brightness)} / 255)`],['Segment brightness',device.segment_brightness == null ? 'Not verified yet' : `${number(device.segment_brightness)} / 255`],['WLED current limit',device.current_limit_ma == null ? 'Not reported' : device.current_limit_ma === 0 ? 'Disabled in WLED' : `${number(device.current_limit_ma)} mA`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Normal modes cover pixels 1–144 with a solid color and no spacing; Distance test lights one pixel. WLED must be configured for at least 144 pixels; a shorter configured output is reported as an error.</p>';
+  return facts([['Connection','Pi server → USB serial → SP803E'],['USB port',escapeHtml(device.serial_port || 'Not selected yet')],['Serial speed',`${number(device.baudrate ?? 115200)} baud`],['Strip length','192 pixels · 3½ spiral wraps'],['WLED pixels',device.led_count == null ? 'Awaiting controller' : number(device.led_count)],['Last confirmed coverage',device.covered_leds == null ? 'Not verified yet' : `${number(device.covered_leds)} / ${number(device.expected_led_count ?? 192)} pixels`],['Confirmed color',escapeHtml(device.confirmed_color || 'Not verified yet')],['Confirmed brightness',device.confirmed_brightness == null ? 'Not verified yet' : device.confirmed_on === false ? 'Off' : `${Math.round(device.confirmed_brightness / 255 * 100)}% (${number(device.confirmed_brightness)} / 255)`],['Segment brightness',device.segment_brightness == null ? 'Not verified yet' : `${number(device.segment_brightness)} / 255`],['WLED current limit',device.current_limit_ma == null ? 'Not reported' : device.current_limit_ma === 0 ? 'Disabled in WLED' : `${number(device.current_limit_ma)} mA`],['Firmware',escapeHtml(device.firmware || 'Awaiting controller')]]) + '<p class="timestamp">Normal modes cover pixels 1–192 with a solid color and no spacing; Distance test lights one pixel. WLED must be configured for at least 192 pixels; a shorter configured output is reported as an error.</p>';
 }
 function lightingLuxReading() {
   if (lighting.lux == null) return 'Unavailable';
@@ -221,14 +221,14 @@ function lightingSummary() {
   if (lighting.mode === 'auto') return `${base}${lighting.test_state === 'idle' ? ' · Idle · no distance change' : ''} · Distance ${lighting.distance_cm == null ? '—' : lighting.distance_cm + ' cm'} · Target ${lighting.target_brightness ?? '—'}/255 · Acknowledged ${lighting.brightness ?? '—'}/255 · Sample ${lighting.sample_age_seconds == null ? 'waiting' : lighting.sample_age_seconds.toFixed(1) + ' s ago'} · Ack ${lighting.ack_age_seconds == null ? 'waiting' : lighting.ack_age_seconds.toFixed(1) + ' s ago'}`;
   if (lighting.mode !== 'distance_test') return base;
   const unavailable = currentEntry('radar')?.http_status === 503;
-  const detail = unavailable ? 'Radar unavailable' : lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · Target LED ${lighting.led_index + 1} / 144`;
+  const detail = unavailable ? 'Radar unavailable' : lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · Target LED ${lighting.led_index + 1} / 192`;
   const confirmed = lighting.on === false ? 'Off' : lighting.confirmed_led_index == null ? 'Awaiting acknowledgment' : `LED ${lighting.confirmed_led_index + 1}`;
   return `${base} · ${detail} · Confirmed: ${confirmed} · 25% amber · every 0.5 s`;
 }
 function distanceTestPage() {
   return `<article class="card"><h2>Single-LED test</h2><p class="timestamp" data-lighting-summary>${escapeHtml(lightingSummary())}</p>
     <p>The LED target and radar map use the same filtered range and sampled frame. Confirmed shows the last controller acknowledgment; pending output may lag the target.</p>
-    <p>LED 1: 1 m or closer. LED 144: 6 m or farther. Distances between move the dot along LEDs 2–143. One amber LED stays at 25% brightness. No target turns the strip off; the radar’s absence delay still applies.</p>
+    <p>LED 1: 1 m or closer. LED 192: 6 m or farther. Distances between move the dot along LEDs 2–191. One amber LED stays at 25% brightness. No target turns the strip off; the radar’s absence delay still applies.</p>
     <div class="card-actions"><button class="button" data-lighting-mode="distance_test">Start distance test</button><button class="button secondary" data-lighting-mode="off">Off · stop test</button><a class="section-link" href="#lighting">Lighting controls ↗</a></div>
     <p class="error-message" data-lighting-error ${(lighting.error || lighting.sensor_error) ? '' : 'hidden'}>${escapeHtml([lighting.error, lighting.sensor_error].filter(Boolean).join(' '))}</p>
     <div data-lighting-device>${lightingDevice()}</div></article>${sourceCard('radar',true)}`;
@@ -253,9 +253,9 @@ function lightingControls() {
       <button class="button secondary" type="submit">Apply color &amp; brightness</button>
       </fieldset>
     </form>
-    <p class="timestamp">Distance test: LED 1 at 1 m or closer; LED 144 at 6 m or farther. Between 1–6 m, the dot moves along LEDs 2–143 at 25% amber. No target turns lights off; the radar’s own absence delay still applies. Stale readings turn lights off and show an error.</p>
+    <p class="timestamp">Distance test: LED 1 at 1 m or closer; LED 192 at 6 m or farther. Between 1–6 m, the dot moves along LEDs 2–191 at 25% amber. No target turns lights off; the radar’s own absence delay still applies. Stale readings turn lights off and show an error.</p>
     <p class="timestamp">Auto allows distance control below 10 lux and turns the strip off above 30 lux. From 10 through 30 lux it keeps the previous ambient state. Missing, invalid, or over-30-second-old lux keeps Auto off until darkness is confirmed. Manual On and Distance test bypass this rule.</p>
-    <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Auto uses distance for all 144 LEDs: 15% at 1 m or closer, rising to 50% at 6 m. After 5 seconds without a distance change, lights turn off. No target or unavailable radar turns lights off. Color changes preserve Auto.</p>
+    <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Auto uses distance for all 192 LEDs: 15% at 1 m or closer, rising to 50% at 6 m. After 5 seconds without a distance change, lights turn off. No target or unavailable radar turns lights off. Color changes preserve Auto.</p>
     <p class="timestamp">Commands go from this server to the USB controller. Status shows whether WLED acknowledged the command. At 100%, both master and segment brightness are 255/255. WLED’s configured power limits and global brightness factor can still reduce physical output.</p>
   </section>`;
 }
@@ -871,14 +871,14 @@ let alignmentDebounceTimer = null;
 let directionDebounceTimer = null;
 function updateAlignmentDisplay(val) {
   const n = parseInt(val, 10);
-  const count = Math.floor((144 - 1) / n) + 1;
-  const litText = count === 1 ? '1 LED lit (LED #1)' : `${count} of 144 LEDs lit`;
+  const count = Math.floor((192 - 1) / n) + 1;
+  const litText = count === 1 ? '1 LED lit (LED #1)' : `${count} of 192 LEDs lit`;
   const output = document.querySelector('#direction-alignment-value');
   if (output) output.textContent = `n = ${n} (${litText})`;
   const nextEl = document.querySelector('#alignment-next-led');
-  if (nextEl) nextEl.textContent = n >= 144 ? 'None (1+144 = 145 > 144)' : `LED #${1 + n}`;
+  if (nextEl) nextEl.textContent = n >= 192 ? 'None (beyond LED 192)' : `LED #${1 + n}`;
   const countEl = document.querySelector('#alignment-lit-count');
-  if (countEl) countEl.textContent = `${count} / 144`;
+  if (countEl) countEl.textContent = `${count} / 192`;
 }
 function updateBeamWidthDisplay(bwVal, nVal) {
   const bw = parseInt(bwVal, 10);
@@ -965,7 +965,7 @@ function getDialGeometry(offset, alignment, beamWidth) {
   const hy = cy - R * Math.cos(ac);
 
   const anchors = [];
-  for (let a = 1 + s; a <= 144; a += n) {
+  for (let a = 1 + s; a <= 192; a += n) {
     anchors.push(a);
   }
 
@@ -1166,8 +1166,8 @@ function attachLampDialListeners() {
 function directionalityPage() {
   const isDirConfig = stationMode === 'direction_config';
   const val = directionAlignment || 144;
-  const count = Math.floor((144 - 1) / val) + 1;
-  const litText = count === 1 ? '1 LED lit (LED #1)' : `${count} of 144 LEDs lit`;
+  const count = Math.floor((192 - 1) / val) + 1;
+  const litText = count === 1 ? '1 LED lit (LED #1)' : `${count} of 192 LEDs lit`;
   const maxBw = maxBeamWidthForAlignment(val);
   const bw = Math.min(directionBeamWidth || 1, maxBw);
   directionBeamWidth = bw;
@@ -1204,22 +1204,22 @@ function directionalityPage() {
         `<input id="direction-alignment-slider" name="alignment" type="range" min="1" max="144" step="1" value="${val}" ${isDirConfig ? '' : 'disabled'}>` +
         `<div class="slider-ticks-row">` +
           `<span>All lit (n=1)</span>` +
-          `<span>Thirds (n=48)</span>` +
-          `<span>Halves (n=72)</span>` +
-          `<span>Only 1st LED (n=144)</span>` +
+          `<span>Spacing 48</span>` +
+          `<span>Spacing 72</span>` +
+          `<span>Spacing 144</span>` +
         `</div>` +
       `</div>` +
       `<div class="alignment-summary-row">` +
         `<div class="alignment-stat"><span class="stat-label">First Lit LED</span><span class="stat-value">LED #1</span></div>` +
-        `<div class="alignment-stat"><span class="stat-label">Next Lit LED</span><span class="stat-value" id="alignment-next-led">${val >= 144 ? 'None (1+144 = 145 > 144)' : 'LED #' + (1 + val)}</span></div>` +
-        `<div class="alignment-stat"><span class="stat-label">Total Lit LEDs</span><span class="stat-value" id="alignment-lit-count">${count} / 144</span></div>` +
+        `<div class="alignment-stat"><span class="stat-label">Next Lit LED</span><span class="stat-value" id="alignment-next-led">${val >= 192 ? 'None (beyond LED 192)' : 'LED #' + (1 + val)}</span></div>` +
+        `<div class="alignment-stat"><span class="stat-label">Total Lit LEDs</span><span class="stat-value" id="alignment-lit-count">${count} / 192</span></div>` +
       `</div>` +
       `<div class="alignment-presets-row">` +
-        `<button type="button" class="button secondary btn-sm" data-preset-alignment="144" ${isDirConfig ? '' : 'disabled'}>1st LED only (n=144)</button>` +
-        `<button type="button" class="button secondary btn-sm" data-preset-alignment="72" ${isDirConfig ? '' : 'disabled'}>Halves (n=72)</button>` +
-        `<button type="button" class="button secondary btn-sm" data-preset-alignment="48" ${isDirConfig ? '' : 'disabled'}>Thirds (n=48)</button>` +
-        `<button type="button" class="button secondary btn-sm" data-preset-alignment="36" ${isDirConfig ? '' : 'disabled'}>Quarters (n=36)</button>` +
-        `<button type="button" class="button secondary btn-sm" data-preset-alignment="12" ${isDirConfig ? '' : 'disabled'}>Twelfths (n=12)</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="144" ${isDirConfig ? '' : 'disabled'}>Spacing 144</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="72" ${isDirConfig ? '' : 'disabled'}>Spacing 72</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="48" ${isDirConfig ? '' : 'disabled'}>Spacing 48</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="36" ${isDirConfig ? '' : 'disabled'}>Spacing 36</button>` +
+        `<button type="button" class="button secondary btn-sm" data-preset-alignment="12" ${isDirConfig ? '' : 'disabled'}>Spacing 12</button>` +
         `<button type="button" class="button secondary btn-sm" data-preset-alignment="1" ${isDirConfig ? '' : 'disabled'}>All lit (n=1)</button>` +
       `</div>` +
       `<div class="direction-section-divider"></div>` +
