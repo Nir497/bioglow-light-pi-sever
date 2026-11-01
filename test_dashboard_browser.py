@@ -117,6 +117,18 @@ setTimeout(async()=>{
     check(document.querySelector('#content').textContent.includes('Your first recording starts here'),'Empty recording library missing');
     browserLighting={mode:'auto',status:'ok',auto_gate_reason:'daylight',ambient_state:'light',lux:31,lux_age_seconds:0};
     location.hash='#lighting';await pause(650);
+    await setStationMode('manual_control');
+    const saveStatus=document.querySelector('[data-lamp-save-status]');
+    check(saveStatus.textContent.includes('automatically'),'Lamp save status missing');
+    const colorControl=document.querySelector('#wled-color');
+    colorControl.focus();
+    updateLampSaveStatus({persistence_status:'error',error:'Disk full <retry>'});
+    check(saveStatus.textContent==='Disk full <retry>','Storage error missing or interpreted as HTML');
+    check(saveStatus.classList.contains('error-message'),'Storage error is not visible');
+    check(document.querySelector('#wled-color')===colorControl,'Save status replaced color control');
+    check(document.activeElement===colorControl,'Save status lost focus');
+    updateLampSaveStatus({persistence_status:'saved',error:null});
+    check(saveStatus.textContent==='Settings saved automatically.','Save recovery missing');
     const ambientStatus=document.querySelector('[data-lighting-ambient]');
     check(ambientStatus.textContent.includes('Daylight · Auto off'),'Daylight explanation missing');
     check(ambientStatus.textContent.includes('Lux 31'),'Latest lux missing');
@@ -124,7 +136,7 @@ setTimeout(async()=>{
     check(luxDisplay.textContent==='31 lux','Prominent lux reading missing');
     const luxRule=document.querySelector('.lighting-lux-bands').textContent;
     check(luxRule.includes('< 10 lux') && luxRule.includes('10 ≤ lux ≤ 30') && luxRule.includes('> 30 lux'),'Three Auto thresholds missing');
-    const colorControl=document.querySelector('#wled-color');
+
     colorControl.focus();
     Object.assign(browserLighting,{auto_gate_reason:'lux_unavailable',ambient_state:'unknown',lux:null,lux_age_seconds:null});
     await pause(650);

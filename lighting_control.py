@@ -109,13 +109,28 @@ class LightingControl:
     def set_mode(self, mode):
         return self.configure(mode=mode)
 
-    def configure(self, mode=None, brightness=None, color=None):
+    def restore_preferences(self, settings):
+        """Seed startup preferences without sending a command or changing mode."""
+        with self._lock:
+            self._state.update(manual_brightness=settings["manual_brightness"],
+                               color=settings["color"], alignment=settings["alignment"],
+                               beam_width=settings["beam_width"], direction_offset=settings["offset"])
+
+    def validate_preferences_update(self, mode=None, brightness=None, color=None):
         if mode is not None and mode not in ("on", "off", "auto", "distance_test", "direction_config"):
             raise ValueError('mode must be "on", "off", "auto", "distance_test", or "direction_config"')
         if brightness is not None and (type(brightness) is not int or not 1 <= brightness <= 255):
             raise ValueError("brightness must be an integer from 1 to 255")
         if color is not None and (not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
             raise ValueError("color must be a hex RGB value such as #ff8000")
+        with self._lock:
+            if self._stopped:
+                raise ValueError("Lighting control has stopped")
+            if self._state["mode"] == "distance_test" and mode is None:
+                raise ValueError("Select On, Off, or Auto before changing appearance")
+
+    def configure(self, mode=None, brightness=None, color=None):
+        self.validate_preferences_update(mode, brightness, color)
         if mode is None and brightness is None and color is None:
             raise ValueError("Provide mode, brightness, or color")
         if mode == "direction_config":

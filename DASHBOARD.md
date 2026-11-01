@@ -280,3 +280,26 @@ the current sequence returns all retained events with `reset: true`; clients
 must also detect changed sessions across server restarts. Invalid cursors return
 HTTP 400. Incoming events include `bytes_hex` to preserve original bytes when
 serial text contains invalid UTF-8. No log files are written.
+
+## Saved lamp configuration
+
+Accepted changes to alignment spacing, beam width, beam direction (LED offset),
+manual brightness, and color are automatically saved on the server in
+`.runtime/lamp_config.json`. All browsers share this configuration. The version 1
+JSON contains a `settings` object with `alignment`, `beam_width`, `offset`,
+`manual_brightness`, and `color`. Back up this file to preserve your preferences;
+restore it while the server is stopped, then restart the server.
+
+Startup restores preferences but keeps station mode `normal` and lighting `auto`.
+Activate Direction Config or manual control to use the corresponding saved values.
+Live brightness, sensor readings, diagnostic modes, and device firmware settings
+are not saved. The file is local runtime data and is excluded from Git.
+
+`/v1/latest` includes `lamp_configuration` with `settings`, `persistence_status`
+(`defaults`, `saved`, or `error`), and `error`. Lamp pages display save status.
+A failed write rejects the change with HTTP 500 (`configuration_save_failed`) and
+keeps previous settings. Controller delivery errors do not discard saved settings.
+A missing file uses defaults. An unreadable, invalid, or unsupported file uses
+defaults and reports an error; the original file stays untouched until a valid
+user change saves a replacement. To recover, correct permissions or back up and
+remove the invalid file while stopped, then restart and adjust the lamp settings.

@@ -24,9 +24,10 @@ function element() {
   const classes = new Set();
   return {innerHTML:'',textContent:'',hidden:false,dataset:{},inert:false,
     classList:{toggle(name,on){if(on)classes.add(name);else classes.delete(name);return on;},contains(name){return classes.has(name);},remove(name){classes.delete(name);}},
+    querySelectorAll(){return [];},
     addEventListener(name,fn){this.listeners ??= {};this.listeners[name]=fn;},
     setAttribute(){},removeAttribute(){},focus(){},
-    querySelector(selector){queried.push(selector);return {html:this.innerHTML,querySelector:()=>null,replaceWith(node){replacement=node.html;}};},
+    querySelector(selector){queried.push(selector);if(selector==='[data-lamp-save-status]')return null;return {html:this.innerHTML,querySelector:()=>null,replaceWith(node){replacement=node.html;}};},
     get firstElementChild(){return {html:this.innerHTML};}};
 }
 const document = {
@@ -72,6 +73,13 @@ const context=vm.createContext({document,console,URL,Object,Date,AbortController
 async function main(){
   vm.runInContext(fs.readFileSync('web/dashboard.js','utf8'),context);
   await new Promise(resolve=>setImmediate(resolve));
+  vm.runInContext("updateLampSaveStatus({persistence_status:'saved',error:null})",context);
+  assert.match(vm.runInContext('lampSaveStatus()',context),/Settings saved automatically/);
+  const focusedControl=document.querySelector('#wled-color');
+  vm.runInContext("updateLampSaveStatus({persistence_status:'error',error:'Disk full <retry>'})",context);
+  assert.match(vm.runInContext('lampSaveStatus()',context),/Disk full &lt;retry&gt;/);
+  assert.equal(document.querySelector('#wled-color'),focusedControl,'Save status preserves controls');
+  vm.runInContext('updateLampSaveStatus({})',context);
   assert.deepEqual(requests.map(r=>r.path),['/v1/latest','/v1/recordings']);
   assert.match(document.querySelector('#content').innerHTML,/Fresh frame/);
   assert.ok(!document.querySelector('#content').innerHTML.includes('data-history-metric'), 'Overview contains no graphs or graph controls');
