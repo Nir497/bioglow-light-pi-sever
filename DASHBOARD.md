@@ -280,3 +280,49 @@ the current sequence returns all retained events with `reset: true`; clients
 must also detect changed sessions across server restarts. Invalid cursors return
 HTTP 400. Incoming events include `bytes_hex` to preserve original bytes when
 serial text contains invalid UTF-8. No log files are written.
+
+### Settings persistence and portable backups
+
+Lighting preferences are saved automatically in the ignored
+`.runtime/configuration-v1.json`: spiral spacing, beam width, offset, manual
+brightness, calibration brightness, and RGB color. Writes use a serialized
+settings transaction, file fsync, atomic replacement, and directory fsync. The
+old `.runtime/lamp_config.json` is never read. Missing files use defaults;
+invalid files are preserved and a visible error blocks ordinary saves until
+an explicit backup restore replaces the file.
+
+Startup loads preferences but always enters Normal / Auto with microphone
+scheduling stopped. Enter Direction Config to reuse calibration. Rendering
+continues to use WLED segment grouping, spacing, and offset.
+
+Configuration → Settings & backup downloads a readable, versioned JSON snapshot
+of accepted shared preferences and this browser's display choices. Uploads are
+fully validated, preview shared and browser changes separately, and require
+Confirm restore. A changed server revision (including a server restart)
+invalidates the preview. Cancel has no effect. Restore preserves station mode
+and recording state; controller delivery errors are separate from durable saving.
+Backups exclude sensor logs, recordings, results, credentials, and runtime state.
+These controls retain the dashboard's existing public access policy.
+
+Region, each graph's metric and range, and the selected animal live in
+`localStorage` under `bioglow-display-v1`. They belong to that browser/origin.
+Unavailable storage displays a warning; obsolete selections fall back to valid
+choices. Backup import changes only the importing browser.
+
+API: `GET /v1/configuration` returns shared preferences, an opaque revision,
+and any startup error. `POST /v1/configuration/preview` accepts
+`{"backup": ...}`; `POST /v1/configuration/restore` accepts the complete backup
+and the preview's `revision`. Restore returns HTTP 409 when the preview is stale.
+Successful appearance edits and restore mean preferences were saved even if
+the returned lighting status reports a disconnected controller.
+
+Verified November 1, 2026: the 182-test regression run passed, followed by
+two passing Chromium tests including two independent profiles across reloads.
+Actual service restart checks retained 51/1/0 and 49/3/7 calibrations, manual
+brightness/color, and confirmed backup restoration including calibration
+brightness. The captured original 50/5/4 calibration was then restored, with
+Normal/Auto startup and recording scheduling stopped. The baseline DOM mock
+was repaired so frontend checks run. Direct live Chromium navigation remained
+blocked at a blank page in this environment; browser UI and profile checks used
+the existing synthetic HTTP fixtures. Physical alignment remains a visual check,
+and a full operating-system reboot was not performed.

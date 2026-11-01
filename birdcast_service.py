@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from contextlib import nullcontext
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from configuration_store import ConfigurationStore, validate_backup, validate_shared
 import birdcast_scraper
 from animal_analysis import AnalysisBusy, AnalysisCoordinator, AnalysisUnavailable
 from animal_model import is_species_label
@@ -130,10 +132,12 @@ class Service:
         self.mode = "normal"
         self._services_status_cache: dict[str, Any] | None = None
         self._services_status_time: float = 0.0
-        self._mode_lock = threading.Lock()
+        self._mode_lock = threading.RLock()
+        self.settings = ConfigurationStore(self.root)
         self.direction_alignment = 144
         self.direction_beam_width = 1
         self.direction_offset = 0
+        self._apply_preferences()
         self.runner = runner or self._run_scraper
         self._lock = threading.Lock()
         self.recorder = recorder
@@ -173,25 +177,58 @@ class Service:
                 # A cache failure must not turn a completed sensor read or capture into a failure.
                 logging.getLogger(__name__).warning("Latest results remain in memory; cache write failed: %s", exc)
 
+    def _apply_preferences(self):
+        prefs = self.settings.shared
+        self.direction_alignment = prefs["alignment"]
+        self.direction_beam_width = prefs["beam_width"]
+        self.direction_offset = prefs["offset"]
+        self.lighting.load_preferences(prefs)
+
+    def configure_lighting(self, **body):
+        with self._mode_lock:
+            mode = body.get("mode")
+            if mode is not None and mode not in ("on", "off", "auto", "distance_test", "direction_config"):
+                raise ValueError("Invalid lighting mode.")
+            if mode == "direction_config" and self.mode != "direction_config":
+                raise ValueError("Direction Config station mode must be active.")
+            if self.lighting.status()["mode"] == "distance_test" and mode is None:
+                raise ValueError("Select On, Off, or Auto before changing appearance.")
+            calibrating = mode == "direction_config" and self.mode == "direction_config"
+            if not calibrating and self.mode != "manual_control" and (mode in ("on", "off") or "brightness" in body or "color" in body):
+                raise ValueError("Manual control mode must be active to change appearance.")
+            prefs = dict(self.settings.shared)
+            if "brightness" in body:
+                prefs["calibration_brightness" if calibrating else "manual_brightness"] = body["brightness"]
+            if "color" in body:
+                prefs["color"] = body["color"]
+            prefs = validate_shared(prefs)
+            if prefs != self.settings.shared:
+                self.settings.save(prefs)
+                self._apply_preferences()
+            return self.lighting.configure(**body)
+
     def set_station_mode(self, mode: str) -> str:
         if mode not in self.SUPPORTED_MODES:
             raise ValueError(f"Unknown mode: {mode}. Choose from: {', '.join(self.SUPPORTED_MODES)}.")
         with self._mode_lock:
-            previous_mode = self.mode
             self.mode = mode
             if mode == "direction_config":
                 try:
-                    self.lighting.set_direction_alignment(self.direction_alignment, beam_width=self.direction_beam_width, offset=self.direction_offset)
+                    self.lighting.set_direction_alignment(self.direction_alignment, beam_width=self.direction_beam_width, offset=self.direction_offset, brightness=self.settings.shared["calibration_brightness"])
                 except Exception as exc:
                     logging.getLogger(__name__).warning("Could not set direction alignment: %s", exc)
-            elif previous_mode == "direction_config" and mode == "normal":
+            elif mode == "normal":
                 try:
                     self.lighting.set_mode("auto")
                 except Exception as exc:
                     logging.getLogger(__name__).warning("Could not restore auto lighting: %s", exc)
             return self.mode
 
-    def set_direction_alignment(self, spacing: int, beam_width: int = None, offset: int = None) -> dict[str, Any]:
+    def set_direction_alignment(self, spacing, beam_width=None, offset=None):
+        with self._mode_lock:
+            return self._set_direction_alignment(spacing, beam_width, offset)
+
+    def _set_direction_alignment(self, spacing: int, beam_width: int = None, offset: int = None) -> dict[str, Any]:
         if not (type(spacing) is int and 1 <= spacing <= 144):
             raise ValueError("alignment must be an integer from 1 to 144")
         max_w = min(143, 2 * (spacing // 2) + 1)
@@ -203,10 +240,11 @@ class Service:
             offset = self.direction_offset % spacing
         elif not (type(offset) is int and 0 <= offset < spacing):
             raise ValueError(f"offset must be an integer from 0 to {spacing - 1}")
-        self.direction_alignment = spacing
-        self.direction_beam_width = beam_width
-        self.direction_offset = offset
-        return self.lighting.set_direction_alignment(spacing, beam_width=beam_width, offset=offset)
+        self.settings.save({**self.settings.shared, "alignment": spacing,
+                            "beam_width": beam_width, "offset": offset})
+        self._apply_preferences()
+        return self.lighting.set_direction_alignment(spacing, beam_width=beam_width, offset=offset,
+                                                     brightness=self.settings.shared["calibration_brightness"])
 
     def get_services_status(self, force_refresh: bool = False) -> dict[str, Any]:
         import time as _time
@@ -219,6 +257,10 @@ class Service:
         return copy.deepcopy(status)
 
     def latest(self) -> dict[str, Any]:
+        with self._mode_lock:
+            return self._latest_snapshot()
+
+    def _latest_snapshot(self) -> dict[str, Any]:
         with self._latest_lock:
             result = copy.deepcopy(self._latest)
         # Radar is passive: this reads worker state without opening UART or sending commands.
@@ -230,6 +272,7 @@ class Service:
             status, radar = self.presence_sensor.response()
             result["radar"] = {"http_status": status, "result": radar}
         return {"status": "ok", "sources": result, "lighting": lighting,
+                "configuration": self.settings.snapshot(),
                 "collection": self.collection_schedule.status(),
                 "mode": self.mode, "modes": list(self.SUPPORTED_MODES),
                 "directionality": {
@@ -462,11 +505,52 @@ def make_handler(service: Service):
             return body
 
         def do_POST(self):
+            settings_request = self.path in (
+                "/v1/direction", "/v1/direction/alignment", "/v1/directionality/alignment",
+                "/v1/lighting", "/v1/station-mode", "/v1/mode",
+                "/v1/configuration/preview", "/v1/configuration/restore")
+            with service._mode_lock if settings_request else nullcontext():
+                try:
+                    self._post()
+                except OSError as exc:
+                    if not settings_request:
+                        raise
+                    self._send(500, error_payload("configuration_not_saved", f"Change not saved: {exc}"))
+
+        def _post(self):
+            if self.path in ("/v1/configuration/preview", "/v1/configuration/restore"):
+                try:
+                    body = self._body()
+                    required = {"backup"} if self.path.endswith("preview") else {"backup", "revision"}
+                    if set(body) != required:
+                        raise ValueError("Invalid restore request fields.")
+                    backup = validate_backup(body["backup"], SUPPORTED_REGIONS)
+                    if self.path.endswith("preview"):
+                        self._send(200, {"current": service.settings.snapshot(), "proposed": backup})
+                        return
+                    if type(body["revision"]) is not str or body["revision"] != service.settings.revision:
+                        self._send(409, error_payload("configuration_changed", "Settings changed. Request a new preview."))
+                        return
+                    service.settings.save(backup["shared"], replace_invalid=True)
+                    service._apply_preferences()
+                    if service.mode == "direction_config":
+                        lighting = service.lighting.set_direction_alignment(
+                            service.direction_alignment, service.direction_beam_width, service.direction_offset,
+                            brightness=service.settings.shared["calibration_brightness"])
+                    elif service.mode == "manual_control":
+                        lighting = service.lighting.configure(mode=service.lighting.status()["mode"])
+                    else:
+                        lighting = service.lighting.status()
+                    self._send(200, {"saved": True, "configuration": service.settings.snapshot(),
+                                     "browser": backup["browser"], "lighting": lighting})
+                except (ValueError, TypeError) as exc:
+                    self._send(400, error_payload("invalid_backup", str(exc)))
+                return
             if self.path in ("/v1/direction", "/v1/direction/alignment", "/v1/directionality/alignment"):
                 try:
                     body = self._body()
-                    if not isinstance(body, dict):
-                        raise ValueError("Request body must be a JSON object.")
+                    if not isinstance(body, dict) or set(body) - {"alignment", "beam_width", "offset", "angle", "angle_degrees"}:
+                        raise ValueError("Unknown direction fields.")
                     if "alignment" not in body and "beam_width" not in body and "offset" not in body and "angle" not in body and "angle_degrees" not in body:
                         raise ValueError("Request body must include 'alignment', 'beam_width', 'offset', or 'angle'.")
                     spacing = body.get("alignment", service.direction_alignment)
@@ -511,6 +595,8 @@ def make_handler(service: Service):
                     body = self._body()
                     if not body or set(body) - {"mode", "brightness", "color", "alignment", "beam_width", "offset", "angle", "angle_degrees"} or any(value is None for value in body.values()):
                         raise ValueError('Provide mode (on/off/auto/distance_test/direction_config), brightness (1–255), color (#RRGGBB), alignment (1–144), beam_width, or offset.')
+                    if any(key in body for key in ("alignment", "beam_width", "offset", "angle", "angle_degrees")) and any(key in body for key in ("mode", "brightness", "color")):
+                        raise ValueError("Change direction and appearance separately.")
                     if "alignment" in body or "beam_width" in body or "offset" in body or "angle" in body or "angle_degrees" in body:
                         spacing = body.get("alignment", service.direction_alignment)
                         if not (isinstance(spacing, int) and 1 <= spacing <= 144):
@@ -538,12 +624,11 @@ def make_handler(service: Service):
                             return
                         lighting = service.set_direction_alignment(spacing, beam_width=bw, offset=offset)
                     elif set(body) == {"mode"}:
-                        lighting = service.lighting.set_mode(body["mode"])
+                        lighting = service.configure_lighting(**body)
                     else:
-                        lighting = service.lighting.configure(**body)
-                    self._send(503 if lighting["status"] == "controller_unavailable" else 200,
-                               {"status": "ok" if lighting["status"] != "controller_unavailable" else "error",
-                                "lighting": lighting})
+                        lighting = service.configure_lighting(**body)
+                    self._send(200, {"status": "ok", "saved": any(key != "mode" for key in body),
+                                     "hardware_delivery": lighting["status"], "lighting": lighting})
                 except ValueError as exc:
                     self._send(400, error_payload("malformed_request", str(exc)))
                 return
@@ -621,6 +706,10 @@ def make_handler(service: Service):
 
         def do_GET(self):
             path = urlsplit(self.path).path
+            if path == "/v1/configuration":
+                with service._mode_lock:
+                    self._send(200, service.settings.snapshot())
+                return
             assets = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/distance-test": ("index.html", "text/html; charset=utf-8"),

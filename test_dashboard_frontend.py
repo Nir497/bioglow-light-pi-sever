@@ -25,8 +25,8 @@ function element() {
   return {innerHTML:'',textContent:'',hidden:false,dataset:{},inert:false,
     classList:{toggle(name,on){if(on)classes.add(name);else classes.delete(name);return on;},contains(name){return classes.has(name);},remove(name){classes.delete(name);}},
     addEventListener(name,fn){this.listeners ??= {};this.listeners[name]=fn;},
-    setAttribute(){},removeAttribute(){},focus(){},
-    querySelector(selector){queried.push(selector);return {html:this.innerHTML,querySelector:()=>null,replaceWith(node){replacement=node.html;}};},
+    setAttribute(){},removeAttribute(){},focus(){},querySelectorAll(){return [];},
+    querySelector(selector){queried.push(selector);return {html:this.innerHTML,dataset:{},contains:()=>false,querySelector:()=>null,querySelectorAll:()=>[],classList:{toggle(){}},replaceWith(node){replacement=node.html;}};},
     get firstElementChild(){return {html:this.innerHTML};}};
 }
 const document = {

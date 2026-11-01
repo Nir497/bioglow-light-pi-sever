@@ -61,6 +61,14 @@ class LightingControl:
                        "connection": "usb" if transport else "wifi",
                        "manual_brightness": 255, "color": "#ffa028", "on": None}
 
+    def load_preferences(self, prefs):
+        """Install accepted preferences without activating any output regime."""
+        with self._lock:
+            self._state.update(manual_brightness=prefs["manual_brightness"], color=prefs["color"],
+                               alignment=prefs["alignment"], beam_width=prefs["beam_width"],
+                               direction_offset=prefs["offset"],
+                               alignment_brightness=prefs["calibration_brightness"])
+
     def _ambient_status(self):
         """Read-only view; callers hold the lighting lock."""
         age = None if self._lux_at is None else max(0, self._clock() - self._lux_at)

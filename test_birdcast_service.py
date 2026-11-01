@@ -62,6 +62,7 @@ class ServiceTests(unittest.TestCase):
         handler._send = MagicMock()
         self.service.lighting.transport = MagicMock()
         self.service.lighting._background = False
+        self.service.set_station_mode('manual_control')
         handler._body = MagicMock(return_value={'brightness': 80, 'color': '#112233'})
         handler.do_POST()
         status, payload = handler._send.call_args.args
@@ -111,6 +112,7 @@ class ServiceTests(unittest.TestCase):
         handler = object.__new__(make_handler(self.service))
         handler.path = "/v1/lighting"
         handler._send = MagicMock()
+        self.service.set_station_mode("manual_control")
         handler._body = MagicMock(return_value={"color": "#112233"})
         handler.do_POST()
         self.assertEqual(handler._send.call_args.args[1]["lighting"]["mode"], "auto")
@@ -182,19 +184,20 @@ class ServiceTests(unittest.TestCase):
         self.service.lighting.update.assert_called_with(None)
 
     def test_manual_lighting_endpoint_validation_and_failure(self):
+        self.service.set_station_mode("manual_control")
         self.service.lighting = MagicMock()
         server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
             conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=2)
-            for mode, state, expected in (("on", "ok", 200), ("off", "controller_unavailable", 503)):
-                self.service.lighting.set_mode.return_value = {"mode": mode, "status": state}
+            for mode, state, expected in (("on", "ok", 200), ("off", "controller_unavailable", 200)):
+                self.service.lighting.configure.return_value = {"mode": mode, "status": state}
                 conn.request("POST", "/v1/lighting", json.dumps({"mode": mode}), {"Content-Type": "application/json"})
                 response = conn.getresponse()
                 self.assertEqual(response.status, expected)
                 self.assertEqual(json.loads(response.read())["lighting"]["mode"], mode)
-                self.service.lighting.set_mode.assert_called_with(mode)
+                self.service.lighting.configure.assert_called_with(mode=mode)
             conn.request("POST", "/v1/lighting", '{}', {"Content-Type": "application/json"})
             response = conn.getresponse()
             self.assertEqual(response.status, 400)

@@ -34,7 +34,7 @@ On November 1, 2026, the user requested restoration to `c1b27ef6ed4330487f417718
 
 Direction calibration must let the user adjust spiral spacing until the three light points, one per physical wrap, form a vertical column. Preserve the spacing slider and presets, beam-width controls, and the separate Output → Direction dial and nudges. At width 1 and offset 0, spacing 51 selects LEDs 1, 52, and 103 on the 144-pixel logical strip; this is an example, not a fixed calibration. Physical alignment requires visual verification. A successful WLED acknowledgement or mocked test does not prove that all three points are visible or aligned.
 
-The restored implementation uses WLED segment grouping, spacing, and offset (`grp`, `spc`, `of`). Lamp preferences currently remain in memory and reset on server restart; JSON autosaving is not active. An ignored `.runtime/lamp_config.json` may remain from the reverted implementation but is not loaded. If persistence is requested again, preserve the existing calibration controls and rendering behavior and verify adjustments and restart restoration before reporting success.
+The restored implementation uses WLED segment grouping, spacing, and offset (`grp`, `spc`, `of`). Lamp preferences now persist automatically in ignored `.runtime/configuration-v1.json` under the approved configuration-data-file specification. Normal/Auto and stopped microphone scheduling remain startup defaults. An ignored `.runtime/lamp_config.json` may remain from the reverted implementation but is never loaded. If persistence is requested again, preserve the existing calibration controls and rendering behavior and verify adjustments and restart restoration before reporting success.
 
 ## Development & Test Commands
 

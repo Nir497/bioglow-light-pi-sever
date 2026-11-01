@@ -1,10 +1,11 @@
 'use strict';
-const names = {'wled-log':'WLED log','distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',direction:'Direction',birdcast:'BirdCast',recordings:'Recordings','config-direction':'Direction','config-directionality':'Direction','config-schedule':'Recording schedule','config-lighting':'WLED hardware','logs-sensors':'Sensor histories'};
-const sectionMap = {light:'Input',radar:'Input',recordings:'Input',birdcast:'Input',lighting:'Output',direction:'Output','distance-test':'Output','config-direction':'Configuration','config-directionality':'Configuration','config-schedule':'Configuration','config-lighting':'Configuration','wled-log':'Logs','logs-sensors':'Logs'};
-const itemNames = {light:'Lux sensor',radar:'Radar',recordings:'Recordings',birdcast:'BirdCast',lighting:'WLED light',direction:'Direction','distance-test':'Distance test',overview:'Station overview','config-direction':'Direction','config-directionality':'Direction','config-schedule':'Recording schedule','config-lighting':'WLED hardware','wled-log':'WLED log','logs-sensors':'Sensor histories'};
-const titles = {'wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',direction:'Lamp beam direction',birdcast:'Migration outlook',recordings:'Sound library','config-direction':'Direction configuration','config-directionality':'Direction configuration','config-schedule':'Audio collection schedule','config-lighting':'WLED hardware settings','logs-sensors':'Sensor history logs'};
-const descriptions = {'wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',direction:'Overhead aerial view to steer the vertical light beam in any direction around the lamp.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.','config-direction':'Configure spiral wrap spacing and beam width to align the vertical column of light.','config-directionality':'Configure spiral wrap spacing and beam width to align the vertical column of light.','config-schedule':'Automate microphone sampling every two minutes across all clients.','config-lighting':'Hardware parameters, serial connection details, and output bounds for WLED.','logs-sensors':'Historical readings collected from presence, light, and migration sensors.'};
+const names = {'config-settings':'Settings & backup','wled-log':'WLED log','distance-test':'Distance test',overview:'Overview',radar:'Radar',light:'Lux sensor',lighting:'WLED light',direction:'Direction',birdcast:'BirdCast',recordings:'Recordings','config-direction':'Direction','config-directionality':'Direction','config-schedule':'Recording schedule','config-lighting':'WLED hardware','logs-sensors':'Sensor histories'};
+const sectionMap = {'config-settings':'Configuration',light:'Input',radar:'Input',recordings:'Input',birdcast:'Input',lighting:'Output',direction:'Output','distance-test':'Output','config-direction':'Configuration','config-directionality':'Configuration','config-schedule':'Configuration','config-lighting':'Configuration','wled-log':'Logs','logs-sensors':'Logs'};
+const itemNames = {'config-settings':'Settings & backup',light:'Lux sensor',radar:'Radar',recordings:'Recordings',birdcast:'BirdCast',lighting:'WLED light',direction:'Direction','distance-test':'Distance test',overview:'Station overview','config-direction':'Direction','config-directionality':'Direction','config-schedule':'Recording schedule','config-lighting':'WLED hardware','wled-log':'WLED log','logs-sensors':'Sensor histories'};
+const titles = {'config-settings':'Settings & backup','wled-log':'WLED command log','distance-test':'Distance sensor · LED test',overview:'Station overview',radar:'Presence & movement',light:'Luminance',lighting:'WLED strip lighting',direction:'Lamp beam direction',birdcast:'Migration outlook',recordings:'Sound library','config-direction':'Direction configuration','config-directionality':'Direction configuration','config-schedule':'Audio collection schedule','config-lighting':'WLED hardware settings','logs-sensors':'Sensor history logs'};
+const descriptions = {'config-settings':'Automatic saving and portable configuration backups.','wled-log':'USB traffic observed by this server · Latest 2,000 events · Cleared on server restart.','distance-test':'Live radar readings and single-LED output, refreshed every half second. The test continues when you leave this page; select Off to stop it.',overview:'Your sensors, migration data, and sound — in one place.',radar:'Live LD2410C presence & activity estimator, radial distance gates (0–6.75 m), and raw UART diagnostics.',light:'Measure the light around your station with the VEML7700.',lighting:'Control your 3.2 ft strip through the SP803E WLED-ESP32 USB controller.',direction:'Overhead aerial view to steer the vertical light beam in any direction around the lamp.',birdcast:'Fetch the latest migration snapshot for a US state.',recordings:'Capture a moment. Listen again. Manage your saved recordings.','config-direction':'Configure spiral wrap spacing and beam width to align the vertical column of light.','config-directionality':'Configure spiral wrap spacing and beam width to align the vertical column of light.','config-schedule':'Automate microphone sampling every two minutes across all clients.','config-lighting':'Hardware parameters, serial connection details, and output bounds for WLED.','logs-sensors':'Historical readings collected from presence, light, and migration sensors.'};
 let sources = {}, recordings = [], regions = [], region = 'US-CA', loadingLibrary = true, libraryError = '', cacheError = '', stationMode = 'normal', directionAlignment = 144, directionBeamWidth = 1, directionOffset = 0, systemServices = {};
+let browserPersistenceError = '', configurationError = '';
 let histories = {};
 let lighting = {};
 const historyRanges = {radar:'1h',light:'1h',birdcast:'1d',microphone:'1d'};
@@ -53,7 +54,7 @@ const view = () => {
   if (hash === 'config-directionality') return 'config-direction';
   return Object.hasOwn(names, hash) ? hash : location.pathname === '/distance-test' ? 'distance-test' : 'overview';
 };
-function notice(message, error = false) { const box = document.querySelector('#notice'); box.textContent = message; box.classList.toggle('error',error); box.hidden = !message; }
+function notice(message, error = false) { if (browserPersistenceError) { message = [message,browserPersistenceError].filter(Boolean).join(' '); error = true; } const box = document.querySelector('#notice'); box.textContent = message; box.classList.toggle('error',error); box.hidden = !message; }
 async function api(path, options = {}) {
   const controller = new AbortController();
   // Reads recover quickly; actions allow the server's capture/scraper deadline.
@@ -486,7 +487,8 @@ async function loadHistory(source, force = false) {
       if (!data.animals.includes(selectedAnimal)) selectedAnimal = data.animals[0] || '';
       const selector = content.querySelector('[data-history-metric="microphone"]');
       if (selector && JSON.stringify(previousAnimals)!==JSON.stringify(data.animals)) selector.innerHTML = data.animals.map(animal=>`<option value="${escapeHtml(animal)}" ${animal===selectedAnimal?'selected':''}>${escapeHtml(animalLabel(animal))}</option>`).join('');
-      loadAnimalNames(data.animals);
+      saveBrowserPreferences();
+    loadAnimalNames(data.animals);
     }
   } catch (error) {
     if (historyRequests[source]!==generation) return;
@@ -908,6 +910,7 @@ async function sendAlignment(n, bw) {
     if (res.alignment) directionAlignment = res.alignment;
     if (res.beam_width) directionBeamWidth = res.beam_width;
     if (res.offset != null) directionOffset = res.offset;
+    if (res.lighting?.status==='controller_unavailable') notice('Direction preferences saved; controller delivery failed.',true);
   } catch (err) {
     notice(`Could not set direction parameters: ${err.message}`, true);
   }
@@ -930,6 +933,7 @@ async function sendDirection(offset) {
     if (res.offset != null) directionOffset = res.offset;
     if (res.alignment) directionAlignment = res.alignment;
     if (res.beam_width) directionBeamWidth = res.beam_width;
+    if (res.lighting?.status==='controller_unavailable') notice('Direction preferences saved; controller delivery failed.',true);
   } catch (err) {
     notice(`Could not set direction: ${err.message}`, true);
   }
@@ -1322,6 +1326,7 @@ function render() {
     content.innerHTML = directionalityPage();
   }
   else if (current === 'config-schedule') content.innerHTML = `<article class="card audio-summary"><div class="audio-copy"><h2>Automatic microphone collection</h2><p>Audio recording runs on a shared server-side schedule. When enabled, the station captures 5 seconds of audio every 120 seconds.</p>${resultError('microphone')}</div><div class="audio-tools"><div data-recording-schedule>${scheduleControls()}</div><span class="badge empty" data-recording-count>${recordings.length} saved</span></div></article><article class="card"><h2>Recording schedule settings</h2>${facts([['Interval','120 seconds (2 minutes)'],['Sample duration','5 seconds'],['Audio format','WAV 48 kHz mono 16-bit PCM'],['State',collection.enabled ? 'Active (running)' : 'Stopped (manual captures only)'],['Next capture',collection.next_recording_at ? time(collection.next_recording_at) : 'None scheduled']])}</article>`;
+  else if (current === 'config-settings') content.innerHTML = settingsPage();
   else if (current === 'config-lighting') content.innerHTML = `<article class="card"><h2>WLED USB controller configuration</h2>${wledFacts()}</article><article class="card"><h2>Lighting quick controls</h2>${lightingControls()}</article>`;
   else if (current === 'logs-sensors') content.innerHTML = `<article class="card"><h2>Presence & movement history</h2>${historyGraph('radar')}</article><article class="card"><h2>Luminance history</h2>${historyGraph('light')}</article><article class="card"><h2>BirdCast migration history</h2>${historyGraph('birdcast')}</article><article class="card"><h2>Animal identification history</h2>${historyGraph('microphone')}</article>`;
   else {
@@ -1350,11 +1355,23 @@ async function loadCache() {
     else if (data.lighting?.beam_width) directionBeamWidth = data.lighting.beam_width;
     if (data.directionality?.offset != null) directionOffset = data.directionality.offset;
     else if (data.lighting?.direction_offset != null) directionOffset = data.lighting.direction_offset;
+    const alignmentSlider = document.querySelector('#direction-alignment-slider');
+    const widthSlider = document.querySelector('#direction-beam-width-slider');
+    if (alignmentSlider && document.activeElement !== alignmentSlider && document.activeElement !== widthSlider) {
+      alignmentSlider.value = directionAlignment;
+      if (widthSlider) widthSlider.value = directionBeamWidth;
+      updateAlignmentDisplay(directionAlignment);
+      updateBeamWidthDisplay(directionBeamWidth, directionAlignment);
+    }
+    syncLightingControls();
     syncStationModeUI();
     Object.keys(historyKeys).forEach(source=>historyKeys[source]='');
     radarLoadedAt = requestedAt;
     scheduleRadarExpiry();
+    configurationError=data.configuration?.error || '';
+    if (configurationError) notice(configurationError,true);
     regions = data.regions.sort((a,b)=>a.name.localeCompare(b.name));
+    if (!regions.some(item=>item.code===region)) region = regions.some(item=>item.code==='US-CA') ? 'US-CA' : regions[0]?.code || 'US-CA';
     cacheError = '';
   } catch (error) { cacheError = error.message; throw error; }
 }
@@ -1389,7 +1406,7 @@ async function setLightingMode(mode, settings = {}) {
   try {
     const data = await api('/v1/lighting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mode ? {...settings,mode} : settings)});
     lighting = data.lighting;
-    notice('Lighting settings saved.');
+    notice((data.saved===false ? 'Lighting mode updated. ' : 'Lighting preferences saved. ')+(lighting.status==='controller_unavailable' ? 'Controller delivery failed; preferences remain saved.' : ''),lighting.status==='controller_unavailable');
     if (mode === 'distance_test' && view() !== 'distance-test') location.href = '/distance-test';
     const form = content.querySelector('[data-lighting-settings]');
     if (form && (settings.color || settings.brightness)) form.dataset.dirty = 'false';
@@ -1574,6 +1591,7 @@ content.addEventListener('change',event=>{
     historyRanges[rangeSource] = event.target.value;
     loadHistory(rangeSource,true);
   }
+  if (event.target.id === 'region' || source || rangeSource) saveBrowserPreferences();
 });
 const mobileNavigation = window.matchMedia('(max-width:700px)');
 function setMenu(open) {
@@ -1607,5 +1625,94 @@ document.querySelector('#refresh-cache').addEventListener('click',async event=>{
   const failure = results.find(item=>item.status === 'rejected');
   notice(failure ? failure.reason.message : 'Saved results and library refreshed.',Boolean(failure)); button.disabled = false;
 });
+const browserPreferencesKey = 'bioglow-display-v1';
+let backupPreview = null;
+function browserPreferences() {
+  return {region,metrics:{...historyMetrics},ranges:{...historyRanges},animal:selectedAnimal};
+}
+function applyBrowserPreferences(value) {
+  if (!value || typeof value !== 'object') return;
+  region = typeof value.region === 'string' && /^US-[A-Z]{2}$/.test(value.region) ? value.region : 'US-CA';
+  Object.keys(historyMetrics).forEach(source=>{
+    if (graphMetrics[source].some(([key])=>key===value.metrics?.[source])) historyMetrics[source]=value.metrics[source];
+  });
+  Object.keys(historyRanges).forEach(source=>{
+    if (rangeOptions.some(([key])=>key===value.ranges?.[source])) historyRanges[source]=value.ranges[source];
+  });
+  selectedAnimal = typeof value.animal==='string' ? value.animal : '';
+  Object.keys(historyKeys).forEach(source=>historyKeys[source]='');
+}
+function saveBrowserPreferences() {
+  try {
+    localStorage.setItem(browserPreferencesKey,JSON.stringify(browserPreferences()));
+    browserPersistenceError='';
+    return true;
+  } catch {
+    browserPersistenceError='Browser storage is unavailable. Display choices will not survive reload in this browser.';
+    notice(browserPersistenceError,true);
+    return false;
+  }
+}
+function settingsPage() {
+  return `<article class="card"><h2>Automatic saving</h2><p>Lighting preferences are saved automatically on this server. Startup always uses Normal / Auto, with microphone scheduling stopped. Calibration stays dormant until Direction Config is entered.</p><p>Display choices are saved only in this browser. Backups include shared lighting preferences and this browser's display choices, without recordings, readings, results, secrets, or runtime modes.</p><p role="status">${escapeHtml(configurationError)} ${escapeHtml(browserPersistenceError)}</p><button class="button" id="download-settings">Download JSON backup</button><p><label>Upload JSON backup <input id="upload-settings" type="file" accept=".json,application/json"></label></p><div id="settings-preview"></div></article>`;
+}
+function previewTable(current, proposed) {
+  return `<table><thead><tr><th>Setting</th><th>Current</th><th>Proposed</th></tr></thead><tbody>${Object.keys(proposed).map(key=>`<tr><th>${escapeHtml(key)}</th><td>${escapeHtml(JSON.stringify(current[key]))}</td><td>${escapeHtml(JSON.stringify(proposed[key]))}</td></tr>`).join('')}</tbody></table>`;
+}
+document.addEventListener('click',async event=>{
+  try {
+    if (event.target.id==='download-settings') {
+      const snapshot=await api('/v1/configuration');
+      const backup={format:'bioglow-configuration',version:1,exported_at:new Date().toISOString(),shared:snapshot.shared,browser:browserPreferences()};
+      const url=URL.createObjectURL(new Blob([JSON.stringify(backup,null,2)+'\n'],{type:'application/json'}));
+      const link=document.createElement('a');
+      link.href=url; link.download='bioglow-configuration-'+backup.exported_at.replace(/[:.]/g,'-')+'.json';
+      link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }
+    if (event.target.id==='cancel-settings') {
+      backupPreview=null; document.querySelector('#settings-preview').replaceChildren();
+    }
+    if (event.target.id==='confirm-settings' && backupPreview) {
+      event.target.disabled=true;
+      const result=await api('/v1/configuration/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({backup:backupPreview.proposed,revision:backupPreview.current.revision})});
+      backupPreview=null;
+      applyBrowserPreferences(result.browser);
+      const browserSaved=saveBrowserPreferences();
+      let refreshWarning='';
+      try { await loadCache(); } catch(error) { refreshWarning=' Status refresh failed: '+error.message; }
+      if(view()==='config-settings') render();
+      notice('Shared settings durably restored. '+(browserSaved ? 'Display preferences saved in this browser.' : browserPersistenceError)+(result.lighting.status==='controller_unavailable' ? ' Controller delivery failed; settings remain saved.' : '')+refreshWarning,!browserSaved || result.lighting.status==='controller_unavailable');
+    }
+  } catch(error) {
+    backupPreview=null;
+    const panel=document.querySelector('#settings-preview');
+    if(panel) panel.textContent='Restore did not complete. Upload again for a fresh preview. '+error.message;
+    notice(error.message,true);
+  }
+});
+document.addEventListener('change',async event=>{
+  if(event.target.id!=='upload-settings') return;
+  backupPreview=null;
+  const panel=document.querySelector('#settings-preview');
+  panel.textContent='';
+  try {
+    const file=event.target.files[0];
+    if(!file) return;
+    if(file.size>4096) throw new Error('Configuration file exceeds 4 KB.');
+    const backup=JSON.parse(await file.text());
+    const preview=await api('/v1/configuration/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({backup})});
+    backupPreview=preview;
+    panel.innerHTML='<h3>Shared lighting preferences</h3>'+previewTable(preview.current.shared,preview.proposed.shared)+'<h3>This browser only</h3>'+previewTable(browserPreferences(),preview.proposed.browser)+'<p>Confirm to replace the complete settings snapshot. Station mode and recording state remain as they are.</p><button class="button" id="confirm-settings">Confirm restore</button> <button class="button secondary" id="cancel-settings">Cancel</button>';
+  } catch(error) { panel.textContent='Invalid backup: '+error.message; }
+});
+try {
+  const stored=localStorage.getItem(browserPreferencesKey);
+  if(stored) applyBrowserPreferences(JSON.parse(stored));
+  saveBrowserPreferences();
+} catch {
+  browserPersistenceError='Browser preferences could not be loaded. Defaults are in use; display persistence may be unavailable.';
+  notice(browserPersistenceError,true);
+}
+
 render();
 Promise.allSettled([loadCache(),loadLibrary()]).then(results=>{render();const failure = results.find(item=>item.status === 'rejected');if(failure)notice(failure.reason.message,true);});

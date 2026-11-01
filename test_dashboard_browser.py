@@ -1,4 +1,5 @@
 """Exercise graph controls in Chromium with synthetic data and no hardware."""
+import json
 import shutil
 import subprocess
 import tempfile
@@ -8,6 +9,55 @@ from pathlib import Path
 
 @unittest.skipUnless(shutil.which("chromium"), "Chromium is unavailable")
 class BrowserTests(unittest.TestCase):
+    def test_independent_browser_profiles_preserve_display_preferences(self):
+        root = Path(__file__).resolve().parent
+        setup = """
+window.fetch=async path=>({ok:true,json:async()=>path==='/v1/latest' ?
+  {sources:{},lighting:{mode:'auto',manual_brightness:91,color:'#123456'},
+   directionality:{alignment:50,beam_width:5,offset:4},mode:'normal',
+   regions:[{code:'US-CA',name:'California'},{code:'US-NY',name:'New York'}]} :
+  path==='/v1/recordings' ? {recordings:[]} : {entries:[],total:0,animals:[]}});
+"""
+        check = """
+setTimeout(()=>{
+  try {
+    const expected=EXPECTED;
+    const previous=localStorage.getItem('profile-check');
+    if(previous) {
+      if(region!==expected.region || historyMetrics.radar!==expected.metric ||
+         historyRanges.light!==expected.range)throw Error('Display preferences did not survive reload');
+    } else {
+      applyBrowserPreferences({region:expected.region,metrics:{radar:expected.metric},
+                               ranges:{light:expected.range},animal:''});
+      if(!saveBrowserPreferences())throw Error('Storage unavailable');
+      localStorage.setItem('profile-check','saved');
+    }
+    if(directionAlignment!==50 || directionBeamWidth!==5 || directionOffset!==4)
+      throw Error('Shared calibration differs');
+    document.body.dataset.profileCheck=previous ? 'reloaded' : 'saved';
+  } catch(error) { document.body.dataset.profileCheck='failed: '+error.message; }
+},100);
+"""
+        template = (root/'web/index.html').read_text().replace('<script src="/dashboard.js" defer></script>', '')
+        template = template.replace('<link rel="stylesheet" href="/dashboard.css">', '')
+        with tempfile.TemporaryDirectory() as directory:
+            page = Path(directory)/'profiles.html'
+            for repetition in range(2):
+                for index, expected in enumerate([
+                    dict(region='US-NY',metric='activity_level',range='7d'),
+                    dict(region='US-CA',metric='moving_energy_score',range='6h'),
+                ]):
+                    scripts = setup + (root/'web/dashboard.js').read_text() + check.replace('EXPECTED',json.dumps(expected))
+                    page.write_text(template.replace('</body>','<script>'+scripts+'</script></body>'))
+                    result = subprocess.run([shutil.which('chromium'),'--headless','--no-sandbox',
+                        '--disable-gpu','--disable-dev-shm-usage','--no-proxy-server',
+                        '--user-data-dir='+directory+'/profile-'+str(index),
+                        '--virtual-time-budget=1000','--dump-dom',page.as_uri()],
+                        capture_output=True,text=True,timeout=30)
+                    self.assertEqual(result.returncode,0,result.stderr[-1000:])
+                    state = 'saved' if repetition==0 else 'reloaded'
+                    self.assertIn('data-profile-check="'+state+'"',result.stdout[:result.stdout.find('<script>')])
+
     def test_graph_controls_survive_live_refresh_and_plot_animals(self):
         root = Path(__file__).resolve().parent
         setup = r'''
@@ -23,6 +73,9 @@ let logEvents=[{id:1,timestamp:now,direction:'received',payload:'<img src=x oner
 let logSession='one';
 let logFailure=false;
 let browserLighting={mode:'off',status:'ok',on:false};
+let browserShared={alignment:51,beam_width:1,offset:0,manual_brightness:99,calibration_brightness:64,color:'#123456'};
+let browserRevision='one', restoreCount=0;
+
 window.fetch=async(path,options={})=>{
   browserRequests.push(path);
   let body;
@@ -32,7 +85,17 @@ window.fetch=async(path,options={})=>{
     body={session:logSession,latest_id:logEvents.at(-1)?.id||0,oldest_id:logEvents[0]?.id||1,expired:false,reset:after>(logEvents.at(-1)?.id||0),events:logEvents.filter(e=>e.id>after)};
     if(body.reset)body.events=logEvents;
   }
-  else if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},lighting:browserLighting,collection:browserCollection,services:{bioglow_service:{installed:true,enabled:true,started:true},cloudflare_tunnel:{installed:false,token_configured:false,started:false,set_up:false}},regions:[{code:'US-CA',name:'California'}]};
+  else if(path==='/v1/configuration')body={shared:browserShared,revision:browserRevision};
+  else if(path==='/v1/configuration/preview'){
+    body={current:{shared:browserShared,revision:browserRevision},proposed:JSON.parse(options.body).backup};
+  }
+  else if(path==='/v1/configuration/restore'){
+    const req=JSON.parse(options.body);
+    if(req.revision!==browserRevision)return {ok:false,json:async()=>({error:{message:'Settings changed. Request a new preview.'}})};
+    restoreCount++;browserShared=req.backup.shared;
+    body={saved:true,browser:req.backup.browser,lighting:browserLighting};
+  }
+  else if(path==='/v1/latest')body={sources:{radar:{http_status:200,result:reading}},lighting:browserLighting,collection:browserCollection,services:{bioglow_service:{installed:true,enabled:true,started:true},cloudflare_tunnel:{installed:false,token_configured:false,started:false,set_up:false}},regions:[{code:'US-CA',name:'California'},{code:'US-NY',name:'New York'}]};
   else if(path==='/v1/lighting'){
     browserLighting={mode:JSON.parse(options.body).mode,status:'ok',on:true,distance_cm:350,
       led_index:96,confirmed_led_index:96,test_state:'tracking'};
@@ -218,8 +281,51 @@ setTimeout(async()=>{
     check(btn90,'90 degree direction preset missing');
     btn90.click();await pause(100);
     check(browserRequests.includes('/v1/direction'),'Clicking direction preset did not POST to /v1/direction');
+
+    // Browser preferences are independent values and survive reloading the state.
+    applyBrowserPreferences({region:'US-CA',metrics:{radar:'activity_level',light:'white_counts',birdcast:'speed_mph'},ranges:{radar:'7d',light:'6h',birdcast:'all',microphone:'12h'},animal:'Obsolete animal'});
+    check(saveBrowserPreferences(),'Display persistence failed');
+    const firstBrowser=localStorage.getItem(browserPreferencesKey);
+    applyBrowserPreferences({region:'US-NY',metrics:{radar:'presence'},ranges:{radar:'1h'},animal:''});
+    saveBrowserPreferences();
+    const secondBrowser=localStorage.getItem(browserPreferencesKey);
+    check(firstBrowser!==secondBrowser,'Independent display choices collapsed');
+    applyBrowserPreferences(JSON.parse(firstBrowser));
+    check(historyMetrics.radar==='activity_level' && historyRanges.light==='6h','Stored choices did not load');
+    applyBrowserPreferences({metrics:{radar:'obsolete'},ranges:{light:'obsolete'},region:42});
+    check(historyMetrics.radar==='activity_level' && region==='US-CA','Invalid choices were accepted');
+    await loadHistory('microphone',true);
+    check(selectedAnimal==='Buteo jamaicensis','Obsolete animal did not fall back');
+    location.hash='#config-settings';await pause(100);
+    check(document.querySelector('#upload-settings'),'Settings page missing');
+    const proposed={format:'bioglow-configuration',version:1,exported_at:new Date().toISOString(),shared:{...browserShared,alignment:49,offset:7},browser:JSON.parse(secondBrowser)};
+    async function upload() {
+      const transfer=new DataTransfer();
+      transfer.items.add(new File([JSON.stringify(proposed)],'backup.json',{type:'application/json'}));
+      const input=document.querySelector('#upload-settings');input.files=transfer.files;
+      input.dispatchEvent(new Event('change',{bubbles:true}));
+      for(let tries=0;tries<60 && !backupPreview;tries++)await pause(50);
+      check(backupPreview,'Upload did not finish');
+    }
+    await upload();
+    check(document.querySelector('#settings-preview').textContent.includes('Shared lighting preferences'),'Preview missing');
+    check(restoreCount===0,'Preview changed server preferences');
+    document.querySelector('#cancel-settings').click();await pause(20);
+    check(restoreCount===0 && !backupPreview,'Cancel changed preferences');
+    await upload();browserRevision='two';
+    document.querySelector('#confirm-settings').click();await pause(100);
+    check(restoreCount===0 && document.querySelector('#settings-preview').textContent.includes('fresh preview'),'Stale preview was accepted');
+    await upload();
+    document.querySelector('#confirm-settings').click();await pause(100);
+    check(restoreCount===1 && browserShared.offset===7,'Confirmed restore failed');
+    check(region==='US-NY','Importing browser preferences were not restored');
+    check(firstBrowser!==localStorage.getItem(browserPreferencesKey),'Browser preferences were not saved');
+    const originalSet=Storage.prototype.setItem;
+    Storage.prototype.setItem=()=>{throw new Error('storage blocked');};
+    check(!saveBrowserPreferences() && browserPersistenceError.includes('unavailable'),'Storage failure warning missing');
+    Storage.prototype.setItem=originalSet;saveBrowserPreferences();
     document.body.dataset.browserCheck='passed';
-  }catch(error){document.body.dataset.browserCheck='failed: '+error.message;}
+  }catch(error){document.body.dataset.browserCheck='failed: '+error.stack;}
 },50);
 '''
         html = (root/"web/index.html").read_text().replace('<script src="/dashboard.js" defer></script>', '')
@@ -234,5 +340,5 @@ setTimeout(async()=>{
                                      "--user-data-dir="+directory+"/profile", "--virtual-time-budget=25000",
                                      "--dump-dom", page.as_uri()], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr[-1500:])
-        self.assertIn('data-browser-check="passed"', result.stdout,
+        self.assertIn('data-browser-check="passed"', result.stdout[:result.stdout.find('<script>')],
                       result.stdout[-1800:]+result.stderr[-500:])
