@@ -12,3 +12,5 @@ birdcast_service_snapshot.json
 birdcast_service_config.json
 *.backup-*
 backups/
+
+cloudflare/user/public/
