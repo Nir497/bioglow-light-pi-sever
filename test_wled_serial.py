@@ -202,20 +202,20 @@ class WLEDSerialTests(unittest.TestCase):
         command = json.loads(self.connection.write.call_args.args[0])
         self.assertEqual(command['seg'][0]['stop'], 144)
 
-    def test_default_fixture_covers_all_192_pixels_with_direction_pattern(self):
-        self.reply['info']['leds']['count'] = 192
-        self.reply['state']['seg'][0].update(stop=192, grp=7, spc=42, of=37)
+    def test_default_fixture_covers_all_144_pixels_with_direction_pattern(self):
+        self.reply['info']['leds']['count'] = 144
+        self.reply['state']['seg'][0].update(stop=144, grp=7, spc=42, of=37)
         self.connection.read_until.return_value = json.dumps(self.reply).encode()
         params = json.loads(json.dumps(self.params))
         params['seg'][0].update(grp=7, spc=42, of=37)
         result = WLEDSerial(port='test').send(params)
         command = json.loads(self.connection.write.call_args.args[0])
         segment = command['seg'][0]
-        self.assertEqual((segment['start'], segment['stop']), (0, 192))
+        self.assertEqual((segment['start'], segment['stop']), (0, 144))
         self.assertEqual((segment['grp'], segment['spc'], segment['of']), (7, 42, 37))
-        self.assertEqual(result['covered_leds'], 192)
+        self.assertEqual(result['covered_leds'], 144)
         self.assertTrue(result['full_strip_confirmed'])
-        self.assertEqual(result['expected_led_count'], 192)
+        self.assertEqual(result['expected_led_count'], 144)
 
     def test_missing_count_does_not_guess_from_length(self):
         del self.reply['info']['leds']

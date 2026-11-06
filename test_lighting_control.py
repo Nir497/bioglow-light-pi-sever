@@ -188,7 +188,7 @@ class DistanceLightingTests(unittest.TestCase):
                     stationary_distance_cm=distance, **extra)
 
     def test_mapping_and_fixed_appearance(self):
-        for distance, index in ((1, 0), (99, 0), (100, 0), (101, 1), (350, 96), (599, 190), (600, 191), (700, 191)):
+        for distance, index in ((1, 0), (99, 0), (100, 0), (101, 1), (350, 72), (599, 142), (600, 143), (700, 143)):
             with self.subTest(distance=distance):
                 self.light.update_distance(200, self.reading(distance))
                 state = self.light.status()
@@ -316,14 +316,14 @@ class DistanceLightingTests(unittest.TestCase):
             self.assertTrue(entered.wait(1))
             light.update_distance(200, self.reading(650, timestamp='far'))
             status = light.status()
-            self.assertEqual(status['led_index'], 191)
+            self.assertEqual(status['led_index'], 143)
             self.assertIsNone(status['confirmed_led_index'])
             release.set()
             self.assertTrue(final_ack.wait(2))
         finally:
             release.set()
             light.stop()
-        self.assertEqual(calls[2]['seg'][0]['start'], 191)
+        self.assertEqual(calls[2]['seg'][0]['start'], 143)
 
     def test_sampling_interval_and_shutdown_off(self):
         import time
