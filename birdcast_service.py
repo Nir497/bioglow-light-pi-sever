@@ -117,7 +117,7 @@ def detect_system_services_status(
 
 
 class Service:
-    SUPPORTED_MODES = ("normal", "direction_config", "manual_control")
+    SUPPORTED_MODES = ("normal", "direction_config", "manual_control", "user_aim")
 
     def __init__(self, root: Path, config: Path, runner=None, recorder: str = DEFAULT_RECORDER,
                  animal_analysis: bool = True):
@@ -129,6 +129,8 @@ class Service:
         self.reading_history = ReadingHistory(self.root)
         self.animal_names = AnimalNames(self.root)
         self.config = config
+        self.aim_timer = None
+        self.aim_deadline = None
         self.mode = "normal"
         self._services_status_cache: dict[str, Any] | None = None
         self._services_status_time: float = 0.0
@@ -211,8 +213,11 @@ class Service:
         if mode not in self.SUPPORTED_MODES:
             raise ValueError(f"Unknown mode: {mode}. Choose from: {', '.join(self.SUPPORTED_MODES)}.")
         with self._mode_lock:
+            if getattr(self, "aim_timer", None):
+                self.aim_timer.cancel()
+            self.aim_deadline = None
             self.mode = mode
-            if mode == "direction_config":
+            if mode in ("direction_config", "user_aim"):
                 try:
                     self.lighting.set_direction_alignment(self.direction_alignment, beam_width=self.direction_beam_width, offset=self.direction_offset, brightness=self.settings.shared["calibration_brightness"])
                 except Exception as exc:
@@ -223,6 +228,39 @@ class Service:
                 except Exception as exc:
                     logging.getLogger(__name__).warning("Could not restore auto lighting: %s", exc)
             return self.mode
+
+    def user_aim(self, body):
+        import time
+        with self._mode_lock:
+            action = body.get("action")
+            if action == "stop":
+                self.set_station_mode("normal")
+            elif action in ("start", "extend", "direction"):
+                if action == "start":
+                    if body.get("expected_mode") != self.mode:
+                        raise ValueError("Station mode changed. Review and try again.")
+                    self.set_station_mode("user_aim")
+                if self.mode != "user_aim":
+                    raise ValueError("Start aiming first.")
+                if action == "direction":
+                    angle = body.get("angle")
+                    if type(angle) not in (int, float) or not 0 <= angle < 360:
+                        raise ValueError("Angle must be between 0 and 360.")
+                    self.set_direction_alignment(self.direction_alignment, offset=round(angle / 360 * self.direction_alignment) % self.direction_alignment)
+                if getattr(self, "aim_timer", None):
+                    self.aim_timer.cancel()
+                self.aim_deadline = time.time() + 300
+                deadline = self.aim_deadline
+                def expire():
+                    with self._mode_lock:
+                        if self.mode == "user_aim" and self.aim_deadline == deadline:
+                            self.set_station_mode("normal")
+                self.aim_timer = threading.Timer(300, expire)
+                self.aim_timer.daemon = True
+                self.aim_timer.start()
+            else:
+                raise ValueError("Unknown aiming action.")
+            return self.latest()
 
     def set_direction_alignment(self, spacing, beam_width=None, offset=None):
         with self._mode_lock:
@@ -274,6 +312,7 @@ class Service:
         return {"status": "ok", "sources": result, "lighting": lighting,
                 "configuration": self.settings.snapshot(),
                 "collection": self.collection_schedule.status(),
+                "aim_deadline": getattr(self, "aim_deadline", None),
                 "mode": self.mode, "modes": list(self.SUPPORTED_MODES),
                 "directionality": {
                     "alignment": self.direction_alignment,
@@ -518,6 +557,15 @@ def make_handler(service: Service):
                     self._send(500, error_payload("configuration_not_saved", f"Change not saved: {exc}"))
 
         def _post(self):
+            if self.path == "/v1/user-aim":
+                try:
+                    self._send(200, service.user_aim(self._body()))
+                except ValueError as exc:
+                    self._send(409, error_payload("aim_conflict", str(exc)))
+                except Exception as exc:
+                    self._send(502, error_payload("aim_failed", str(exc)))
+                return
+
             if self.path in ("/v1/configuration/preview", "/v1/configuration/restore"):
                 try:
                     body = self._body()
@@ -711,7 +759,11 @@ def make_handler(service: Service):
                     self._send(200, service.settings.snapshot())
                 return
             assets = {
-                "/": ("index.html", "text/html; charset=utf-8"),
+                "/user": ("user.html", "text/html; charset=utf-8"),
+                "/dev": ("index.html", "text/html; charset=utf-8"),
+                "/user.js": ("user.js", "text/javascript; charset=utf-8"),
+                "/user.css": ("user.css", "text/css; charset=utf-8"),
+                "/": ("choose.html", "text/html; charset=utf-8"),
                 "/distance-test": ("index.html", "text/html; charset=utf-8"),
                 "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
                 "/dashboard.js": ("dashboard.js", "text/javascript; charset=utf-8"),
