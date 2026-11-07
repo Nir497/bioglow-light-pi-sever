@@ -157,6 +157,11 @@ class WLEDSerial:
                     current = self._query()
                     self._queried_at = self._clock()
             info = current.get("info", {})
+            adaptive = params.get("bioglow", {}).get("watchdog_ms") == 3000
+            if adaptive and params["on"] and info.get("bioglow_watchdog") != 1:
+                self._write({"on": False, "bri": 0, "transition": 0, "v": True})
+                self._read_reply()
+                raise OSError("Adaptive output locked OFF: install BioGlow WLED watchdog firmware (protocol v1)")
             count = info.get("leds", {}).get("count")
             if type(count) is not int or not 1 <= count <= 65535:
                 raise OSError("WLED did not report a valid configured LED count; check LED Preferences")
@@ -165,7 +170,8 @@ class WLEDSerial:
             self.device_info = {"serial_port": self.device_info.get("serial_port"),
                                 "baudrate": self.baudrate,
                                 "model": "SP803E", "name": info.get("name", "WLED-ESP32"),
-                                "firmware": info.get("ver"), "architecture": info.get("arch", "esp32"),
+                                "firmware": info.get("ver"),
+                                "watchdog_protocol": info.get("bioglow_watchdog"), "architecture": info.get("arch", "esp32"),
                                 "led_count": count, "expected_led_count": self.led_count, "length_ft": 3.2}
             if count < self.led_count and params["on"]:
                 raise OSError(f"WLED is configured for {count} pixels, but your strip has {self.led_count}. "
@@ -200,6 +206,10 @@ class WLEDSerial:
             if reported_count != count:
                 raise OSError("WLED LED count changed during the command; refreshing configuration")
             state = acknowledged["state"]
+            if adaptive and params["on"] and state.get("bioglow", {}).get("watchdog_ms") != 3000:
+                self._write({"on": False, "bri": 0, "transition": 0, "v": True})
+                self._read_reply()
+                raise OSError("Controller did not arm the BioGlow communication watchdog; requesting OFF")
             if state.get("on") != params["on"] or (params["on"] and state.get("bri") != params["bri"]):
                 raise OSError("WLED did not acknowledge the requested power and brightness")
             segments = state.get("seg", [])

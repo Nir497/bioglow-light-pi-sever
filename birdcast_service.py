@@ -27,6 +27,7 @@ from animal_names import AnimalNames
 from collection_schedule import CollectionSchedule
 from light_sensor import LightSensor
 from lighting_control import LightingControl
+from adaptive_lighting import AdaptiveConfig
 from wled_serial import WLEDSerial
 from presence import PresenceSensor
 from reading_history import ReadingHistory
@@ -125,7 +126,8 @@ class Service:
         self.root = root.resolve()
         self.light_sensor = LightSensor()
         self.wled = WLEDSerial()
-        self.lighting = LightingControl(background=True, transport=self.wled)
+        self.lighting = LightingControl(background=True, transport=self.wled,
+                                        adaptive_config=AdaptiveConfig.load(self.root))
         self.presence_sensor = PresenceSensor()
         self.telemetry = Telemetry(self.root)
         self.reading_history = ReadingHistory(self.root, on_entry=self.telemetry.enqueue)
@@ -168,6 +170,8 @@ class Service:
             pass
 
     def remember(self, source: str, status: int, result: dict[str, Any]) -> None:
+        if source == "birdcast":
+            self.lighting.update_migration(result if status == 200 else None)
         with self._latest_lock:
             previous = self._latest.get(source, {})
             self._latest[source] = {

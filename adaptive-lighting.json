@@ -1,0 +1,13 @@
+{
+  "min_brightness": 10,
+  "max_brightness": 60,
+  "max_distance_m": 5.0,
+  "dark_lux": 15,
+  "bright_lux": 25,
+  "lux_stale_seconds": 3,
+  "presence_timeout_seconds": 10,
+  "smoothing_tau_seconds": 0.4481420118,
+  "lux_filter_tau_seconds": 1,
+  "migration_stale_seconds": 1800,
+  "migration_region": "US-CA"
+}

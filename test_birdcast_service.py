@@ -107,7 +107,7 @@ class ServiceTests(unittest.TestCase):
         self.service.lighting.update_distance(200, {"fresh": True, "presence": "moving", "moving_distance_cm": 600, "range_estimate_cm": 600})
         self.service.presence_sensor.response = MagicMock(return_value=(200, {"fresh": True}))
         latest = self.service.latest()
-        self.assertEqual(latest["lighting"]["led_index"], 191)
+        self.assertEqual(latest["lighting"]["led_index"], 143)
         self.assertEqual(latest["sources"]["radar"]["result"]["range_estimate_cm"],
                          latest["lighting"]["distance_cm"])
         self.service.presence_sensor.response.assert_not_called()
@@ -120,10 +120,10 @@ class ServiceTests(unittest.TestCase):
         light._background = False
         light.set_mode("auto")
         light.update(0)
-        light.update_distance(200, {"fresh": True, "presence": "stationary", "range_estimate_cm": 350})
+        light.update_distance(200, {"fresh": True, "presence": "stationary", "range_estimate_cm": 350, "stationary_distance_cm": 350})
         self.service.presence_sensor.response = MagicMock()
         latest = self.service.latest()
-        self.assertEqual(latest["lighting"]["target_brightness"], 83)
+        self.assertEqual(latest["lighting"]["target_brightness"], 5)
         self.assertEqual(latest["sources"]["radar"]["result"]["range_estimate_cm"],
                          latest["lighting"]["distance_cm"])
         self.service.presence_sensor.response.assert_not_called()
@@ -134,7 +134,7 @@ class ServiceTests(unittest.TestCase):
         handler._body = MagicMock(return_value={"color": "#112233"})
         handler.do_POST()
         self.assertEqual(handler._send.call_args.args[1]["lighting"]["mode"], "auto")
-        self.assertEqual(light.status()["brightness"], 83)
+        self.assertEqual(light.status()["brightness"], 5)
         light.stop()
 
     def test_lux_readings_gate_auto_and_status_never_resamples(self):
@@ -143,16 +143,16 @@ class ServiceTests(unittest.TestCase):
         light.transport = MagicMock()
         self.service.light_sensor.response = MagicMock(return_value=(200, {'lux': 9}))
         self.service.light_reading()
-        light.update_distance(200, {'fresh': True, 'presence': 'moving', 'range_estimate_cm': 350})
-        self.assertEqual(light.status()['brightness'], 83)
+        light.update_distance(200, {'fresh': True, 'presence': 'moving', 'range_estimate_cm': 350, 'moving_distance_cm': 350})
+        self.assertEqual(light.status()['brightness'], 5)
         self.service.light_sensor.response.return_value = (200, {'lux': 31})
         self.service.light_reading()
         state = self.service.latest()['lighting']
         self.assertEqual(state['brightness'], 0)
         self.assertEqual(state['auto_gate_reason'], 'daylight')
         self.assertEqual(state['lux'], 31)
-        self.assertEqual(state['lux_dark_threshold'], 10)
-        self.assertEqual(state['lux_light_threshold'], 30)
+        self.assertEqual(state['lux_dark_threshold'], 15)
+        self.assertEqual(state['lux_light_threshold'], 25)
         count = light.transport.send.call_count
         self.service.latest()
         self.assertEqual(light.transport.send.call_count, count)
@@ -163,6 +163,14 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(light.status()['brightness'], 0)
         self.assertEqual(len(self.service.reading_history.recent('light')), 3)
         self.assertEqual(self.service.reading_history.recent('light')[-1]['http_status'], 503)
+
+    def test_birdcast_snapshot_updates_lighting_cache_without_polling_provider(self):
+        self.service.lighting = MagicMock()
+        result = self.service.snapshot("US-CA")
+        self.service.lighting.update_migration.assert_called_once_with(result)
+        self.service.lighting.update_migration.reset_mock()
+        self.service.remember("birdcast", 503, {"error": "offline"})
+        self.service.lighting.update_migration.assert_called_once_with(None)
 
     def test_lux_schedule_is_separate_from_presence_and_keeps_passive_reads(self):
         scheduler = self.service.collection_schedule

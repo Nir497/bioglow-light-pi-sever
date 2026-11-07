@@ -129,6 +129,22 @@ def _line_after(label: str, text: str) -> str | None:
     return None
 
 
+def recorded_time_utc(value):
+    from datetime import datetime, timezone, timedelta
+    if not isinstance(value, str):
+        return None
+    try:
+        date, abbreviation = value.rsplit(" ", 1)
+        offsets = {"UTC": 0, "EST": -5, "EDT": -4, "CST": -6, "CDT": -5,
+                   "MST": -7, "MDT": -6, "PST": -8, "PDT": -7}
+        offset = offsets[abbreviation]
+        stamp = datetime.strptime(date, "%a, %b %d, %Y, %I:%M %p")
+        return stamp.replace(tzinfo=timezone(timedelta(hours=offset))).astimezone(
+            timezone.utc).isoformat().replace("+00:00", "Z")
+    except (ValueError, KeyError):
+        return None
+
+
 def parse_snapshot(html: str, region_code: str, source_url: str, retrieved_at: str) -> dict[str, Any]:
     """Parse one rendered BirdCast page into the documented JSON shape."""
     region_code, fallback_name = normalize_region(region_code)
@@ -191,12 +207,20 @@ def parse_snapshot(html: str, region_code: str, source_url: str, retrieved_at: s
     if not unavailable and birds_in_flight is None and total_birds is None:
         raise ScraperError("BirdCast response did not contain a usable live migration metric")
 
+    traffic = re.search(r"(?:Live migration traffic|Peak migration traffic)(.*?)(?=Direction:|Recorded:|$)",
+                        compact, re.IGNORECASE)
+    high_badge = bool(traffic and re.search(r"\bHigh\b", traffic.group(1)))
+
     return {
         "status": status,
         "region": {"code": region_code, "name": region_name},
         "source": {"url": source_url},
         "retrieved_at": retrieved_at,
         "selected_night": selected_night,
+        "live_feed": bool(re.search(r"LIVE DATA FEED\s+Last updated", compact, re.IGNORECASE)),
+        # BirdCast documents a High badge based on historical comparisons.
+        # The absence of this badge is NOT a documented Low/Medium category.
+        "migration_level": "high" if high_badge else "unknown",
         "metrics": {
             "birds_in_flight": birds_in_flight,
             "total_birds_crossed": total_birds,
@@ -204,6 +228,7 @@ def parse_snapshot(html: str, region_code: str, source_url: str, retrieved_at: s
             "speed_mph": speed,
             "altitude_ft": altitude,
             "recorded_at": recorded_at,
+            "recorded_at_utc": recorded_time_utc(recorded_at),
             "updated_at": updated_at,
         },
         "warnings": list(dict.fromkeys(warnings)),

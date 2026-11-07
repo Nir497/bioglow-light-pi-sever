@@ -186,7 +186,7 @@ setTimeout(async()=>{
     const luxDisplay=document.querySelector('[data-lighting-lux]');
     check(luxDisplay.textContent==='31 lux','Prominent lux reading missing');
     const luxRule=document.querySelector('.lighting-lux-bands').textContent;
-    check(luxRule.includes('< 10 lux') && luxRule.includes('10 ≤ lux ≤ 30') && luxRule.includes('> 30 lux'),'Three Auto thresholds missing');
+    check(luxRule.includes('< 15 lux') && luxRule.includes('15 ≤ lux ≤ 25') && luxRule.includes('> 25 lux'),'Three Auto thresholds missing');
     const colorControl=document.querySelector('#wled-color');
     colorControl.focus();
     Object.assign(browserLighting,{auto_gate_reason:'lux_unavailable',ambient_state:'unknown',lux:null,lux_age_seconds:null});

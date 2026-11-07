@@ -12,8 +12,9 @@ page (`/#light`) contains only the VEML7700 readings and history graph:
   settings selects manual control, retaining Off if already selected.
 - **Full brightness · 100%** selects manual On, applies the currently chosen
   color, and requests master brightness 255/255 and segment brightness 255/255.
-- **Auto** uses distance control only after the latest lux reading confirms darkness.
-  At <10 lux it enables distance control; at >30 lux it requests off.
+- **Auto** uses adaptive lighting with 15/25 lux hysteresis, continuously updated
+  nearest radar distance, a migration cap, a ten-second presence hold and a fade.
+  See [Adaptive lighting](ADAPTIVE_LIGHTING.md), including its required WLED watchdog module.
 
 Manual settings survive scheduled sensor reads, including lux sensor failures.
 All dashboard clients share the server's settings. Restarting the server returns
@@ -101,56 +102,21 @@ unreachable lighting never blocks lux sampling or `/v1/latest`. The API reports
 `pending` until WLED acknowledges, `ok` on success, and `controller_unavailable`
 on failure. `/v1/latest` exposes cached lighting state without USB traffic.
 
-Auto uses the latest valid VEML7700 reading from the server-owned one-second sampler.
-At **less than 10 lux**, distance control is enabled. At **more than 30 lux**, the
-strip is off. From 10 through 30 lux, including both boundaries, the previous dark/light
-classification is retained. Startup in this band stays off. The 30-second rolling average remains
-available for display, but does not control the gate.
+Auto uses the server-owned lux sampler and a 100 ms loop reading the existing
+passive radar receiver. Brightness increases as the nearest reported active
+moving or stationary channel approaches (60% at 0 m, 10% at 5 m). Targets outside
+5 m cannot activate output. Stationary presence does not expire. The migration
+cap never increases the distance request; missing or unsupported classifications
+use 10%. Daylight and failed or stale sensors request immediate OFF. Manual and
+direction diagnostics retain their explicit overrides.
 
-Missing, invalid (including negative/nonfinite values), failed, or more than
-**30-second-old** lux keeps Auto off. After failure/staleness, the middle band
-cannot restore the old classification: a fresh reading must reach a threshold.
-Darkness recovery waits for a new half-second radar sample. During darkness,
-whole-strip brightness follows distance: 15% at ≤1 m, increasing linearly to 50%
-at ≥6 m. No usable target, unavailable/stale radar, or five seconds without a
-filtered-distance change of at least 5 cm requests immediate off. Color changes
-preserve Auto and do not reset inactivity. Manual On/Off and Distance test bypass
-the lux gate.
-
-The gate covers appearance changes, queued commands and retries. The output
-worker also watches lux freshness if collection stalls. Already-running USB
-exchanges can finish before the Off command is sent; acknowledged brightness
-remains distinct from the requested target, and delivery failures are reported.
-
-Lighting status from `/v1/latest` and `/v1/lighting` includes `lux`,
-`lux_age_seconds`, `ambient_state` (`unknown`, `light`, `dark`),
-`auto_gate_reason` (`waiting_lux`, `daylight`, `lux_unavailable`,
-`distance_control`; null outside Auto), `lux_dark_threshold`,
-`lux_light_threshold`, and `lux_stale_after_seconds`. Status reads do not measure
-lux or send controller commands. Thresholds are named server constants, not
-editable settings, and restarting requires new sensor readings.
-
-Place or shield the lux sensor so it measures outside light without material
-illumination from the strip. Exposure is currently unverified; hardware checks
-must watch for on/off cycling caused by the strip itself raising lux above 30.
-No automatic compensation is applied.
-
-The WLED page shows the current lux reading prominently beside three Auto bands:
-<10 lux enables distance control, 10 ≤ lux ≤ 30 retains the previous classification,
-and >30 lux keeps the strip off. Unavailable/stale readings are labeled explicitly.
-
-The project-selected 10/30 lux thresholds are engineering settings for dusk/dawn
-detection, not an outdoor-lighting standard or verified wildlife-safe limits.
-[ABB twilight switches](https://new.abb.com/low-voltage/products/system-pro-m/control-and-automation-devices/twilight-switches)
-include a 10-lux factory preset; [Finder's twilight relay guide](https://www.findernet.com/en/uk/news/what-is-a-light-dependent-relay-twilight-switch-finder/)
-also describes a fixed 10-lux model. These support 10 lux as a practical twilight
-trigger; the separate 30-lux cutoff is our hysteresis choice to reduce switching
-near that trigger. Confirm suitability using readings at the desired evening and
-morning switching times, with the strip's light excluded from the sensor.
-
-`LightingControl` retains its optional HTTP transport for existing integrations;
-the dashboard server now explicitly selects USB and never resolves
-`bioglow.local` to control this device.
+See [ADAPTIVE_LIGHTING.md](ADAPTIVE_LIGHTING.md) for the configurable settings,
+filtering, timeout/fade, provider classification limitations, dashboard fields,
+controller watchdog firmware installation, test results and hardware acceptance
+procedure. Stock WLED has no expiring JSON command; Auto therefore remains OFF
+without the advertised BioGlow watchdog capability. The existing USB connection,
+LED rendering/calibration and power budget are preserved. Acknowledgement is
+controller state, not proof of optical output.
 
 Protocol references: [WLED serial](https://kno.wled.ge/interfaces/serial/) and
 [WLED JSON API](https://kno.wled.ge/interfaces/json-api/).

@@ -191,12 +191,12 @@ function lightingDevice() {
 }
 function lightingLuxReading() {
   if (lighting.lux == null) return 'Unavailable';
-  const stale = lighting.lux_age_seconds > (lighting.lux_stale_after_seconds ?? 30);
+  const stale = lighting.lux_age_seconds > (lighting.lux_stale_after_seconds ?? 3);
   return `${lighting.lux.toLocaleString(undefined,{maximumFractionDigits:2})} lux${stale ? ' (stale)' : ''}`;
 }
 function lightingLuxRule() {
-  const dark = lighting.lux_dark_threshold ?? 10;
-  const light = lighting.lux_light_threshold ?? 30;
+  const dark = lighting.lux_dark_threshold ?? 15;
+  const light = lighting.lux_light_threshold ?? 25;
   return `<section class="lighting-lux" aria-label="Ambient light and Auto thresholds">
     <h3>Outside light · Auto rule</h3>
     <p class="lighting-lux-reading">Current lux reading <strong data-lighting-lux>${escapeHtml(lightingLuxReading())}</strong></p>
@@ -214,11 +214,11 @@ function lightingAmbientSummary() {
     daylight:'Daylight · Auto off',lux_unavailable:'Lux unavailable or stale · Auto off',
     distance_control:'Distance control active'};
   const reason = lighting.mode === 'auto' ? (reasons[lighting.auto_gate_reason] || reasons.waiting_lux) : 'Lux gate applies in Auto only';
-  return `${reason} · Ambient ${lighting.ambient_state || 'unknown'} · Lux ${lighting.lux == null ? 'unavailable' : lighting.lux.toLocaleString(undefined,{maximumFractionDigits:2})} · Lux age ${lighting.lux_age_seconds == null ? 'unavailable' : lighting.lux_age_seconds.toFixed(1) + ' s'} · Dark <${lighting.lux_dark_threshold ?? 10} lux / Light >${lighting.lux_light_threshold ?? 30} lux · Stale after ${lighting.lux_stale_after_seconds ?? 30} s`;
+  return `${reason} · Ambient ${lighting.ambient_state || 'unknown'} · Lux ${lighting.lux == null ? 'unavailable' : lighting.lux.toLocaleString(undefined,{maximumFractionDigits:2})} · Lux age ${lighting.lux_age_seconds == null ? 'unavailable' : lighting.lux_age_seconds.toFixed(1) + ' s'} · Filtered dark <${lighting.lux_dark_threshold ?? 15} lux / Light >${lighting.lux_light_threshold ?? 25} lux · Stale after ${lighting.lux_stale_after_seconds ?? 3} s`;
 }
 function lightingSummary() {
   const base = `${lighting.mode || 'auto'} · ${lighting.status || 'waiting'}`;
-  if (lighting.mode === 'auto') return `${base}${lighting.test_state === 'idle' ? ' · Idle · no distance change' : ''} · Distance ${lighting.distance_cm == null ? '—' : lighting.distance_cm + ' cm'} · Target ${lighting.target_brightness ?? '—'}/255 · Acknowledged ${lighting.brightness ?? '—'}/255 · Sample ${lighting.sample_age_seconds == null ? 'waiting' : lighting.sample_age_seconds.toFixed(1) + ' s ago'} · Ack ${lighting.ack_age_seconds == null ? 'waiting' : lighting.ack_age_seconds.toFixed(1) + ' s ago'}`;
+  if (lighting.mode === 'auto') return `${base} · ${lighting.lighting_state || 'waiting'} · Radar target ${lighting.presence_detected ? 'present' : 'absent/unavailable'} · Current target distance ${lighting.person_distance_m == null ? '—' : Number(lighting.person_distance_m).toFixed(2) + ' m'} · Distance target ${lighting.distance_target_percent ?? '—'}% · Migration ${lighting.migration_level || 'unknown'} · Cap ${lighting.migration_cap_percent ?? 10}% · Final target ${lighting.final_target_percent ?? 0}% · Smoothed output ${lighting.output_percent ?? 0}% · Acknowledged ${lighting.actual_brightness_percent == null ? 'unknown' : lighting.actual_brightness_percent + '%'} (physical output unmeasured) · ${lighting.migration_error || ''} · Watchdog ${lighting.controller_watchdog_status || 'unconfirmed'} · Sample ${lighting.sample_age_seconds == null ? 'waiting' : lighting.sample_age_seconds.toFixed(1) + ' s ago'} · Ack ${lighting.ack_age_seconds == null ? 'waiting' : lighting.ack_age_seconds.toFixed(1) + ' s ago'}`;
   if (lighting.mode !== 'distance_test') return base;
   const unavailable = currentEntry('radar')?.http_status === 503;
   const detail = unavailable ? 'Radar unavailable' : lighting.led_index == null ? (lighting.test_state || 'waiting').replaceAll('_', ' ') : `${lighting.distance_cm} cm · Target LED ${lighting.led_index + 1} / 192`;
@@ -256,8 +256,8 @@ function lightingControls() {
       </fieldset>
     </form>
     <p class="timestamp">Distance test: LED 1 at 1 m or closer; LED 192 at 6 m or farther. Between 1–6 m, the dot moves along LEDs 2–191 at 25% amber. No target turns lights off; the radar’s own absence delay still applies. Stale readings turn lights off and show an error.</p>
-    <p class="timestamp">Auto allows distance control below 10 lux and turns the strip off above 30 lux. From 10 through 30 lux it keeps the previous ambient state. Missing, invalid, or over-30-second-old lux keeps Auto off until darkness is confirmed. Manual On and Distance test bypass this rule.</p>
-    <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Auto uses distance for all 192 LEDs: 15% at 1 m or closer, rising to 50% at 6 m. After 5 seconds without a distance change, lights turn off. No target or unavailable radar turns lights off. Color changes preserve Auto.</p>
+    <p class="timestamp">Auto uses filtered ambient light with configurable 15/25 lux hysteresis. Daylight forces immediate OFF. Invalid or stale lux keeps Auto off until darkness is confirmed. Manual On and Distance test bypass this rule.</p>
+    <p class="timestamp" id="wled-manual-help">Apply saves manual settings. If the light is off, it stays off. On restores your chosen brightness. Auto increases brightness as the nearest reported radar target approaches: 60% at 0 m to 10% at 5 m, capped by migration (unknown: 10%). Stationary radar presence stays active. Presence loss holds the last permitted output for 10 seconds, then fades off. Invalid radar requests immediate OFF. Targets beyond 5 m cannot activate lighting. Radar does not identify humans. These are prototype settings, not verified wildlife-safe limits. Auto requires the BioGlow controller watchdog firmware. Color changes preserve Auto.</p>
     <p class="timestamp">Commands go from this server to the USB controller. Status shows whether WLED acknowledged the command. At 100%, both master and segment brightness are 255/255. WLED’s configured power limits and global brightness factor can still reduce physical output.</p>
   </section>`;
 }

@@ -1,0 +1,232 @@
+# Adaptive lighting implementation and deployment
+
+Normal station mode starts in Auto, with the existing USB SP803E WLED ESP32
+controller and 144 logical LEDs. Manual and direction calibration modes retain
+their explicit sensor bypasses. Calibration spacing, grouping, beam width, offset,
+color, saved preferences, collection schedules, history, and microphone startup
+behavior are unchanged. No Pico or SPIKE code is used.
+
+The requested `Bioglow lamp referance file.md` was unavailable; the user confirmed
+it is on another computer and instructed use of WLED. Implementation follows the
+repository's documented Pi → USB → WLED architecture instead.
+
+## Calculation and configuration
+
+`adaptive_lighting.calculate_brightness(is_dark, presence_detected,
+person_distance_m, migration_level, config=None)` implements the reference pure
+calculation, returning a rounded percentage. With default settings:
+
+```
+distance_target = 10 + 50 * (1 - distance_m / 5)
+final_target = min(distance_target, migration_cap)
+```
+
+Out-of-range, missing, negative, nonfinite, boolean and nonnumeric distances
+produce zero. Darkness and valid presence are required. The separate stateful
+policy implements filtering, holds, timeouts, and smoothing.
+
+Edit `adaptive-lighting.json` in the repository and restart `bioglow.service`.
+Unknown fields, malformed JSON, invalid ranges, and nonfinite settings prevent
+startup rather than silently installing unsafe values. A missing file uses the
+same defaults. This separate deployment configuration does not change the
+version-1 portable lamp preference/backup format. It is not edited by dashboard
+sliders and is not included in their backup.
+
+| Parameter | Default |
+| --- | --- |
+| min_brightness / max_brightness | 10 / 60 percent |
+| max_distance_m | 5 m |
+| dark_lux / bright_lux | 15 / 25 lux |
+| lux_stale_seconds | 3 s |
+| presence_timeout_seconds | 10 s |
+| smoothing_tau_seconds | 0.4481420118 s (0.2 new target per 100 ms) |
+| lux_filter_tau_seconds | 1 s |
+| migration_stale_seconds | 1800 s |
+| migration_region | US-CA |
+
+Migration caps are the prototype policy constants: low 60%, medium 40%, high
+20%, very_high 10%, and unknown 10%. They are **not scientifically validated
+wildlife-safe limits**. Raising the configured maximum does not bypass these caps.
+
+## Sensor acquisition and timing
+
+The existing passive UART receiver continues receiving LD2410C reports. Every
+100 ms, the lighting sampler reads its cached response and selects the nearest
+valid active moving or stationary channel in range. It does not reopen UART,
+wait for an HTTP client, or rely on a target's initial distance. Thus movement
+changes the target continuously and stationary presence has no inactivity cutoff.
+Brightness uses a time-aware exponential filter, so repeated cached frames do
+not accelerate convergence when scheduling varies. Normal WLED updates request
+100 ms transitions; daylight, invalid/stale radar/lux, and cap decreases bypass
+these transitions. Output bytes are floored to avoid exceeding percentage caps.
+
+The LD2410C reports moving/stationary target ranges, not a list of identified
+people. Selecting the nearest reported channel cannot guarantee the nearest of
+all physical people, and the sensor cannot reliably distinguish humans from
+animals. Its own absence delay precedes the controller's ten-second timeout.
+The separate distance-test page retains its existing filtered range and mapping.
+
+A valid no-target or out-of-area report starts a ten-second hold at the last
+permitted **smoothed output**, then fades off. Returning presence cancels the
+hold. Migration decreases clamp the hold immediately; a later cap increase does
+not brighten a held target. Radar failures, invalid distances, and stale frames
+(two seconds maximum) bypass the hold and request OFF immediately.
+
+Lux remains acquired and logged once per second by the existing VEML7700
+sampler; the 100 ms controller checks its cached classification and freshness.
+This preserves sensor history cadence and avoids redundant I2C traffic. A
+one-second time-aware lux filter prevents noise from re-enabling darkness.
+Below 15 filtered lux (and a raw reading below 15), classify DARK. A raw reading
+above 25 immediately classifies BRIGHT and requests OFF. Between thresholds,
+including endpoints, preserve the mode; startup/failure in that band stays OFF.
+Invalid or stale lux clears the classification and requires a new confirmed
+dark reading. Raw daylight has priority over filtering delay.
+
+Shield or position the ambient sensor away from the strip. The application
+cannot compensate for self-illumination without measuring the installation.
+No wiring or sensor gain configuration was changed.
+
+## Migration data: documented limitations
+
+The existing BirdCast integration scrapes regional counts and records source
+measurement time. The actual page also has an `isHigh` indication in embedded
+page state; the public UI documents a **High** badge, based on comparisons of
+live and historical observations. The scraper maps the badge in the migration
+traffic section to `high`. It does not execute embedded JavaScript or apply
+invented thresholds to total bird counts. Absence of the badge maps to `unknown`,
+**not low or medium**. Very high is supported by the pure policy but is not
+invented as a BirdCast dashboard classification.
+
+The policy also requires a live-feed indicator, the configured region, and valid
+source and retrieval timestamps no more than 30 minutes old. Future, unparseable,
+missing, historical, failed, wrong-region or expired data selects unknown and
+the 10% cap. Supported source timestamps have explicit US timezone abbreviations;
+unrecognized formats fail conservatively. Old cached results do not become
+fresh on service restart. A manual BirdCast snapshot updates the control cache;
+there is no API query in the local loop. Without a documented category, the
+prototype will commonly remain capped at 10%, even with valid counts.
+
+Provider references checked November 7, 2026:
+
+- https://birdcast.org/migration-tools/migration-dashboard/ (High badge and live/historical modes)
+- https://dashboard.birdcast.org/region/US-CA (actual provider page)
+- https://birdcast.org/definitions-species-arrivals-regions-and-migration-amounts/
+  (density classifications use different units; regional counts cannot be mapped to them)
+
+## Controller watchdog firmware requirement
+
+**Stock WLED JSON brightness commands persist indefinitely after USB/Pi failure.**
+The Pi cannot implement a controller watchdog after it has stopped running.
+Auto therefore refuses nonzero output without BioGlow watchdog protocol v1.
+Off, manual control and direction diagnostics remain usable with stock firmware.
+Manual/diagnostic commands explicitly disarm the adaptive watchdog; these modes
+are intentional operator overrides, not the automatic safe regime.
+
+`firmware/wled/usermod_bioglow_watchdog.h` and `command_watchdog.h` provide a WLED
+usermod. They use WLED's existing LED bus; no GPIO, strip type, power budget, or
+calibration is selected by this module. Startup and expiry request instant OFF.
+A valid adaptive command contains `bioglow.watchdog_ms: 3000`. Repeated commands
+refresh a local, wrap-safe millisecond deadline; missing commands expire it after
+three seconds. No network clock or network connection is required. The Pi sends
+an unchanged output heartbeat every second. Invalid JSON cannot refresh it.
+
+To install, build the **matching WLED firmware for this controller** from its
+source with these two headers copied into `wled00/`. Include
+`usermod_bioglow_watchdog.h` in `usermods_list.cpp`, and add
+`UsermodManager::add(new BioGlowWatchdog());` inside `registerUsermods()`.
+Preserve the controller's existing board/build profile, LED bus configuration and
+power limit. Set WLED startup power OFF and disable boot presets/playlists before
+acceptance testing; WLED can apply boot presets after usermod setup. The module
+also suppresses output in its loop until an explicit Pi command, and suppresses
+output again after expiry. These settings avoid a startup flash before the loop. Follow WLED's build instructions:
+https://kno.wled.ge/advanced/compiling-wled/ and usermod instructions:
+https://kno.wled.ge/advanced/custom-features/ .
+
+The module advertises `info.bioglow_watchdog: 1`; adaptive acknowledgements must
+also report `state.bioglow.watchdog_ms: 3000`. Before sending positive Auto
+commands the USB transport verifies capability. If missing, it requests OFF and
+reports a firmware requirement. An unarmed acknowledgement also requests OFF
+and fails delivery. Hardware firmware has **not been built or flashed** by this
+change; the platform watchdog core is compiled and simulated in tests. A full
+matching-WLED build and physical power/USB-disconnect tests remain necessary.
+The optional legacy HTTP transport cannot activate Auto because it does not
+provide this verified USB watchdog handshake.
+
+Already-running serial exchanges cannot be preempted. Newest commands replace
+queued commands; an older acknowledgement cannot overwrite a subsequent
+brightness reduction in reported state. The independent Pi output worker also
+fails dark on stale lux/radar if the sampler hangs. If delivery itself fails,
+OFF is a request, not proof of physical darkness. The controller watchdog bounds
+output after complete command loss when the module is installed and running.
+Other WLED clients, macros and reboot presets must not compete with adaptive
+control; physical testing must include the installed firmware's boot behavior.
+
+## Dashboard and deployment
+
+The existing WLED page and passive `/v1/latest` response expose raw and filtered
+lux, ambient state, current nearest radar distance in meters, valid presence,
+distance target, migration category and cap, final target, smoothed output,
+last acknowledged brightness, lighting state, hold time remaining, freshness,
+watchdog readiness, and separate sensor/migration/communication errors.
+Acknowledged brightness is controller state, not measured optical output.
+Polling updates existing text nodes and preserves forms, selectors and audio.
+
+From `/home/nir/bioglow-birdcast`:
+
+```bash
+# Edit adaptive-lighting.json as needed. No dependencies or web build are added.
+sudo systemctl restart bioglow.service
+curl --noproxy '*' --max-time 3 -sS http://127.0.0.1:8000/v1/latest
+```
+
+Keep the existing service on port 8000; do not start another server. After a
+restart, station mode is Normal/Auto, recordings remain stopped, live lux/radar
+must become fresh, and migration defaults to unknown until a new manual fetch.
+The dashboard will show watchdog unavailable with stock WLED; Auto stays OFF
+when it would otherwise illuminate. Saved calibration is preserved.
+
+Physical acceptance requires shielding the lux sensor; observing approach,
+departure, stationary targets, the 5 m boundary and ten-second hold/fade; testing
+bright-light and sensor failures; then disconnecting USB or stopping Pi commands
+and observing controller OFF within three seconds. Test boot and reconnection
+also. Simulated results cannot establish illumination, identification accuracy,
+nearest-person coverage, glare, self-illumination, or wildlife safety.
+
+## Changed files
+
+Added: `adaptive_lighting.py`, `adaptive-lighting.json`,
+`test_adaptive_lighting.py`, `firmware/wled/command_watchdog.h`,
+`firmware/wled/usermod_bioglow_watchdog.h`, and this document.
+
+Modified: `lighting_control.py`, `birdcast_service.py`, `birdcast_scraper.py`,
+`wled_serial.py`, `web/dashboard.js`, `LIGHTING.md`, `test_lighting_control.py`,
+`test_birdcast_service.py`, its `tests/` mirror, `test_dashboard_frontend.py`, and `test_dashboard_browser.py`.
+Obsolete Auto tests are replaced with the adaptive suite; manual, diagnostic,
+calibration, serial and service regression checks are retained.
+
+## Validation results (November 7, 2026)
+
+Executed outside the sandbox where HTTP/Chromium require local sockets:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest test_adaptive_lighting test_lighting_control test_wled_serial test_birdcast_scraper tests.test_birdcast_scraper test_configuration_store test_dashboard_frontend test_birdcast_service tests.test_birdcast_service test_dashboard test_collection_schedule test_light_sensor test_dashboard_browser -q
+```
+
+200 tests ran: **199 passed, 1 unrelated existing failure**. The unchanged
+`test_dashboard_assets_and_empty_data_never_probe_hardware` expects an explicit
+`type="image/png"` in the homepage favicon tag; the current unchanged chooser
+page omits this attribute. Adaptive tests, HTTP tests, Node frontend tests and
+both Chromium tests passed. Initial obsolete Auto/threshold assertions were
+updated for this implementation. The watchdog C++ deadline core compiled with
+g++ (`-Wall -Werror`) and passed synthetic expiry, refresh, disable and millis
+wraparound checks. The complete WLED firmware/user module remains unbuilt and
+unflashed; these checks do not establish controller hardware behavior.
+
+Restarted the existing `bioglow.service` and verified live `/v1/latest`:
+Normal/Auto, approximately 287 lux, ambient BRIGHT (`light`), final/output and
+acknowledged brightness zero, live radar frames (about 0.07 s age), USB WLED
+16.0.1 acknowledging OFF, 144 configured pixels, and watchdog unavailable as
+expected on stock firmware. Saved spacing 48, beam width 17, offset 0, manual
+brightness 248, and color #606060 survived the restart. No physical movement,
+visual alignment, lux shielding, nighttime activation, or USB-disconnect tests
+were performed. No firmware or physical wiring was changed.

@@ -1,5 +1,6 @@
 """Server-owned distance brightness and development distance control for the BioGlow fixture."""
 import json
+import logging
 import copy
 import ipaddress
 import math
@@ -10,21 +11,27 @@ import subprocess
 import threading
 import time
 from collections import deque
+from dataclasses import asdict
+from adaptive_lighting import AdaptiveConfig, AdaptivePolicy, nearest_distance, finite, migration_from_snapshot, distance_target, calculate_brightness
 from urllib.request import Request, urlopen, build_opener, ProxyHandler
 
 
-LUX_DARK_THRESHOLD = 10
-LUX_LIGHT_THRESHOLD = 30
-LUX_STALE_AFTER_SECONDS = 30
+LUX_DARK_THRESHOLD = 15
+LUX_LIGHT_THRESHOLD = 25
+LUX_STALE_AFTER_SECONDS = 3
 
 
 def distance_brightness(distance_cm):
     """Map a usable radar range to full-strip brightness independently of rendering."""
-    return round(255 * (0.15 + 0.35 * max(0, min(1, (distance_cm - 100) / 500))))
+    return int(distance_target(distance_cm / 100) * 255 / 100) if finite(distance_cm) else 0
 
 
 class LightingControl:
-    def __init__(self, host="bioglow.local", opener=urlopen, clock=time.monotonic, background=False, transport=None):
+    def __init__(self, host="bioglow.local", opener=urlopen, clock=time.monotonic, background=False, transport=None, adaptive_config=None):
+        self.adaptive_config = adaptive_config or AdaptiveConfig()
+        self.adaptive = AdaptivePolicy(self.adaptive_config)
+        self._migration_snapshot = None
+        self._last_adaptive_state = None
         self.transport = transport
         self.host = os.environ.get("BIOGLOW_LIGHT_HOST", host)
         self._opener = build_opener(ProxyHandler({})).open if opener is urlopen else opener
@@ -72,18 +79,23 @@ class LightingControl:
     def _ambient_status(self):
         """Read-only view; callers hold the lighting lock."""
         age = None if self._lux_at is None else max(0, self._clock() - self._lux_at)
-        unavailable = self._lux_seen and (age is None or age > LUX_STALE_AFTER_SECONDS)
+        unavailable = self._lux_seen and (age is None or age > self.adaptive_config.lux_stale_seconds)
         ambient = "unknown" if unavailable else self._ambient_state
         reason = ("lux_unavailable" if unavailable else "waiting_lux" if ambient == "unknown"
                   else "daylight" if ambient == "light" else "distance_control")
         return {"lux": self._lux, "lux_age_seconds": age, "ambient_state": ambient,
                 "auto_gate_reason": reason if self._state["mode"] == "auto" else None,
-                "lux_dark_threshold": LUX_DARK_THRESHOLD,
-                "lux_light_threshold": LUX_LIGHT_THRESHOLD,
-                "lux_stale_after_seconds": LUX_STALE_AFTER_SECONDS}
+                "lux_dark_threshold": self.adaptive_config.dark_lux,
+                "lux_light_threshold": self.adaptive_config.bright_lux,
+                "lux_stale_after_seconds": self.adaptive_config.lux_stale_seconds}
 
     def _lighting_state(self):
-        state = {**self._state, **self._ambient_status()}
+        state = {**self._state, **self._ambient_status(), "adaptive_config": asdict(self.adaptive_config),
+                 "actual_brightness_percent": None if self._state["brightness"] is None else round(self._state["brightness"] / 255 * 100, 2),
+                 "actual_brightness_source": "controller_acknowledgement_not_optical_measurement",
+                 "controller_watchdog_required": True,
+                 "controller_watchdog_status": ("supported" if self._device_info.get("watchdog_protocol") == 1
+                                                else "unavailable" if self._device_info.get("firmware") else "unconfirmed")}
         if self._state.get("mode") == "direction_config":
             state["alignment"] = self._state.get("alignment", 144)
             state["beam_width"] = self._state.get("beam_width", 1)
@@ -102,14 +114,14 @@ class LightingControl:
                                          else max(0, self._clock() - self._last_ack_at))
             if self._state["mode"] in ("auto", "distance_test") and self._radar_snapshot is not None:
                 radar = copy.deepcopy(self._radar_snapshot)
-                age = (radar["result"].get("age_seconds") or 0) + max(0, self._clock() - self._radar_sampled_at)
-                radar["result"]["age_seconds"] = age
-                if age > radar["result"].get("stale_after_seconds", 2):
+                age = self._radar_age()
+                radar["result"]["age_seconds"] = age if math.isfinite(age) else None
+                if age > 2:
                     radar = {"http_status": 503, "result": {
                         "fresh": False, "status": "unavailable", "sensor_healthy": False,
-                        "timestamp": radar["result"].get("timestamp"), "age_seconds": age,
+                        "timestamp": radar["result"].get("timestamp"), "age_seconds": age if math.isfinite(age) else None,
                         "error": {"code": "presence_unavailable", "message": "Sampled radar frame is stale."}}}
-                    result.update(distance_cm=None, led_index=None, test_state="sensor_unavailable",
+                    result.update(distance_cm=None, person_distance_m=None, presence_detected=False, led_index=None, test_state="sensor_unavailable",
                                   sensor_error=result.get("sensor_error") or "Sampled radar frame is stale; awaiting fresh sensor data.")
                 result["radar_snapshot"] = radar
             return result
@@ -151,6 +163,7 @@ class LightingControl:
                 self._state["color"] = color.lower()
             if mode is None:
                 mode = self._state["mode"] if brightness is None else ("off" if self._state["mode"] == "off" else "on")
+            self.adaptive.reset()
             self._state["mode"] = mode
             self._revision += 1
             self._pending = None
@@ -162,7 +175,7 @@ class LightingControl:
             self._state.pop("sensor_error", None)
             self._state.pop("error", None)
             if mode in ("auto", "distance_test"):
-                self._state.update(distance_cm=None, led_index=None, sample_interval_seconds=0.5,
+                self._state.update(distance_cm=None, led_index=None, sample_interval_seconds=0.1,
                                    test_state="waiting", test_brightness=64, test_color="#ffa028",
                                    distance_source="range_estimate_cm", radar_timestamp=None,
                                    confirmed_led_index=None, confirmed_distance_cm=None, confirmed_radar_timestamp=None)
@@ -234,19 +247,22 @@ class LightingControl:
             self._ambient_state = self._ambient_status()["ambient_state"]
             self._lux_seen = True
             now = self._clock()
-            while self._samples and now - self._samples[0][0] >= 30:
-                self._samples.popleft()
-            if type(lux) in (int, float) and math.isfinite(lux) and lux >= 0:
+            if finite(lux) and lux >= 0:
+                elapsed = 1 if self._lux_at is None else max(0, now - self._lux_at)
+                old = self._state.get("smoothed_lux") if self._ambient_state != "unknown" else None
+                filtered = lux if old is None else old + (1 - math.exp(
+                    -elapsed / self.adaptive_config.lux_filter_tau_seconds)) * (lux - old)
                 self._lux, self._lux_at = lux, now
-                if lux < LUX_DARK_THRESHOLD:
-                    self._ambient_state = "dark"
-                elif lux > LUX_LIGHT_THRESHOLD:
+                self._state["smoothed_lux"] = filtered
+                # Daylight shuts down immediately even before the filter settles.
+                if lux > self.adaptive_config.bright_lux:
                     self._ambient_state = "light"
-                self._samples.append((now, lux))
-                self._state["smoothed_lux"] = sum(value for _, value in self._samples) / len(self._samples)
+                elif lux < self.adaptive_config.dark_lux and filtered < self.adaptive_config.dark_lux:
+                    self._ambient_state = "dark"
             else:
                 self._lux = self._lux_at = None
                 self._ambient_state = "unknown"
+                self._state["smoothed_lux"] = None
             if not was_dark:
                 self._auto_target = 0
                 self._auto_last_distance = self._auto_last_change = None
@@ -283,10 +299,10 @@ class LightingControl:
                 except Exception as exc:
                     # A bad frame must not silently terminate automatic control.
                     self.update_distance(503, {"error": str(exc)}, revision)
-            deadline += 0.5
+            deadline += 0.1
             now = self._clock()
             if deadline <= now:
-                deadline = now + 0.5
+                deadline = now + 0.1
             self._radar_stop.wait(max(0, deadline - now))
 
     def update_distance(self, status, reading, revision=None):
@@ -300,14 +316,28 @@ class LightingControl:
             self._state["radar_timestamp"] = reading.get("timestamp")
             error = None
             distance = None
-            if (status != 200 or not reading.get("fresh", False)
-                    or (reading.get("age_seconds") or 0) > reading.get("stale_after_seconds", 2)):
+            age = reading.get("age_seconds", 0)
+            stale_after = reading.get("stale_after_seconds", 2)
+            if (status != 200 or reading.get("fresh") is not True
+                    or not finite(age) or age < 0 or not finite(stale_after)
+                    or not 0 < stale_after <= 2 or age > stale_after
+                    or reading.get("serial_connected") is False):
                 error = "Radar unavailable or stale; requesting lights off."
-            elif reading.get("presence") != "none":
+            elif self._state["mode"] == "distance_test" and reading.get("presence") != "none":
                 distance = reading.get("range_estimate_cm")
                 if type(distance) not in (int, float) or not math.isfinite(distance) or distance <= 0:
                     distance = None
                     error = "Radar target has no usable distance; requesting lights off."
+            if self._state["mode"] == "auto":
+                raw_presence = reading.get("presence")
+                if not error and raw_presence not in ("none", "moving", "stationary", "both"):
+                    error = "Invalid radar presence state; requesting lights off."
+                distance_m = nearest_distance(reading, self.adaptive_config.max_distance_m)
+                if not error and raw_presence != "none":
+                    keys = ("moving_distance_cm",) if raw_presence == "moving" else ("stationary_distance_cm",) if raw_presence == "stationary" else ("moving_distance_cm", "stationary_distance_cm")
+                    if not any(finite(reading.get(k)) and reading[k] >= 0 for k in keys):
+                        error = "Radar target has no valid channel distance; requesting lights off."
+                distance = None if distance_m is None else distance_m * 100
             led_count = getattr(self.transport, "led_count", None)
             if not isinstance(led_count, int) or led_count <= 0:
                 led_count = 144
@@ -329,24 +359,39 @@ class LightingControl:
             else:
                 self._state.pop("sensor_error", None)
             if self._state["mode"] == "auto":
-                now = self._clock()
-                if not self._auto_allowed():
-                    self._send(0, instant=True)
-                    return
-                if distance is None:
-                    self._auto_last_distance = None
-                    self._auto_last_change = None
-                elif (self._auto_last_distance is None
-                      or abs(distance - self._auto_last_distance) >= 5):
-                    self._auto_last_distance = distance
-                    self._auto_last_change = now
-                active = distance is not None and now - self._auto_last_change < 5
-                self._auto_target = distance_brightness(self._auto_last_distance) if active else 0
-                if distance is not None and not active:
-                    self._state["test_state"] = "idle"
-                self._send(self._auto_target, instant=self._auto_target == 0)
+                self._evaluate_adaptive(error, distance)
             else:
                 self._send(64 if index is not None else 0, color="#ffa028", led_index=index, instant=True)
+
+    def _radar_age(self):
+        if self._radar_snapshot is None or self._radar_sampled_at is None:
+            return float("inf")
+        age = self._radar_snapshot["result"].get("age_seconds", 0)
+        return (age + max(0, self._clock() - self._radar_sampled_at)
+                if finite(age) and age >= 0 else float("inf"))
+
+    def update_migration(self, snapshot):
+        with self._lock:
+            self._migration_snapshot = copy.deepcopy(snapshot)
+            if self._state["mode"] == "auto" and self._radar_snapshot is not None:
+                self._evaluate_adaptive(self._state.get("sensor_error"), self._state.get("distance_cm"))
+
+    def _evaluate_adaptive(self, error, distance):
+        level, age, migration_error = migration_from_snapshot(self._migration_snapshot, self.adaptive_config)
+        error = error or ("Radar sample stale" if self._radar_age() > 2 else None)
+        previous_cap = self._state.get("migration_cap_percent", 10)
+        result = self.adaptive.step(self._clock(), self._auto_allowed(), not error,
+                                    None if distance is None else distance / 100, level)
+        state_key = (result["lighting_state"], level, bool(error))
+        if state_key != self._last_adaptive_state:
+            logging.getLogger(__name__).info("Adaptive lighting state=%s migration=%s cap=%s target=%s sensor_error=%s",
+                result["lighting_state"], level, result["migration_cap_percent"], result["final_target_percent"], error)
+            self._last_adaptive_state = state_key
+        self._state.update(result, migration_age_seconds=age, migration_error=migration_error)
+        self._auto_target = min(int(self.adaptive.output * 255 / 100),
+                                int(result["migration_cap_percent"] * 255 / 100))
+        self._send(self._auto_target, instant=bool(error) or not self._auto_allowed()
+                   or result["migration_cap_percent"] < previous_cap)
 
     def stop(self):
         with self._lock:
@@ -383,14 +428,13 @@ class LightingControl:
                 radar_active = self._state["mode"] in ("auto", "distance_test")
                 if (radar_active and self._radar_snapshot is not None
                         and self._radar_sampled_at is not None
-                        and ((self._radar_snapshot["result"].get("age_seconds") or 0)
-                             + self._clock() - self._radar_sampled_at
-                             > self._radar_snapshot["result"].get("stale_after_seconds", 2))
+                        and self._radar_age() > 2
                         and self._state["target_brightness"]):
                     # Independent watchdog: the output worker fails dark even
                     # if the sensor reader hangs or its sampling thread stops.
+                    self.adaptive.reset()
                     self._auto_target = 0
-                    self._state.update(distance_cm=None, led_index=None,
+                    self._state.update(output_percent=0, final_target_percent=0, lighting_state="sensor_unavailable", person_distance_m=None, presence_detected=False, distance_cm=None, led_index=None,
                                        test_state="sensor_unavailable",
                                        sensor_error="Radar sampling stopped; requesting lights off.")
                     self._send(0, instant=True)
@@ -439,8 +483,16 @@ class LightingControl:
                 self._revision += 1
                 self._pending = None
             target, instant = 0, True
+            self.adaptive.reset()
+            self._state.update(final_target_percent=0, output_percent=0, lighting_state="ambient_off")
             self._auto_target = 0
             self._auto_last_distance = self._auto_last_change = None
+        if self._state["mode"] == "auto":
+            cap = self._state.get("migration_cap_percent", 10)
+            target = min(target, int(cap * 255 / 100))
+        if (self._state["mode"] == "auto" and self._state["target_brightness"] is not None
+                and target < self._state["target_brightness"]):
+            self._revision += 1
         color = color or self._state["color"]
         signature = (target, color, led_index, grp, spc, of)
         now = self._clock()
@@ -452,7 +504,7 @@ class LightingControl:
                 and signature == self._last_distance_command
                 and self._state["status"] != "controller_unavailable"
                 and self._last_distance_sent_at is not None
-                and (self._state["mode"] == "auto" or now - self._last_distance_sent_at < 2)):
+                and now - self._last_distance_sent_at < (1 if self._state["mode"] == "auto" else 2)):
             return
         if self._state["mode"] in ("auto", "distance_test"):
             self._last_distance_command, self._last_distance_sent_at = signature, now
@@ -480,7 +532,7 @@ class LightingControl:
     def _request(self, target, color="#ffd6aa", led_index=None, instant=False, grp=1, spc=0, of=0):
         # Periodic reassertion restores output after fixture restarts or other
         # streams; unchanged distance commands are coalesced in _send.
-        params = {"on": bool(target), "bri": target, "transition": 3,
+        params = {"on": bool(target), "bri": target, "transition": 1 if self._state["mode"] == "auto" else 3,
                   "lor": 2, "live": False, "udpn": {"nn": True},
                   "seg": [{"id": 0, "on": True, "bri": 255, "fx": 0, "pal": 0,
                            "grp": grp, "spc": spc, "of": of,
@@ -489,12 +541,15 @@ class LightingControl:
             params["transition"] = 0
         if led_index is not None:
             params["seg"][0].update(start=led_index, stop=led_index + 1)
+        params["bioglow"] = {"watchdog_ms": 3000 if self._state["mode"] == "auto" else 0}
         try:
             if self.transport:
                 device = self.transport.send(params)
                 if isinstance(device, dict):
                     self._device_info = device
                 return None
+            if self._state["mode"] == "auto" and target:
+                raise OSError("Adaptive output requires USB with BioGlow watchdog firmware")
             host = self.host
             if self._background:
                 if self._address is None:
