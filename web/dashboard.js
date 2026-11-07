@@ -235,7 +235,7 @@ function distanceTestPage() {
 }
 function lightingControls() {
   const brightness = lighting.manual_brightness ?? 255;
-  const color = /^#[0-9a-f]{6}$/i.test(lighting.color || '') ? lighting.color : '#ffa028';
+  const color = /^#[0-9a-f]{6}$/i.test(lighting.color || '') ? lighting.color : '#ffd6aa';
   return `<section class="lighting-controls" aria-label="WLED lighting controls">
     <h2>SP803E · WLED-ESP32 · USB</h2>
     <p class="timestamp" data-lighting-summary>${escapeHtml(lightingSummary())}</p>
@@ -248,8 +248,8 @@ function lightingControls() {
       <fieldset data-lighting-appearance ${lighting.mode === 'distance_test' ? 'disabled' : ''}>
       <label for="wled-brightness">Brightness <output id="wled-brightness-value" for="wled-brightness">${Math.round(brightness / 255 * 100)}%</output></label>
       <input id="wled-brightness" name="brightness" ${lighting.mode === 'auto' ? 'disabled' : ''} type="range" min="1" max="255" value="${brightness}" aria-describedby="wled-manual-help">
-      <label for="wled-color">Color</label>
-      <input id="wled-color" name="color" type="color" value="${color}">
+      <label for="wled-color">LED color (hex code)</label>
+      <input id="wled-color" name="color" type="text" value="${color}" pattern="#[0-9a-fA-F]{6}" maxlength="7" placeholder="#FFD6AA" title="Enter # followed by six hexadecimal digits" required spellcheck="false">
       <button class="button secondary" type="submit">Apply color &amp; brightness</button>
       </fieldset>
     </form>
@@ -1527,7 +1527,7 @@ content.addEventListener('click',event=>{
   const maximum = event.target.closest('[data-lighting-max]');
   if (maximum) {
     const form = content.querySelector('[data-lighting-settings]');
-    const color = form?.querySelector('[name="color"]')?.value || lighting.color || '#ffa028';
+    const color = form?.querySelector('[name="color"]')?.value || lighting.color || '#ffd6aa';
     setLightingMode('on', {brightness:255,color});
     return;
   }

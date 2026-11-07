@@ -9,7 +9,7 @@ from pathlib import Path
 
 FORMAT = 'bioglow-configuration'
 DEFAULTS = dict(alignment=144, beam_width=1, offset=0, manual_brightness=255,
-                calibration_brightness=64, color='#ffa028')
+                calibration_brightness=64, color='#ffd6aa')
 METRICS = {
     'radar': ['presence', 'presence_state', 'range_estimate_cm', 'detection_distance_cm',
               'moving_distance_cm', 'stationary_distance_cm', 'moving_energy_score',

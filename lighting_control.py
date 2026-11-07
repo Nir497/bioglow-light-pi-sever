@@ -59,7 +59,7 @@ class LightingControl:
         self._state = {"name": "BioGlow", "hostname": self.host, "brightness": None,
                        "target_brightness": None, "status": "waiting", "mode": "auto",
                        "connection": "usb" if transport else "wifi",
-                       "manual_brightness": 255, "color": "#ffa028", "on": None}
+                       "manual_brightness": 255, "color": "#ffd6aa", "on": None}
 
     def load_preferences(self, prefs):
         """Install accepted preferences without activating any output regime."""
@@ -213,7 +213,7 @@ class LightingControl:
                         "confirmed_led_index", "confirmed_distance_cm", "confirmed_radar_timestamp"):
                 self._state.pop(key, None)
             target_bri = self._state.get("alignment_brightness", 64)
-            chosen_color = self._state.get("color", "#ffa028")
+            chosen_color = self._state.get("color", "#ffd6aa")
             if beam_width >= spacing:
                 grp = 1
                 spc = 0
@@ -477,7 +477,7 @@ class LightingControl:
                         res = self._request(target, color, led_index, instant)
             self._apply_result(target, res, sample)
 
-    def _request(self, target, color="#ffa028", led_index=None, instant=False, grp=1, spc=0, of=0):
+    def _request(self, target, color="#ffd6aa", led_index=None, instant=False, grp=1, spc=0, of=0):
         # Periodic reassertion restores output after fixture restarts or other
         # streams; unchanged distance commands are coalesced in _send.
         params = {"on": bool(target), "bri": target, "transition": 3,
