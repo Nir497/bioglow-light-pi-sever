@@ -104,7 +104,7 @@ on failure. `/v1/latest` exposes cached lighting state without USB traffic.
 
 Auto uses the server-owned lux sampler and a 100 ms loop reading the existing
 passive radar receiver. Brightness increases as the nearest reported active
-moving or stationary channel approaches (60% at 0 m, 10% at 5 m). Targets outside
+moving or stationary target moves farther away (10% at 0 m, 60% at 5 m). Targets outside
 5 m cannot activate output. Confirmed movement in range is required to switch
 on; subsequent confirmed stationary presence keeps output active. Unconfirmed
 radar clutter cannot activate or renew the hold. The migration

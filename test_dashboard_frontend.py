@@ -243,11 +243,11 @@ async function main(){
     assert.match(ambientSummary.textContent,/Lux age 2.0 s/);
     assert.match(ambientSummary.textContent,/Filtered dark <15 lux \/ Light >25 lux/);
   }
-  vm.runInContext("Object.assign(lighting,{presence_detected:true,person_distance_m:1,distance_target_percent:50,migration_level:'high',migration_cap_percent:20,final_target_percent:20,actual_brightness_percent:19,lighting_state:'tracking'})",context);
+  vm.runInContext("Object.assign(lighting,{presence_detected:true,person_distance_m:1,distance_target_percent:20,migration_level:'high',migration_cap_percent:20,final_target_percent:20,actual_brightness_percent:19,lighting_state:'tracking'})",context);
   assert.match(vm.runInContext('lightingSummary()',context),/Current target distance 1.00 m/);
-  assert.match(vm.runInContext('lightingSummary()',context),/Distance target 50%.*Migration high.*Cap 20%.*Final target 20%.*Acknowledged 19%/);
-  vm.runInContext("lighting.person_distance_m=3;lighting.distance_target_percent=30",context);
-  assert.match(vm.runInContext('lightingSummary()',context),/Current target distance 3.00 m.*Distance target 30%/);
+  assert.match(vm.runInContext('lightingSummary()',context),/Distance target 20%.*Migration high.*Cap 20%.*Final target 20%.*Acknowledged 19%/);
+  vm.runInContext("lighting.person_distance_m=3;lighting.distance_target_percent=40",context);
+  assert.match(vm.runInContext('lightingSummary()',context),/Current target distance 3.00 m.*Distance target 40%/);
   vm.runInContext("lighting.mode='on'",context);
   const originalFetch=context.fetch;
   context.fetch=async(path,options)=>{

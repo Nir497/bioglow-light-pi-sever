@@ -63,7 +63,7 @@ def distance_target(distance_m, config=None):
     if not finite(distance_m) or not 0 <= distance_m <= config.max_distance_m:
         return 0
     return config.min_brightness + (config.max_brightness - config.min_brightness) * (
-        1 - distance_m / config.max_distance_m)
+        distance_m / config.max_distance_m)
 
 
 def calculate_brightness(is_dark, presence_detected, person_distance_m, migration_level, config=None):

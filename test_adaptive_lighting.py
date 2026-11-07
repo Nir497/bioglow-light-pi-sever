@@ -21,7 +21,7 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(calculate_brightness(True, False, 1, 'low'), 0)
 
     def test_distance_table(self):
-        for distance, expected in ((0, 60), (1, 50), (2, 40), (3, 30), (4, 20), (5, 10), (5.01, 0)):
+        for distance, expected in ((0, 10), (1, 20), (2, 30), (3, 40), (4, 50), (5, 60), (5.01, 0)):
             with self.subTest(distance=distance):
                 self.assertEqual(calculate_brightness(True, True, distance, 'low'), expected)
 
@@ -71,15 +71,15 @@ class PolicyTests(unittest.TestCase):
 
     def test_approaching_and_departing_continuous_targets(self):
         targets = [self.step(t / 10, d)['final_target_percent'] for t, d in enumerate((5, 4, 3, 2, 1))]
-        self.assertEqual(targets, [10, 20, 30, 40, 50])
+        self.assertEqual(targets, [60, 50, 40, 30, 20])
         targets = [self.step(1 + t / 10, d)['final_target_percent'] for t, d in enumerate((1, 2, 3, 4, 5))]
-        self.assertEqual(targets, [50, 40, 30, 20, 10])
+        self.assertEqual(targets, [20, 30, 40, 50, 60])
 
     def test_stationary_presence_never_expires(self):
         for tick in range(200):
             result = self.step(tick / 10, distance=3)
         self.assertEqual(result['lighting_state'], 'tracking')
-        self.assertAlmostEqual(result['output_percent'], 30)
+        self.assertAlmostEqual(result['output_percent'], 40)
         self.assertIsNone(result['presence_timeout_remaining_seconds'])
 
     def test_loss_hold_return_cancel_and_fade(self):
@@ -101,8 +101,8 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(self.step(30, None)['output_percent'], 0)
 
     def test_cap_decrease_is_immediate_during_hold_and_fade(self):
-        self.step(0)
-        self.step(5)
+        self.step(0, distance=5)
+        self.step(5, distance=5)
         self.assertGreater(self.policy.output, 40)
         self.assertLessEqual(self.step(5.1, level='high')['output_percent'], 20)
         self.assertLessEqual(self.step(6, None, 'very_high')['output_percent'], 10)
@@ -138,7 +138,7 @@ class PolicyTests(unittest.TestCase):
         other.step(0, True, True, 1, 'low')
         other.step(1, True, True, 1, 'low')
         self.assertAlmostEqual(self.policy.output, other.output)
-        self.assertLess(self.policy.output, 50)
+        self.assertLess(self.policy.output, 20)
 
 
 class MigrationTests(unittest.TestCase):
@@ -208,7 +208,7 @@ class IntegratedLightingTests(unittest.TestCase):
         return self.light.status()
 
     def test_current_channels_update_without_range_estimate(self):
-        for d, target in ((100, 50), (300, 30), (500, 10), (501, 0)):
+        for d, target in ((100, 20), (300, 40), (500, 60), (501, 0)):
             state = self.read(d)
             if d <= 500:
                 self.assertEqual(state['person_distance_m'], d / 100)
@@ -225,7 +225,7 @@ class IntegratedLightingTests(unittest.TestCase):
         self.assertGreater(self.settle(300, 'stationary')['brightness'], 0)
         state = self.read(400, 'both', stationary_distance_cm=100)
         self.assertEqual(state['person_distance_m'], 1)
-        self.assertEqual(state['final_target_percent'], 50)
+        self.assertEqual(state['final_target_percent'], 20)
 
     def test_default_unknown_cap(self):
         self.migration.stop()
@@ -351,11 +351,11 @@ class IntegratedLightingTests(unittest.TestCase):
                 light.stop()
 
     def test_cap_drop_replaces_queued_output_and_requests_instant_clamp(self):
-        self.settle(0)
+        self.settle(500)
         self.assertGreater(self.light.status()['brightness'], 100)
         with patch('lighting_control.migration_from_snapshot', return_value=('high', 0, None)):
             self.now += .1
-            self.read(0)
+            self.read(500)
         command = self.transport.send.call_args.args[0]
         self.assertLessEqual(command['bri'], 51)
         self.assertEqual(command['transition'], 0)

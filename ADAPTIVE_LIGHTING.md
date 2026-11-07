@@ -17,7 +17,7 @@ person_distance_m, migration_level, config=None)` implements the reference pure
 calculation, returning a rounded percentage. With default settings:
 
 ```
-distance_target = 10 + 50 * (1 - distance_m / 5)
+distance_target = 10 + 50 * (distance_m / 5)
 final_target = min(distance_target, migration_cap)
 ```
 
@@ -333,3 +333,14 @@ or false detections that remain credible can still delay recognition of departur
 with weak range, bounded OFF fade at variable update intervals, and recovery
 from a brief weak signal. Physical elapsed time from a person leaving has not
 been measured.
+
+## Reversed distance curve
+
+At the user's request, the distance request now increases with distance:
+`min_brightness + (max_brightness - min_brightness) * distance / max_distance_m`.
+With the current settings this is 10%, 20%, 30%, 40%, 50%, 60% at 0–5 metres;
+beyond 5 metres cannot activate lighting. The nearest valid active target is
+still selected. The movement activation, stationary tracking, two-second hold,
+half-second OFF fade and migration caps are unchanged. In particular, the
+unknown-migration 10% cap still masks visible distance changes. All 69 adaptive,
+lighting and Node frontend tests passed after updating the curve and assertions.
