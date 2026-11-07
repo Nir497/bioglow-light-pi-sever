@@ -93,7 +93,7 @@ class LightingControl:
         state = {**self._state, **self._ambient_status(), "adaptive_config": asdict(self.adaptive_config),
                  "actual_brightness_percent": None if self._state["brightness"] is None else round(self._state["brightness"] / 255 * 100, 2),
                  "actual_brightness_source": "controller_acknowledgement_not_optical_measurement",
-                 "controller_watchdog_required": True,
+                 "controller_watchdog_required": False,
                  "controller_watchdog_status": ("supported" if self._device_info.get("watchdog_protocol") == 1
                                                 else "unavailable" if self._device_info.get("firmware") else "unconfirmed")}
         if self._state.get("mode") == "direction_config":
@@ -548,8 +548,6 @@ class LightingControl:
                 if isinstance(device, dict):
                     self._device_info = device
                 return None
-            if self._state["mode"] == "auto" and target:
-                raise OSError("Adaptive output requires USB with BioGlow watchdog firmware")
             host = self.host
             if self._background:
                 if self._address is None:

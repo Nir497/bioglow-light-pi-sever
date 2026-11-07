@@ -14,7 +14,7 @@ page (`/#light`) contains only the VEML7700 readings and history graph:
   color, and requests master brightness 255/255 and segment brightness 255/255.
 - **Auto** uses adaptive lighting with 15/25 lux hysteresis, continuously updated
   nearest radar distance, a migration cap, a ten-second presence hold and a fade.
-  See [Adaptive lighting](ADAPTIVE_LIGHTING.md), including its required WLED watchdog module.
+  See [Adaptive lighting](ADAPTIVE_LIGHTING.md), including its optional WLED watchdog module.
 
 Manual settings survive scheduled sensor reads, including lux sensor failures.
 All dashboard clients share the server's settings. Restarting the server returns
@@ -113,8 +113,8 @@ direction diagnostics retain their explicit overrides.
 See [ADAPTIVE_LIGHTING.md](ADAPTIVE_LIGHTING.md) for the configurable settings,
 filtering, timeout/fade, provider classification limitations, dashboard fields,
 controller watchdog firmware installation, test results and hardware acceptance
-procedure. Stock WLED has no expiring JSON command; Auto therefore remains OFF
-without the advertised BioGlow watchdog capability. The existing USB connection,
+procedure. Auto works with stock WLED. The optional BioGlow watchdog adds controller-side
+OFF after command loss; stock WLED may retain its last brightness if the Pi stops. The existing USB connection,
 LED rendering/calibration and power budget are preserved. Acknowledgement is
 controller state, not proof of optical output.
 

@@ -364,6 +364,20 @@ class IntegratedLightingTests(unittest.TestCase):
         self.assertEqual(self.light.status()['brightness'], 0)
         self.assertIsNone(self.light.status()['person_distance_m'])
 
+    def test_auto_does_not_require_watchdog_and_legacy_http_can_send_output(self):
+        self.assertFalse(self.light.status()['controller_watchdog_required'])
+        opener = MagicMock()
+        opener.return_value.__enter__.return_value.status = 200
+        light = LightingControl(opener=opener)
+        try:
+            light.update(0)
+            light.update_distance(200, dict(fresh=True, presence='moving', moving_distance_cm=100))
+            self.assertGreater(light.status()['brightness'], 0)
+            self.assertEqual(light.status()['status'], 'ok')
+            self.assertTrue(json.loads(opener.call_args.args[0].data)['on'])
+        finally:
+            light.stop()
+
     def test_failed_transport_never_claims_brightness(self):
         self.transport.send.side_effect = OSError('unplugged')
         state = self.read()
@@ -392,7 +406,7 @@ int main() {
             subprocess.run(['g++', '-std=c++11', '-Wall', '-Werror', '-I', str(root), str(path), '-o', binary], check=True, capture_output=True)
             subprocess.run([binary], check=True)
 
-    def test_missing_firmware_or_unarmed_ack_never_accepts_adaptive_on(self):
+    def test_stock_wled_works_and_installed_watchdog_must_arm(self):
         for capability, armed in ((False, False), (True, False), (True, True)):
             light = WLEDSerial(port='test')
             current = {'info': {'brand': 'WLED', 'arch': 'esp32', 'leds': {'count': 144}},
@@ -408,11 +422,16 @@ int main() {
                 # query is mocked separately, so command ack must come first
                 replies = iter([ack, current])
                 params = dict(on=True, bri=25, bioglow={'watchdog_ms': 3000}, seg=[{'col': [[255,214,170,0]]}])
-                if capability and armed:
-                    self.assertEqual(light.send(params)['watchdog_protocol'], 1)
+                if not capability or armed:
+                    self.assertEqual(light.send(params)['watchdog_protocol'], 1 if capability else None)
+                    command = write.call_args.args[0]
+                    self.assertTrue(command['on'])
+                    self.assertEqual(command['bri'], 25)
+                    if capability:
+                        self.assertEqual(command['bioglow']['watchdog_ms'], 3000)
+                    else:
+                        self.assertNotIn('bioglow', command)
                 else:
                     with self.assertRaisesRegex(OSError, 'watchdog'):
                         light.send(params)
                     self.assertFalse(write.call_args.args[0]['on'])
-                    if not capability:
-                        self.assertFalse(any(c.args[0].get('on') for c in write.call_args_list))

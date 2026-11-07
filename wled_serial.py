@@ -157,11 +157,9 @@ class WLEDSerial:
                     current = self._query()
                     self._queried_at = self._clock()
             info = current.get("info", {})
-            adaptive = params.get("bioglow", {}).get("watchdog_ms") == 3000
-            if adaptive and params["on"] and info.get("bioglow_watchdog") != 1:
-                self._write({"on": False, "bri": 0, "transition": 0, "v": True})
-                self._read_reply()
-                raise OSError("Adaptive output locked OFF: install BioGlow WLED watchdog firmware (protocol v1)")
+            watchdog_supported = info.get("bioglow_watchdog") == 1
+            adaptive = (params.get("bioglow", {}).get("watchdog_ms") == 3000
+                        and watchdog_supported)
             count = info.get("leds", {}).get("count")
             if type(count) is not int or not 1 <= count <= 65535:
                 raise OSError("WLED did not report a valid configured LED count; check LED Preferences")
@@ -179,6 +177,8 @@ class WLEDSerial:
                               "WLED's USB state API cannot change the LED-output hardware configuration.")
             coverage = min(count, self.led_count)
             command = copy.deepcopy(params)
+            if not watchdog_supported:
+                command.pop("bioglow", None)
             full = command["seg"][0]
             start, stop = full.get("start", 0), full.get("stop", coverage)
             if type(start) is not int or type(stop) is not int or not 0 <= start < stop <= coverage:

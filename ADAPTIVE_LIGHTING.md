@@ -113,11 +113,13 @@ Provider references checked November 7, 2026:
 - https://birdcast.org/definitions-species-arrivals-regions-and-migration-amounts/
   (density classifications use different units; regional counts cannot be mapped to them)
 
-## Controller watchdog firmware requirement
+## Optional controller watchdog firmware
 
 **Stock WLED JSON brightness commands persist indefinitely after USB/Pi failure.**
 The Pi cannot implement a controller watchdog after it has stopped running.
-Auto therefore refuses nonzero output without BioGlow watchdog protocol v1.
+At the user's request, Auto also operates without BioGlow watchdog protocol v1.
+The Pi continues applying all adaptive decisions and sensor fail-safe OFF
+requests; stock WLED may retain its last brightness after complete command loss.
 Off, manual control and direction diagnostics remain usable with stock firmware.
 Manual/diagnostic commands explicitly disarm the adaptive watchdog; these modes
 are intentional operator overrides, not the automatic safe regime.
@@ -172,14 +174,14 @@ https://kno.wled.ge/advanced/compiling-wled/ and usermod instructions:
 https://kno.wled.ge/advanced/custom-features/ .
 
 The module advertises `info.bioglow_watchdog: 1`; adaptive acknowledgements must
-also report `state.bioglow.watchdog_ms: 3000`. Before sending positive Auto
-commands the USB transport verifies capability. If missing, it requests OFF and
-reports a firmware requirement. An unarmed acknowledgement also requests OFF
-and fails delivery. Hardware firmware has **not been built or flashed** by this
+also report `state.bioglow.watchdog_ms: 3000`. The USB transport enables and verifies the watchdog when the controller
+advertises capability. Without the module it sends normal WLED commands and
+reports watchdog unavailable. If the controller advertises the module but fails
+to acknowledge arming, the transport still requests OFF and fails delivery. Hardware firmware has **not been built or flashed** by this
 change; the platform watchdog core is compiled and simulated in tests. A full
 matching-WLED build and physical power/USB-disconnect tests remain necessary.
-The optional legacy HTTP transport cannot activate Auto because it does not
-provide this verified USB watchdog handshake.
+The legacy HTTP transport also permits Auto, but does not verify watchdog
+capability or arming; the active server continues to use USB.
 
 Already-running serial exchanges cannot be preempted. Newest commands replace
 queued commands; an older acknowledgement cannot overwrite a subsequent
@@ -211,8 +213,8 @@ curl --noproxy '*' --max-time 3 -sS http://127.0.0.1:8000/v1/latest
 Keep the existing service on port 8000; do not start another server. After a
 restart, station mode is Normal/Auto, recordings remain stopped, live lux/radar
 must become fresh, and migration defaults to unknown until a new manual fetch.
-The dashboard will show watchdog unavailable with stock WLED; Auto stays OFF
-when it would otherwise illuminate. Saved calibration is preserved.
+The dashboard shows watchdog unavailable with stock WLED; Auto still controls
+lighting normally. Saved calibration is preserved.
 
 Physical acceptance requires shielding the lux sensor; observing approach,
 departure, stationary targets, the 5 m boundary and ten-second hold/fade; testing
@@ -260,3 +262,13 @@ expected on stock firmware. Saved spacing 48, beam width 17, offset 0, manual
 brightness 248, and color #606060 survived the restart. No physical movement,
 visual alignment, lux shielding, nighttime activation, or USB-disconnect tests
 were performed. No firmware or physical wiring was changed.
+
+## Stock WLED compatibility update
+
+The user subsequently authorized automatic operation without the watchdog module.
+Auto now sends normal brightness commands to stock WLED and strips the optional
+module field from USB commands when capability is absent. Installed modules are
+still armed and their acknowledgements checked. The status field
+`controller_watchdog_required` is false; watchdog availability remains visible.
+The adaptive/WLED/lighting/Node regression run passed all 93 tests. No firmware
+flash is needed for this compatibility mode.
