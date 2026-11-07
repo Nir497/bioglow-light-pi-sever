@@ -232,7 +232,7 @@ async function main(){
   vm.runInContext('syncLightingControls()',context);
   assert.equal(brightnessInput.value,120);
   assert.equal(colorInput.value,'#abcdef');
-  assert.match(vm.runInContext('lightingControls()',context),/type="color"/);
+  assert.match(vm.runInContext('lightingControls()',context),/type="text"/);
   assert.match(vm.runInContext('lightingControls()',context),/type="range"/);
   assert.match(vm.runInContext('lightingControls()',context),/SP803E · WLED-ESP32 · USB/);
   for (const [reason,label] of [['waiting_lux','Waiting for lux'],['daylight','Daylight'],['lux_unavailable','Lux unavailable or stale'],['distance_control','Distance control active']]) {
