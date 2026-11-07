@@ -17,6 +17,24 @@ from birdcast_service import (BusyError, RecordingError, Service, SUPPORTED_REGI
 
 
 class ServiceTests(unittest.TestCase):
+    def test_telemetry_lamp_snapshot_is_passive_and_keeps_controller_state(self):
+        self.service.direction_alignment = 51
+        self.service.direction_offset = 17
+        lighting = {"brightness": 80, "target_brightness": 90, "color": "#112233",
+                    "status": "error", "error": "disconnected", "radar_snapshot": {"private": True}}
+        with patch.object(self.service.lighting, "status", return_value=lighting), \
+                patch.object(self.service.presence_sensor, "response") as radar, \
+                patch.object(self.service.light_sensor, "read") as light:
+            snapshot = self.service.lamp_telemetry()
+        self.assertEqual(snapshot["directionality"]["angle_degrees"], 120)
+        self.assertEqual(snapshot["lighting"]["brightness"], 80)
+        self.assertEqual(snapshot["lighting"]["target_brightness"], 90)
+        self.assertEqual(snapshot["lighting"]["color"], "#112233")
+        self.assertEqual(snapshot["lighting"]["error"], "disconnected")
+        self.assertNotIn("radar_snapshot", snapshot["lighting"])
+        radar.assert_not_called()
+        light.assert_not_called()
+
     def setUp(self):
         self.snapshot = {"status": "ok", "region": {"code": "US-CA"}, "metrics": {"birds_in_flight": None}, "warnings": ["missing"]}
         directory = tempfile.TemporaryDirectory()

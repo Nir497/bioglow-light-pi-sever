@@ -14,11 +14,12 @@ class ReadingHistory:
     RANGES = {"30m": 1800, "1h": 3600, "6h": 21600, "12h": 43200,
               "1d": 86400, "7d": 604800, "all": None}
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, on_entry=None):
         self.root = root / "readings"
         self.lock = threading.Lock()
         self.recording_keys = None
         self.recording_lock = threading.Lock()
+        self.on_entry = on_entry
 
     def _entries(self, source):
         try:
@@ -130,6 +131,8 @@ class ReadingHistory:
                     if stream.read(1) != b"\n":
                         stream.write(b"\n")
                 stream.write(line.encode("utf-8"))
+        if self.on_entry:
+            self.on_entry(source, entry)
 
     def delete_recording(self, identifier):
         with self.recording_lock, self.lock:

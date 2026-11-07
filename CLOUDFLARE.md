@@ -1,5 +1,9 @@
 # Cloudflare dashboard tunnel
 
+For outbound readings and lamp/animal telemetry to the separate `bioglow-data`
+Worker, see [the data receiver setup](cloudflare/data/README.md). It uses HTTPS
+uploads and does not require changing this tunnel.
+
 The existing dashboard stays on port 8000. A remotely managed Cloudflare Tunnel
 forwards the public hostname to `http://127.0.0.1:8000` on the Pi. No application
 code changes or router port forwarding are needed. Local dashboard access stays

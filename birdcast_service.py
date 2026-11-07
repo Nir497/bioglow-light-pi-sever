@@ -30,6 +30,7 @@ from lighting_control import LightingControl
 from wled_serial import WLEDSerial
 from presence import PresenceSensor
 from reading_history import ReadingHistory
+from telemetry import Telemetry
 from recording_store import RecordingError, RecordingNotFound, RecordingStore
 
 DEFAULT_PORT = 8000
@@ -126,7 +127,8 @@ class Service:
         self.wled = WLEDSerial()
         self.lighting = LightingControl(background=True, transport=self.wled)
         self.presence_sensor = PresenceSensor()
-        self.reading_history = ReadingHistory(self.root)
+        self.telemetry = Telemetry(self.root)
+        self.reading_history = ReadingHistory(self.root, on_entry=self.telemetry.enqueue)
         self.animal_names = AnimalNames(self.root)
         self.config = config
         self.aim_timer = None
@@ -297,6 +299,16 @@ class Service:
     def latest(self) -> dict[str, Any]:
         with self._mode_lock:
             return self._latest_snapshot()
+
+    def lamp_telemetry(self):
+        with self._mode_lock:
+            lighting = self.lighting.status()
+            lighting.pop("radar_snapshot", None)
+            return {"mode": self.mode, "lighting": lighting,
+                    "directionality": {"alignment": self.direction_alignment,
+                                       "beam_width": self.direction_beam_width,
+                                       "offset": self.direction_offset,
+                                       "angle_degrees": round(self.direction_offset / self.direction_alignment * 360, 1)}}
 
     def _latest_snapshot(self) -> dict[str, Any]:
         with self._latest_lock:
@@ -904,6 +916,7 @@ def main(argv=None) -> int:
     service.presence_sensor.start()
     service.lighting.start_distance_sampling(service.presence_sensor.response)
     service.collection_schedule.start()
+    service.telemetry.start(service.lamp_telemetry)
     try:
         service.animal_analysis.start()
     except OSError as exc:
@@ -918,6 +931,7 @@ def main(argv=None) -> int:
         service.lighting.stop()
         service.animal_analysis.stop()
         service.presence_sensor.stop()
+        service.telemetry.stop()
         server.server_close()
     return 0
 
