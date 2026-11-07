@@ -248,7 +248,9 @@ function lightingControls() {
       <fieldset data-lighting-appearance ${lighting.mode === 'distance_test' ? 'disabled' : ''}>
       <label for="wled-brightness">Brightness <output id="wled-brightness-value" for="wled-brightness">${Math.round(brightness / 255 * 100)}%</output></label>
       <input id="wled-brightness" name="brightness" ${lighting.mode === 'auto' ? 'disabled' : ''} type="range" min="1" max="255" value="${brightness}" aria-describedby="wled-manual-help">
-      <label for="wled-color">LED color (hex code)</label>
+      <label for="wled-color-picker">LED color</label>
+      <input id="wled-color-picker" name="color-picker" type="color" value="${color}">
+      <label for="wled-color">Hex code</label>
       <input id="wled-color" name="color" type="text" value="${color}" pattern="#[0-9a-fA-F]{6}" maxlength="7" placeholder="#FFD6AA" title="Enter # followed by six hexadecimal digits" required spellcheck="false">
       <button class="button secondary" type="submit">Apply color &amp; brightness</button>
       </fieldset>
@@ -280,6 +282,8 @@ function syncLightingControls() {
   const color = form.querySelector('[name="color"]');
   if (brightness) brightness.value = lighting.manual_brightness ?? 255;
   if (color && lighting.color) color.value = lighting.color;
+  const picker = form.querySelector('[name="color-picker"]');
+  if (picker && lighting.color) picker.value = lighting.color;
   const output = form.querySelector('output');
   if (output) output.textContent = `${Math.round((lighting.manual_brightness ?? 255) / 255 * 100)}%`;
 }
@@ -1461,6 +1465,8 @@ content.addEventListener('input', event=>{
   const form = event.target.closest('[data-lighting-settings]');
   if (!form) return;
   form.dataset.dirty = 'true';
+  if (event.target.name === 'color-picker') form.querySelector('[name="color"]').value = event.target.value;
+  if (event.target.name === 'color' && /^#[0-9a-f]{6}$/i.test(event.target.value)) form.querySelector('[name="color-picker"]').value = event.target.value;
   if (event.target.name === 'brightness') form.querySelector('output').textContent = `${Math.round(Number(event.target.value) / 255 * 100)}%`;
 });
 content.addEventListener('submit', event=>{
