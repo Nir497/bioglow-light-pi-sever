@@ -28,10 +28,14 @@ class AdaptiveConfig:
     lux_filter_tau_seconds: float = 1
     migration_stale_seconds: float = 1800
     migration_region: str = 'US-CA'
+    require_motion_to_activate: bool = True
 
     def __post_init__(self):
         values = asdict(self)
         region = values.pop('migration_region')
+        require_motion = values.pop('require_motion_to_activate')
+        if type(require_motion) is not bool:
+            raise ValueError('require_motion_to_activate must be a boolean')
         if any(not finite(v) for v in values.values()):
             raise ValueError('Adaptive settings must be finite numbers')
         if not 0 <= self.min_brightness <= self.max_brightness <= 100:

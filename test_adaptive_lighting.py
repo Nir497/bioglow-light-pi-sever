@@ -37,7 +37,7 @@ class CalculationTests(unittest.TestCase):
     def test_config_validation_and_load(self):
         for settings in ({'max_distance_m': 0}, {'dark_lux': 26}, {'max_brightness': 101},
                          {'min_brightness': 90}, {'presence_timeout_seconds': -1},
-                         {'max_distance_m': float('nan')}, {'dark_lux': True}):
+                         {'max_distance_m': float('nan')}, {'dark_lux': True}, {'require_motion_to_activate': 1}):
             with self.assertRaises(ValueError):
                 AdaptiveConfig(**settings)
         with tempfile.TemporaryDirectory() as tmp:
@@ -211,6 +211,7 @@ class IntegratedLightingTests(unittest.TestCase):
         other.stop()
 
     def test_stationary_and_nearest_channels(self):
+        self.read(300, 'moving', presence_confirmed=True, presence_state='PRESENT_ACTIVE')
         self.assertGreater(self.settle(300, 'stationary')['brightness'], 0)
         state = self.read(400, 'both', stationary_distance_cm=100)
         self.assertEqual(state['person_distance_m'], 1)
@@ -375,6 +376,100 @@ class IntegratedLightingTests(unittest.TestCase):
             self.assertGreater(light.status()['brightness'], 0)
             self.assertEqual(light.status()['status'], 'ok')
             self.assertTrue(json.loads(opener.call_args.args[0].data)['on'])
+        finally:
+            light.stop()
+
+    def test_unconfirmed_radar_target_cannot_activate_in_darkness(self):
+        for state in ('EMPTY', 'APPROACHING_CANDIDATE'):
+            result = self.read(200, 'stationary', presence_confirmed=False, presence_state=state)
+            self.assertEqual(result['brightness'], 0)
+            self.assertFalse(result['presence_detected'])
+            self.assertIsNone(result['person_distance_m'])
+            self.assertEqual(result['presence_gate_reason'], 'unconfirmed_target')
+            self.assertEqual(result['radar_nearest_distance_m'], 2)
+        self.read(200, 'moving', presence_confirmed=True, presence_state='PRESENT_ACTIVE')
+        self.now += .1
+        result = self.read(200, 'stationary', presence_confirmed=True, presence_state='PRESENT_STILL')
+        self.assertGreater(result['brightness'], 0)
+
+    def test_unconfirmed_target_does_not_cancel_presence_timeout(self):
+        self.settle()
+        self.now += .1
+        result = self.read(200, 'stationary', presence_confirmed=False, presence_state='EMPTY')
+        self.assertEqual(result['lighting_state'], 'presence_hold')
+        for _ in range(140):
+            self.now += .1
+            self.light.update(0)
+            result = self.read(200, 'stationary', presence_confirmed=False, presence_state='EMPTY')
+        self.assertEqual(result['final_target_percent'], 0)
+        self.assertEqual(result['brightness'], 0)
+
+    def test_stationary_clutter_does_not_activate_until_confirmed_motion(self):
+        for _ in range(30):
+            self.now += .1
+            self.light.update(0)
+            state = self.read(213, 'stationary', presence_confirmed=True, presence_state='PRESENT_STILL')
+            self.assertEqual(state['brightness'], 0)
+            self.assertEqual(state['presence_gate_reason'], 'waiting_for_movement')
+        state = self.read(200, 'moving', presence_confirmed=False, presence_state='APPROACHING_CANDIDATE')
+        self.assertEqual(state['brightness'], 0)
+        self.now += .1
+        state = self.read(200, 'moving', presence_confirmed=True, presence_state='PRESENT_ACTIVE')
+        self.assertGreater(state['brightness'], 0)
+        self.assertTrue(state['motion_session_active'])
+        self.assertGreater(self.settle(200, 'stationary')['brightness'], 0)
+
+    def test_motion_beyond_area_cannot_arm_stationary_target(self):
+        state = self.read(600, 'both', stationary_distance_cm=200,
+                          presence_confirmed=True, presence_state='PRESENT_ACTIVE')
+        self.assertEqual(state['brightness'], 0)
+        self.assertFalse(state['motion_session_active'])
+        self.assertEqual(state['presence_gate_reason'], 'waiting_for_movement')
+
+    def test_motion_session_resets_after_absence_daylight_failure_and_mode_change(self):
+        self.settle()
+        self.now += .1
+        self.read(None, 'none', presence_confirmed=False, presence_state='EMPTY')
+        for _ in range(140):
+            self.now += .1
+            self.light.update(0)
+            state = self.read(None, 'none', presence_confirmed=False, presence_state='EMPTY')
+        self.assertFalse(state['motion_session_active'])
+        self.assertEqual(self.read(200, 'stationary')['brightness'], 0)
+        for reset in ('daylight', 'failure', 'mode'):
+            self.settle()
+            if reset == 'daylight':
+                self.light.update(100)
+                self.light.update(None)
+                self.light.update(0)
+            elif reset == 'failure':
+                self.read(fresh=False)
+            else:
+                self.light.set_mode('off')
+                self.light.set_mode('auto')
+            self.now += .1
+            self.assertEqual(self.read(200, 'stationary')['brightness'], 0, reset)
+
+    def test_stationary_return_after_timeout_requires_new_movement(self):
+        self.settle()
+        self.now += .1
+        self.read(None, 'none')
+        self.now += 10.1
+        self.light.update(0)
+        state = self.read(200, 'stationary', presence_confirmed=True, presence_state='PRESENT_STILL')
+        self.assertFalse(state['presence_detected'])
+        self.assertFalse(state['motion_session_active'])
+        self.assertEqual(state['presence_gate_reason'], 'waiting_for_movement')
+        self.assertEqual(state['final_target_percent'], 0)
+
+    def test_stationary_activation_can_be_explicitly_enabled(self):
+        light = LightingControl(transport=self.transport,
+                                adaptive_config=AdaptiveConfig(require_motion_to_activate=False))
+        try:
+            light.update(0)
+            light.update_distance(200, dict(fresh=True, presence='stationary', stationary_distance_cm=200,
+                                           presence_confirmed=True, presence_state='PRESENT_STILL'))
+            self.assertGreater(light.status()['brightness'], 0)
         finally:
             light.stop()
 

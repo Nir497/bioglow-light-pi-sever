@@ -43,6 +43,7 @@ sliders and is not included in their backup.
 | lux_filter_tau_seconds | 1 s |
 | migration_stale_seconds | 1800 s |
 | migration_region | US-CA |
+| require_motion_to_activate | true |
 
 Migration caps are the prototype policy constants: low 60%, medium 40%, high
 20%, very_high 10%, and unknown 10%. They are **not scientifically validated
@@ -55,6 +56,26 @@ The existing passive UART receiver continues receiving LD2410C reports. Every
 valid active moving or stationary channel in range. It does not reopen UART,
 wait for an HTTP client, or rely on a target's initial distance. Thus movement
 changes the target continuously and stationary presence has no inactivity cutoff.
+The current normal station rule requires confirmed movement in range to switch
+on (`require_motion_to_activate: true`). Subsequent confirmed stationary
+presence can keep it on. The existing radar estimator's `presence_confirmed`
+flag gates Auto when present; raw unconfirmed clutter cannot start or reset the
+hold. Live LD2410C responses always include this flag. Legacy integrations
+without estimator fields retain their raw presence semantics.
+
+A motion activation resets on daylight, invalid/stale sensors, a lighting-mode
+change, or expiry of the presence-loss timeout. A stationary report returning
+after that timeout cannot start a new session. Confirmed motion outside 5 m
+cannot arm an in-range stationary channel. Set `require_motion_to_activate` to
+false only if stationary-only initial activation is intentionally desired.
+This setting was approved after the user confirmed the detection area was empty
+while the radar reported a stationary target. It blocks stationary-only startup
+false detections, but cannot distinguish genuine stationary presence from clutter
+that persists continuously after an actual arrival. That still requires physical
+radar sensitivity/placement calibration; no radar configuration commands are sent.
+The dashboard exposes `presence_gate_reason`, `radar_presence_state`, raw nearest
+channel distance and `motion_session_active` to make the decision inspectable.
+
 Brightness uses a time-aware exponential filter, so repeated cached frames do
 not accelerate convergence when scheduling varies. Normal WLED updates request
 100 ms transitions; daylight, invalid/stale radar/lux, and cap decreases bypass
@@ -272,3 +293,15 @@ still armed and their acknowledgements checked. The status field
 `controller_watchdog_required` is false; watchdog availability remains visible.
 The adaptive/WLED/lighting/Node regression run passed all 93 tests. No firmware
 flash is needed for this compatibility mode.
+
+## Confirmed movement activation update
+
+The user approved requiring movement to switch on after confirming the detection
+area was empty while live radar still reported confirmed stationary presence.
+Auto now also honors the existing radar confirmation flag. The 148-test run
+(adaptive, lighting, WLED serial, mirrored service tests and Node frontend)
+passed. After restarting the existing service, live readings showed DARK at
+10.2144 lux, fresh radar EMPTY/no target, motion activation false, and WLED
+acknowledging zero output. No radar sensitivity or UART configuration was changed.
+A physical walk-in/stillness/departure test is still required. Persistent
+stationary clutter after a real arrival can still require radar calibration.

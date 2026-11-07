@@ -120,6 +120,7 @@ class ServiceTests(unittest.TestCase):
         light._background = False
         light.set_mode("auto")
         light.update(0)
+        light.update_distance(200, {"fresh": True, "presence": "moving", "moving_distance_cm": 350})
         light.update_distance(200, {"fresh": True, "presence": "stationary", "range_estimate_cm": 350, "stationary_distance_cm": 350})
         self.service.presence_sensor.response = MagicMock()
         latest = self.service.latest()

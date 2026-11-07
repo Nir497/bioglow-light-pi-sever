@@ -9,5 +9,6 @@
   "smoothing_tau_seconds": 0.4481420118,
   "lux_filter_tau_seconds": 1,
   "migration_stale_seconds": 1800,
-  "migration_region": "US-CA"
+  "migration_region": "US-CA",
+  "require_motion_to_activate": true
 }

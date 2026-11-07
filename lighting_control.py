@@ -32,6 +32,7 @@ class LightingControl:
         self.adaptive = AdaptivePolicy(self.adaptive_config)
         self._migration_snapshot = None
         self._last_adaptive_state = None
+        self._motion_session_active = False
         self.transport = transport
         self.host = os.environ.get("BIOGLOW_LIGHT_HOST", host)
         self._opener = build_opener(ProxyHandler({})).open if opener is urlopen else opener
@@ -164,6 +165,7 @@ class LightingControl:
             if mode is None:
                 mode = self._state["mode"] if brightness is None else ("off" if self._state["mode"] == "off" else "on")
             self.adaptive.reset()
+            self._motion_session_active = False
             self._state["mode"] = mode
             self._revision += 1
             self._pending = None
@@ -337,6 +339,32 @@ class LightingControl:
                     keys = ("moving_distance_cm",) if raw_presence == "moving" else ("stationary_distance_cm",) if raw_presence == "stationary" else ("moving_distance_cm", "stationary_distance_cm")
                     if not any(finite(reading.get(k)) and reading[k] >= 0 for k in keys):
                         error = "Radar target has no valid channel distance; requesting lights off."
+                self._state.update(radar_presence_confirmed=reading.get("presence_confirmed"),
+                                   radar_presence_state=reading.get("presence_state"),
+                                   radar_nearest_distance_m=distance_m)
+                if "presence_confirmed" in reading and reading["presence_confirmed"] is not True:
+                    distance_m = None
+                    gate_reason = "unconfirmed_target"
+                else:
+                    gate_reason = "no_target" if raw_presence == "none" else "outside_detection_area" if distance_m is None else "valid_target"
+                if error or not self._auto_allowed():
+                    self._motion_session_active = False
+                elif distance_m is not None and self.adaptive_config.require_motion_to_activate:
+                    if (self.adaptive.lost_at is not None and self._clock() - self.adaptive.lost_at
+                            >= self.adaptive_config.presence_timeout_seconds):
+                        self._motion_session_active = False
+                    moving_distance = reading.get("moving_distance_cm")
+                    motion_in_area = (raw_presence in ("moving", "both")
+                                      and finite(moving_distance)
+                                      and 0 <= moving_distance <= self.adaptive_config.max_distance_m * 100
+                                      and ("presence_state" not in reading
+                                           or reading["presence_state"] == "PRESENT_ACTIVE"))
+                    if motion_in_area:
+                        self._motion_session_active = True
+                    if not self._motion_session_active:
+                        distance_m = None
+                        gate_reason = "waiting_for_movement"
+                self._state["presence_gate_reason"] = "sensor_unavailable" if error else gate_reason
                 distance = None if distance_m is None else distance_m * 100
             led_count = getattr(self.transport, "led_count", None)
             if not isinstance(led_count, int) or led_count <= 0:
@@ -387,7 +415,10 @@ class LightingControl:
             logging.getLogger(__name__).info("Adaptive lighting state=%s migration=%s cap=%s target=%s sensor_error=%s",
                 result["lighting_state"], level, result["migration_cap_percent"], result["final_target_percent"], error)
             self._last_adaptive_state = state_key
-        self._state.update(result, migration_age_seconds=age, migration_error=migration_error)
+        if result["lighting_state"] in ("ambient_off", "sensor_unavailable", "fading_off", "off"):
+            self._motion_session_active = False
+        self._state.update(result, migration_age_seconds=age, migration_error=migration_error,
+                           motion_session_active=self._motion_session_active)
         self._auto_target = min(int(self.adaptive.output * 255 / 100),
                                 int(result["migration_cap_percent"] * 255 / 100))
         self._send(self._auto_target, instant=bool(error) or not self._auto_allowed()
@@ -433,8 +464,9 @@ class LightingControl:
                     # Independent watchdog: the output worker fails dark even
                     # if the sensor reader hangs or its sampling thread stops.
                     self.adaptive.reset()
+                    self._motion_session_active = False
                     self._auto_target = 0
-                    self._state.update(output_percent=0, final_target_percent=0, lighting_state="sensor_unavailable", person_distance_m=None, presence_detected=False, distance_cm=None, led_index=None,
+                    self._state.update(motion_session_active=False, output_percent=0, final_target_percent=0, lighting_state="sensor_unavailable", person_distance_m=None, presence_detected=False, distance_cm=None, led_index=None,
                                        test_state="sensor_unavailable",
                                        sensor_error="Radar sampling stopped; requesting lights off.")
                     self._send(0, instant=True)
@@ -484,7 +516,8 @@ class LightingControl:
                 self._pending = None
             target, instant = 0, True
             self.adaptive.reset()
-            self._state.update(final_target_percent=0, output_percent=0, lighting_state="ambient_off")
+            self._motion_session_active = False
+            self._state.update(motion_session_active=False, final_target_percent=0, output_percent=0, lighting_state="ambient_off")
             self._auto_target = 0
             self._auto_last_distance = self._auto_last_change = None
         if self._state["mode"] == "auto":
