@@ -36,7 +36,7 @@ class CalculationTests(unittest.TestCase):
 
     def test_config_validation_and_load(self):
         for settings in ({'max_distance_m': 0}, {'dark_lux': 26}, {'max_brightness': 101},
-                         {'min_brightness': 90}, {'presence_timeout_seconds': -1},
+                         {'min_brightness': 90}, {'presence_timeout_seconds': -1}, {'off_fade_seconds': 0},
                          {'max_distance_m': float('nan')}, {'dark_lux': True}, {'require_motion_to_activate': 1}):
             with self.assertRaises(ValueError):
                 AdaptiveConfig(**settings)
@@ -118,6 +118,16 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(result['output_percent'], 0)
             self.assertEqual(result['final_target_percent'], 0)
             self.assertEqual(self.policy.held, 0)
+
+    def test_departure_fade_has_bounded_duration_at_variable_intervals(self):
+        policy = AdaptivePolicy(AdaptiveConfig(presence_timeout_seconds=2, off_fade_seconds=.5))
+        policy.step(0, True, True, 0, 'low')
+        policy.step(5, True, True, 0, 'low')
+        policy.step(5.1, True, True, None, 'low')
+        held = policy.output
+        self.assertEqual(policy.step(7.1, True, True, None, 'low')['final_target_percent'], 0)
+        self.assertAlmostEqual(policy.step(7.35, True, True, None, 'low')['output_percent'], held / 2, places=3)
+        self.assertEqual(policy.step(7.61, True, True, None, 'low')['output_percent'], 0)
 
     def test_time_aware_smoothing(self):
         # Same elapsed time produces the same exponential response at variable rates.
@@ -472,6 +482,37 @@ class IntegratedLightingTests(unittest.TestCase):
             self.assertGreater(light.status()['brightness'], 0)
         finally:
             light.stop()
+
+    def test_held_presence_with_weak_range_does_not_extend_departure(self):
+        self.light.adaptive_config = AdaptiveConfig(presence_timeout_seconds=2, off_fade_seconds=.5)
+        self.light.adaptive = AdaptivePolicy(self.light.adaptive_config)
+        self.settle()
+        start = self.now + .1
+        for tick in range(28):
+            self.now = start + tick / 10
+            self.light.update(0)
+            state = self.read(491, 'stationary', presence_confirmed=True,
+                              presence_state='PRESENT_STILL', range_filter_state='weak_signal',
+                              range_estimate_cm=None)
+            self.assertEqual(state['presence_gate_reason'], 'no_credible_range')
+            self.assertFalse(state['presence_detected'])
+            if tick < 20:
+                self.assertGreater(state['brightness'], 0)
+            elif tick >= 26:
+                self.assertEqual(state['brightness'], 0)
+                self.assertFalse(state['motion_session_active'])
+        self.assertEqual(self.transport.send.call_args.args[0]['transition'], 0)
+
+    def test_brief_weak_range_recovers_without_requiring_new_motion(self):
+        self.settle()
+        self.now += .1
+        state = self.read(200, 'stationary', presence_confirmed=True, range_filter_state='weak_signal')
+        self.assertEqual(state['lighting_state'], 'presence_hold')
+        self.now += .5
+        state = self.read(200, 'stationary', presence_confirmed=True, range_filter_state='tracking')
+        self.assertEqual(state['lighting_state'], 'tracking')
+        self.assertTrue(state['motion_session_active'])
+        self.assertIsNone(state['presence_timeout_remaining_seconds'])
 
     def test_failed_transport_never_claims_brightness(self):
         self.transport.send.side_effect = OSError('unplugged')

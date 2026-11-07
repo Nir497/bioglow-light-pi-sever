@@ -38,7 +38,8 @@ sliders and is not included in their backup.
 | max_distance_m | 5 m |
 | dark_lux / bright_lux | 15 / 25 lux |
 | lux_stale_seconds | 3 s |
-| presence_timeout_seconds | 10 s |
+| presence_timeout_seconds | 2 s deployed (library fallback: 10 s) |
+| off_fade_seconds | 0.5 s |
 | smoothing_tau_seconds | 0.4481420118 s (0.2 new target per 100 ms) |
 | lux_filter_tau_seconds | 1 s |
 | migration_stale_seconds | 1800 s |
@@ -84,11 +85,15 @@ these transitions. Output bytes are floored to avoid exceeding percentage caps.
 The LD2410C reports moving/stationary target ranges, not a list of identified
 people. Selecting the nearest reported channel cannot guarantee the nearest of
 all physical people, and the sensor cannot reliably distinguish humans from
-animals. Its own absence delay precedes the controller's ten-second timeout.
+animals. Its own target-reporting delay can precede the lighting timeout. Auto stops
+renewing presence when the range filter reports `weak_signal` or `no_target`,
+even if the occupancy estimator retains its debounced presence flag.
 The separate distance-test page retains its existing filtered range and mapping.
 
-A valid no-target or out-of-area report starts a ten-second hold at the last
-permitted **smoothed output**, then fades off. Returning presence cancels the
+A no-target, non-credible range, or out-of-area report starts a configured
+two-second hold at the last
+permitted **smoothed output**, then fades off within 0.5 seconds. The OFF fade uses elapsed time and a fixed
+duration rather than a long exponential tail. Returning credible presence cancels the
 hold. Migration decreases clamp the hold immediately; a later cap increase does
 not brighten a held target. Radar failures, invalid distances, and stale frames
 (two seconds maximum) bypass the hold and request OFF immediately.
@@ -238,7 +243,7 @@ The dashboard shows watchdog unavailable with stock WLED; Auto still controls
 lighting normally. Saved calibration is preserved.
 
 Physical acceptance requires shielding the lux sensor; observing approach,
-departure, stationary targets, the 5 m boundary and ten-second hold/fade; testing
+departure, stationary targets, the 5 m boundary and configured hold/fade; testing
 bright-light and sensor failures; then disconnecting USB or stopping Pi commands
 and observing controller OFF within three seconds. Test boot and reconnection
 also. Simulated results cannot establish illumination, identification accuracy,
@@ -305,3 +310,26 @@ passed. After restarting the existing service, live readings showed DARK at
 acknowledging zero output. No radar sensitivity or UART configuration was changed.
 A physical walk-in/stillness/departure test is still required. Persistent
 stationary clutter after a real arrival can still require radar calibration.
+
+## Faster departure update
+
+The user reported slow switch-off. Live diagnostics showed `PRESENT_STILL` and
+`presence_confirmed: true` during the estimator's 4.5-second debounce, while
+`range_filter_state: weak_signal`, `range_estimate_cm: null` and zero credible
+frames indicated that no current credible range remained. Auto now treats
+`weak_signal`/`no_target` range-filter states as presence loss, rather than
+renewing the hold from a retained occupancy flag. This does not alter the radar
+estimator, UART settings, or sensor history.
+
+The deployed hold is now 2 seconds; the OFF fade has a configurable fixed
+0.5-second duration. Tracking brightness retains its existing exponential
+smoothing. The final zero command bypasses WLED transition delay. A brief signal
+dip can still recover during the hold, and genuine credible stationary presence
+remains active. The library fallback hold stays at 10 seconds for compatibility;
+the checked-in deployment configuration selects 2 seconds. Physical sensor delay
+or false detections that remain credible can still delay recognition of departure.
+
+69 adaptive, lighting, and Node frontend tests passed, including held presence
+with weak range, bounded OFF fade at variable update intervals, and recovery
+from a brief weak signal. Physical elapsed time from a person leaving has not
+been measured.

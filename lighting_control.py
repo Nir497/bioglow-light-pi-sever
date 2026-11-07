@@ -342,7 +342,10 @@ class LightingControl:
                 self._state.update(radar_presence_confirmed=reading.get("presence_confirmed"),
                                    radar_presence_state=reading.get("presence_state"),
                                    radar_nearest_distance_m=distance_m)
-                if "presence_confirmed" in reading and reading["presence_confirmed"] is not True:
+                if reading.get("range_filter_state") in ("weak_signal", "no_target"):
+                    distance_m = None
+                    gate_reason = "no_credible_range"
+                elif "presence_confirmed" in reading and reading["presence_confirmed"] is not True:
                     distance_m = None
                     gate_reason = "unconfirmed_target"
                 else:
@@ -421,7 +424,7 @@ class LightingControl:
                            motion_session_active=self._motion_session_active)
         self._auto_target = min(int(self.adaptive.output * 255 / 100),
                                 int(result["migration_cap_percent"] * 255 / 100))
-        self._send(self._auto_target, instant=bool(error) or not self._auto_allowed()
+        self._send(self._auto_target, instant=self._auto_target == 0 or bool(error) or not self._auto_allowed()
                    or result["migration_cap_percent"] < previous_cap)
 
     def stop(self):

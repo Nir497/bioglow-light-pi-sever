@@ -13,7 +13,7 @@ page (`/#light`) contains only the VEML7700 readings and history graph:
 - **Full brightness · 100%** selects manual On, applies the currently chosen
   color, and requests master brightness 255/255 and segment brightness 255/255.
 - **Auto** uses adaptive lighting with 15/25 lux hysteresis, continuously updated
-  nearest radar distance, a migration cap, a ten-second presence hold and a fade.
+  nearest radar distance, a migration cap, a two-second presence hold and a half-second OFF fade.
   See [Adaptive lighting](ADAPTIVE_LIGHTING.md), including its optional WLED watchdog module.
 
 Manual settings survive scheduled sensor reads, including lux sensor failures.

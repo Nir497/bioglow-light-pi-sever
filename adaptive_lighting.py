@@ -24,6 +24,7 @@ class AdaptiveConfig:
     bright_lux: float = 25
     lux_stale_seconds: float = 3
     presence_timeout_seconds: float = 10
+    off_fade_seconds: float = 0.5
     smoothing_tau_seconds: float = -0.1 / math.log(0.8)
     lux_filter_tau_seconds: float = 1
     migration_stale_seconds: float = 1800
@@ -44,7 +45,7 @@ class AdaptiveConfig:
             raise ValueError('Require 0 <= dark_lux < bright_lux')
         if self.presence_timeout_seconds < 0 or any(values[k] <= 0 for k in (
                 'max_distance_m', 'lux_stale_seconds', 'smoothing_tau_seconds',
-                'lux_filter_tau_seconds', 'migration_stale_seconds')):
+                'lux_filter_tau_seconds', 'migration_stale_seconds', 'off_fade_seconds')):
             raise ValueError('Adaptive durations and range must be positive')
         if not isinstance(region, str) or not region.startswith('US-'):
             raise ValueError('migration_region must be a BirdCast US region code')
@@ -136,7 +137,11 @@ class AdaptivePolicy:
                 holding = now - self.lost_at < self.config.presence_timeout_seconds
                 target = self.held if holding else 0.0
                 state = 'presence_hold' if holding and target else 'fading_off' if self.output else 'off'
-            self.output += (1 - math.exp(-dt / self.config.smoothing_tau_seconds)) * (target - self.output)
+            if state == 'fading_off':
+                elapsed = max(0, now - self.lost_at - self.config.presence_timeout_seconds)
+                self.output = min(self.output, self.held * max(0, 1 - elapsed / self.config.off_fade_seconds))
+            else:
+                self.output += (1 - math.exp(-dt / self.config.smoothing_tau_seconds)) * (target - self.output)
             self.output = min(self.output, cap, target if state == 'presence_hold' else 100)
             if self.output < 0.1:
                 self.output = 0.0
