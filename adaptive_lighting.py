@@ -28,6 +28,7 @@ class AdaptiveConfig:
     smoothing_tau_seconds: float = -0.1 / math.log(0.8)
     lux_filter_tau_seconds: float = 1
     migration_stale_seconds: float = 1800
+    unknown_migration_cap: float = 10
     migration_region: str = 'US-CA'
     require_motion_to_activate: bool = True
 
@@ -41,6 +42,8 @@ class AdaptiveConfig:
             raise ValueError('Adaptive settings must be finite numbers')
         if not 0 <= self.min_brightness <= self.max_brightness <= 100:
             raise ValueError('Require 0 <= min_brightness <= max_brightness <= 100')
+        if not 0 <= self.unknown_migration_cap <= 100:
+            raise ValueError('unknown_migration_cap must be between 0 and 100')
         if not 0 <= self.dark_lux < self.bright_lux:
             raise ValueError('Require 0 <= dark_lux < bright_lux')
         if self.presence_timeout_seconds < 0 or any(values[k] <= 0 for k in (
@@ -69,7 +72,12 @@ def distance_target(distance_m, config=None):
 def calculate_brightness(is_dark, presence_detected, person_distance_m, migration_level, config=None):
     if not is_dark or not presence_detected:
         return 0
-    return round(min(distance_target(person_distance_m, config), MIGRATION_CAPS.get(migration_level, 10)))
+    config = config or AdaptiveConfig()
+    return round(min(distance_target(person_distance_m, config), migration_cap(migration_level, config)))
+
+
+def migration_cap(level, config):
+    return MIGRATION_CAPS.get(level, config.unknown_migration_cap)
 
 
 def nearest_distance(reading, max_distance_m):
@@ -96,7 +104,7 @@ def migration_from_snapshot(snapshot, config, now=None):
             return 'high', max(ages), None
     except (KeyError, TypeError, ValueError, AttributeError):
         pass
-    return 'unknown', None, 'Migration classification unavailable, stale, historical, or wrong region; using 10% cap.'
+    return 'unknown', None, f'Migration classification unavailable or not current; using configured {config.unknown_migration_cap:g}% cap. Displayed bird counts alone do not supply a current classification.'
 
 
 class AdaptivePolicy:
@@ -111,7 +119,7 @@ class AdaptivePolicy:
         self.held = 0.0
 
     def step(self, now, dark, sensor_valid, distance, migration_level):
-        cap = MIGRATION_CAPS.get(migration_level, 10)
+        cap = migration_cap(migration_level, self.config)
         dt = 0.1 if self.last_tick is None else max(0, now - self.last_tick)
         self.last_tick = now
         if not sensor_valid:

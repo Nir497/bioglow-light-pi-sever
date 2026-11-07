@@ -410,7 +410,7 @@ class LightingControl:
     def _evaluate_adaptive(self, error, distance):
         level, age, migration_error = migration_from_snapshot(self._migration_snapshot, self.adaptive_config)
         error = error or ("Radar sample stale" if self._radar_age() > 2 else None)
-        previous_cap = self._state.get("migration_cap_percent", 10)
+        previous_cap = self._state.get("migration_cap_percent", self.adaptive_config.unknown_migration_cap)
         result = self.adaptive.step(self._clock(), self._auto_allowed(), not error,
                                     None if distance is None else distance / 100, level)
         state_key = (result["lighting_state"], level, bool(error))
@@ -524,7 +524,7 @@ class LightingControl:
             self._auto_target = 0
             self._auto_last_distance = self._auto_last_change = None
         if self._state["mode"] == "auto":
-            cap = self._state.get("migration_cap_percent", 10)
+            cap = self._state.get("migration_cap_percent", self.adaptive_config.unknown_migration_cap)
             target = min(target, int(cap * 255 / 100))
         if (self._state["mode"] == "auto" and self._state["target_brightness"] is not None
                 and target < self._state["target_brightness"]):

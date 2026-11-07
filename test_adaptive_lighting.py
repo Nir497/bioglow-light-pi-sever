@@ -34,10 +34,18 @@ class CalculationTests(unittest.TestCase):
             for distance in (0, 1, 3, 4, 5):
                 self.assertEqual(calculate_brightness(True, True, distance, level), min(distance_target(distance), cap))
 
+    def test_temporary_unknown_cap_preserves_known_levels(self):
+        config = AdaptiveConfig(unknown_migration_cap=60)
+        for distance, expected in ((0, 10), (1, 20), (3, 40), (5, 60)):
+            self.assertEqual(calculate_brightness(True, True, distance, 'unknown', config), expected)
+        for level, expected in (('low', 60), ('medium', 40), ('high', 20), ('very_high', 10)):
+            self.assertEqual(calculate_brightness(True, True, 5, level, config), expected)
+        self.assertEqual(calculate_brightness(True, True, 5, 'unknown'), 10)
+
     def test_config_validation_and_load(self):
         for settings in ({'max_distance_m': 0}, {'dark_lux': 26}, {'max_brightness': 101},
                          {'min_brightness': 90}, {'presence_timeout_seconds': -1}, {'off_fade_seconds': 0},
-                         {'max_distance_m': float('nan')}, {'dark_lux': True}, {'require_motion_to_activate': 1}):
+                         {'max_distance_m': float('nan')}, {'dark_lux': True}, {'require_motion_to_activate': 1}, {'unknown_migration_cap': 101}, {'unknown_migration_cap': -1}):
             with self.assertRaises(ValueError):
                 AdaptiveConfig(**settings)
         with tempfile.TemporaryDirectory() as tmp:
@@ -231,6 +239,24 @@ class IntegratedLightingTests(unittest.TestCase):
         self.migration.stop()
         self.assertEqual(self.settle()['migration_cap_percent'], 10)
         self.assertLessEqual(self.light.status()['brightness'], 25)
+
+    def test_unknown_migration_uses_deployed_test_cap_and_distance_curve(self):
+        self.migration.stop()
+        self.light.adaptive_config = AdaptiveConfig(unknown_migration_cap=60)
+        self.light.adaptive = AdaptivePolicy(self.light.adaptive_config)
+        for distance, target in ((100, 20), (300, 40), (500, 60)):
+            state = self.settle(distance)
+            self.assertEqual(state['migration_level'], 'unknown')
+            self.assertEqual(state['migration_cap_percent'], 60)
+            self.assertEqual(state['final_target_percent'], target)
+            self.assertLessEqual(state['brightness'], int(target * 255 / 100))
+            self.assertGreater(state['brightness'], int((target - 1) * 255 / 100))
+        with patch('lighting_control.migration_from_snapshot', return_value=('high', 0, None)):
+            self.now += .1
+            state = self.read(500)
+        self.assertEqual(state['migration_cap_percent'], 20)
+        self.assertLessEqual(state['brightness'], 51)
+        self.assertEqual(self.transport.send.call_args.args[0]['transition'], 0)
 
     def test_hold_then_return_and_fade(self):
         before = self.settle()['brightness']

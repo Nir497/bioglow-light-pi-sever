@@ -43,11 +43,12 @@ sliders and is not included in their backup.
 | smoothing_tau_seconds | 0.4481420118 s (0.2 new target per 100 ms) |
 | lux_filter_tau_seconds | 1 s |
 | migration_stale_seconds | 1800 s |
+| unknown_migration_cap | 60% temporarily deployed; library fallback 10% |
 | migration_region | US-CA |
 | require_motion_to_activate | true |
 
 Migration caps are the prototype policy constants: low 60%, medium 40%, high
-20%, very_high 10%, and unknown 10%. They are **not scientifically validated
+20%, very_high 10%, and a configurable unknown cap (currently 60% for testing). They are **not scientifically validated
 wildlife-safe limits**. Raising the configured maximum does not bypass these caps.
 
 ## Sensor acquisition and timing
@@ -126,11 +127,11 @@ invented as a BirdCast dashboard classification.
 The policy also requires a live-feed indicator, the configured region, and valid
 source and retrieval timestamps no more than 30 minutes old. Future, unparseable,
 missing, historical, failed, wrong-region or expired data selects unknown and
-the 10% cap. Supported source timestamps have explicit US timezone abbreviations;
+the configured unknown cap. Supported source timestamps have explicit US timezone abbreviations;
 unrecognized formats fail conservatively. Old cached results do not become
 fresh on service restart. A manual BirdCast snapshot updates the control cache;
 there is no API query in the local loop. Without a documented category, the
-prototype will commonly remain capped at 10%, even with valid counts.
+prototype commonly uses the configured unknown cap even when counts can be displayed.
 
 Provider references checked November 7, 2026:
 
@@ -344,3 +345,26 @@ still selected. The movement activation, stationary tracking, two-second hold,
 half-second OFF fade and migration caps are unchanged. In particular, the
 unknown-migration 10% cap still masks visible distance changes. All 69 adaptive,
 lighting and Node frontend tests passed after updating the curve and assertions.
+
+## Temporary unknown-classification cap for distance testing
+
+The user approved raising the unknown-classification cap to 60% so distance
+changes are visible. `unknown_migration_cap: 60` in `adaptive-lighting.json`
+applies to unavailable, stale, historical, wrong-region or unsupported migration
+classifications. Recognized low/medium/high/very_high limits remain 60/40/20/10%.
+The conservative library default stays 10%; restore `unknown_migration_cap` to
+10 and restart the existing service to end this test configuration.
+
+The site can display cached bird counts without a current classified lighting
+input. At diagnosis it showed 1,382,800 birds from November 6, 2026, 5:30 p.m. PST
+(an older cache predating classification fields). Counts alone are not an
+intensity category, and the displayed provider-relative update text is part of
+the cached response rather than a live age. No undocumented count thresholds
+were introduced.
+
+71 adaptive, lighting and Node frontend tests passed for the configurable
+fallback, including full 20/40/60% targets at 1/3/5 m with unknown classification
+and immediate enforcement of the unchanged High cap. A direct provider fetch
+also returned the November 6 historical night (`live_feed: false`), recorded at
+5:50 p.m. PST, without a supported classification. No dashboard snapshot was
+silently refreshed or assigned invented migration levels.

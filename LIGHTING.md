@@ -109,7 +109,7 @@ moving or stationary target moves farther away (10% at 0 m, 60% at 5 m). Targets
 on; subsequent confirmed stationary presence keeps output active. Unconfirmed
 radar clutter cannot activate or renew the hold. The migration
 cap never increases the distance request; missing or unsupported classifications
-use 10%. Daylight and failed or stale sensors request immediate OFF. Manual and
+use the configurable unknown cap, temporarily set to 60% for distance testing. Daylight and failed or stale sensors request immediate OFF. Manual and
 direction diagnostics retain their explicit overrides.
 
 See [ADAPTIVE_LIGHTING.md](ADAPTIVE_LIGHTING.md) for the configurable settings,

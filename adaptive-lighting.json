@@ -11,5 +11,6 @@
   "migration_stale_seconds": 1800,
   "migration_region": "US-CA",
   "require_motion_to_activate": true,
-  "off_fade_seconds": 0.5
+  "off_fade_seconds": 0.5,
+  "unknown_migration_cap": 60
 }
