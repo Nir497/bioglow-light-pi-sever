@@ -2,8 +2,8 @@
 #include "wled.h"
 #include "command_watchdog.h"
 
-// Include from usermods_list.cpp and register with
-// UsermodManager::add(new BioGlowWatchdog()); in registerUsermods().
+// WLED 16+ registration is in bioglow_watchdog.cpp. Enable this directory
+// with custom_usermods; see ADAPTIVE_LIGHTING.md for build instructions.
 class BioGlowWatchdog : public Usermod {
   BioGlowCommandWatchdog watchdog;
   bool allowOutput = false;

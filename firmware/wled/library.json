@@ -1,0 +1,9 @@
+{
+  "name": "BioGlowWatchdog",
+  "version": "1.0.0",
+  "build": {
+    "libArchive": false,
+    "srcDir": ".",
+    "srcFilter": "+<bioglow_watchdog.cpp>"
+  }
+}

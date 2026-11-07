@@ -130,10 +130,39 @@ refresh a local, wrap-safe millisecond deadline; missing commands expire it afte
 three seconds. No network clock or network connection is required. The Pi sends
 an unchanged output heartbeat every second. Invalid JSON cannot refresh it.
 
-To install, build the **matching WLED firmware for this controller** from its
-source with these two headers copied into `wled00/`. Include
-`usermod_bioglow_watchdog.h` in `usermods_list.cpp`, and add
-`UsermodManager::add(new BioGlowWatchdog());` inside `registerUsermods()`.
+To install on the observed WLED 16.0.1 controller, build the **matching WLED
+firmware for this controller** with the `firmware/wled/` directory included as a
+PlatformIO library. WLED 16 uses `custom_usermods` and `REGISTER_USERMOD`, not the
+older `usermods_list.cpp` approach. This directory now includes the required
+`library.json` and `bioglow_watchdog.cpp` registration unit.
+
+In the WLED checkout, add `symlink:///home/nir/bioglow-birdcast/firmware/wled` to
+the selected environment's `custom_usermods` in `platformio_override.ini`.
+If building on another computer, copy this directory to `usermods/BioGlowWatchdog/`
+and add `BioGlowWatchdog` instead. Preserve existing usermods in that list.
+Use the controller's confirmed ESP32 board/flash/partition build profile; the
+reported architecture alone does not establish the correct environment. The
+legacy ESPHome YAML in this repository is not its current WLED build profile.
+
+Example for a controller whose confirmed base environment is `esp32dev` (do not
+assume this profile without checking its flash and partition layout):
+
+```ini
+[env:bioglow]
+extends = env:esp32dev
+custom_usermods =
+  BioGlowWatchdog
+```
+
+After installing WLED's build prerequisites (VS Code with PlatformIO, Git and
+Node.js), use `npm install` in the matching WLED source checkout, then build
+with `pio run -e bioglow`, or select that environment's Build task in VS Code.
+The resulting image is under `build_output/firmware/`; WLED's build process
+names the firmware after the selected environment. Back up WLED configuration
+and presets using Config → Security & Updates before uploading the compatible
+image through WLED's firmware-update page. Do not erase flash or select a new
+LED hardware layout as part of this update.
+
 Preserve the controller's existing board/build profile, LED bus configuration and
 power limit. Set WLED startup power OFF and disable boot presets/playlists before
 acceptance testing; WLED can apply boot presets after usermod setup. The module
@@ -196,7 +225,8 @@ nearest-person coverage, glare, self-illumination, or wildlife safety.
 
 Added: `adaptive_lighting.py`, `adaptive-lighting.json`,
 `test_adaptive_lighting.py`, `firmware/wled/command_watchdog.h`,
-`firmware/wled/usermod_bioglow_watchdog.h`, and this document.
+`firmware/wled/usermod_bioglow_watchdog.h`, `firmware/wled/library.json`,
+`firmware/wled/bioglow_watchdog.cpp`, and this document.
 
 Modified: `lighting_control.py`, `birdcast_service.py`, `birdcast_scraper.py`,
 `wled_serial.py`, `web/dashboard.js`, `LIGHTING.md`, `test_lighting_control.py`,
