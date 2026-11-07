@@ -64,6 +64,7 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual([json.loads(row[0])["source"] for row in self.rows()], ["birdcast", "radar"])
         request = original_open.call_args.args[0]
         self.assertEqual(request.get_header("Authorization"), "Bearer test-secret")
+        self.assertEqual(request.get_header("User-agent"), "BioGlowTelemetry/1.0")
         self.assertEqual(json.loads(request.data)["events"][0]["http_status"], 503)
 
     def test_wrong_ack_keeps_event(self):

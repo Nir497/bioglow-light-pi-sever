@@ -71,7 +71,8 @@ class Telemetry:
         events = batch["events"]
         body = json.dumps({"events": events}, allow_nan=False).encode("utf-8")
         request = Request(ENDPOINT, data=body, headers={
-            "Authorization": "Bearer " + token, "Content-Type": "application/json"}, method="POST")
+            "Authorization": "Bearer " + token, "Content-Type": "application/json",
+            "User-Agent": "BioGlowTelemetry/1.0"}, method="POST")
         with (opener or build_opener(NoRedirect())).open(request, timeout=10) as response:
             ack = json.loads(response.read(4096))
             if response.status != 200 or ack.get("accepted") != [event["id"] for event in events]:
