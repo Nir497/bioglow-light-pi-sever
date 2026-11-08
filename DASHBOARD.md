@@ -48,6 +48,14 @@ See `presence/README.md` before UART testing. Light may be unavailable while the
 VEML7700 is disconnected. API errors are shown alongside previous successful light
 or BirdCast results explicitly labeled as historical data.
 
+Microphone capture uses `arecord` (`alsa-utils`) and verifies PulseAudio inputs with
+`pactl` (`pulseaudio-utils`). The recorder discovers the service user's socket at
+`/run/user/<uid>/pulse/native` when `PULSE_SERVER` is unset, so it can connect from
+the system dashboard service. Only microphone inputs are accepted; speaker output
+monitors are rejected. If no input is listed, connect/reconnect the microphone and
+check `arecord -l` and `pactl list short sources`. An explicit `--device` other than
+`pulse` uses ALSA directly and bypasses PulseAudio discovery.
+
 New WAVs and their integrity metadata are stored in `recordings/`
 under the selected server root. New captures are five seconds, mono, 48 kHz,
 16-bit PCM. Recordings remain accessible after download, application cleanup,
