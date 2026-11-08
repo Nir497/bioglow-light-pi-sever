@@ -12,6 +12,7 @@ from pathlib import Path
 from animal_model import (MODEL_FILE, INT8_FILE, INT8_SHA256,
                           check_assets, checksum, is_species_label, read_labels)
 from recording_store import RecordingStore
+from sound_classification import classify_sound
 
 
 def audio_windows(data: bytes):
@@ -43,7 +44,7 @@ def analyze(data: bytes, session, labels: list[str]) -> dict:
         scores = session.run(["label"], {"inputs": samples[None, :]})[0]
         candidates = ranked_candidates(scores[0], labels)
         windows.append({"start_seconds": index * 5, "end_seconds": (index + 1) * 5,
-                        "candidates": candidates})
+                        "candidates": candidates, "sound": classify_sound(scores[0], labels)})
     combined = {}
     for window in windows:
         for candidate in window["candidates"]:
@@ -52,7 +53,10 @@ def analyze(data: bytes, session, labels: list[str]) -> dict:
             if previous is None or candidate["score"] > previous["score"]:
                 combined[name] = candidate.copy()
     summary = sorted(combined.values(), key=lambda item: (-item["score"], item["scientific_name"]))[:5]
-    return {"candidates": summary, "windows": windows}
+    sources = {window["sound"]["source"] for window in windows}
+    source = sources.pop() if len(sources) == 1 else "unknown"
+    return {"candidates": summary, "windows": windows,
+            "sound": {"source": source, "windows": [window["sound"] for window in windows]}}
 
 
 def emit(payload: dict) -> None:

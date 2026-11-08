@@ -150,11 +150,13 @@ class AnalysisCoordinator:
         while len(self._errors) > 100:
             self._errors.pop(next(iter(self._errors)))
 
-    def request(self, metadata: dict) -> dict:
+    def request(self, metadata: dict, sound: bool = False) -> dict:
         with self._condition:
             identifier = metadata["recording_id"]
             self._errors.pop(identifier, None)
             state = self.status(metadata)
+            if sound and state["state"] == "completed" and "sound" not in state:
+                state = {"state": "not_analyzed"}
             if state["state"] == "skipped":
                 return state
             if state["state"] in ("queued", "running", "completed"):
@@ -340,6 +342,7 @@ class AnalysisCoordinator:
                         if not isinstance(result.get("candidates"), list) or not isinstance(result.get("windows"), list):
                             raise ValueError("Analyzer returned incomplete results.")
                         state.update(state="completed", candidates=result["candidates"], windows=result["windows"])
+                        state["sound"] = result.get("sound", {"source": "unknown"})
                 except Exception as exc:
                     self._terminate()
                     if self._stop.is_set():

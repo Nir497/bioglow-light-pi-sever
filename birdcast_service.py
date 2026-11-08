@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -151,6 +152,9 @@ class Service:
         self.recording_store = RecordingStore(self.recording_dir)
         self.animal_analysis = AnalysisCoordinator(self.root, self.recording_store, enabled=animal_analysis,
                                                   on_result=self.log_recording)
+        self._sound_checked_at = float("-inf")
+        self._sound_decision = {"source": "unknown", "reason": "No recording checked."}
+        self.lighting.sound_reader = self.latest_sound
         self._recording_lock = threading.Lock()
         self._latest_lock = threading.Lock()
         self._cache_file = self.root / ".runtime" / "latest.json"
@@ -450,12 +454,39 @@ class Service:
     def recording(self, recording_id: str) -> tuple[dict[str, Any], bytes]:
         return self.recording_store.read(recording_id)
 
+    def latest_sound(self):
+        """Poll the newest retained recording without capturing or blocking for inference."""
+        current = time.monotonic()
+        if current - self._sound_checked_at < 2:
+            return dict(self._sound_decision)
+        self._sound_checked_at = current
+        decision = {"source": "unknown", "reason": "No recordings available."}
+        try:
+            try:
+                stamp = self.recording_store.directory.stat().st_mtime_ns
+            except FileNotFoundError:
+                stamp = None
+            if not hasattr(self, "_sound_recordings_stamp") or stamp != self._sound_recordings_stamp:
+                self._sound_recordings = self.recording_store.list_recordings()
+                self._sound_recordings_stamp = stamp
+            recordings = self._sound_recordings
+            if recordings:
+                metadata = recordings[0]
+                analysis = self.animal_analysis.request(metadata, sound=True)
+                decision = {"source": analysis.get("sound", {}).get("source", "unknown"),
+                            "recording_id": metadata["recording_id"],
+                            "analysis_state": analysis["state"]}
+        except Exception as exc:
+            decision = {"source": "unknown", "reason": str(exc)}
+        self._sound_decision = decision
+        return dict(decision)
+
     def recordings(self) -> list[dict[str, Any]]:
         recordings = self.recording_store.list_recordings()
         for metadata in recordings:
             result = self.animal_analysis.status(metadata)
             metadata["analysis"] = {key: result[key] for key in
-                                    ("state", "error", "outdated", "candidates", "processing_seconds")
+                                    ("state", "error", "outdated", "candidates", "processing_seconds", "sound")
                                     if key in result}
         return recordings
 

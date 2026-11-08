@@ -48,6 +48,8 @@ class LightingControl:
         self._radar_worker = None
         self._radar_stop = threading.Event()
         self._presence_reader = None
+        self.sound_reader = None
+        self._sound = {"source": "unknown"}
         self._revision = 0
         self._radar_snapshot = None
         self._radar_sampled_at = None
@@ -291,12 +293,17 @@ class LightingControl:
         while not self._radar_stop.is_set():
             with self._lock:
                 active = self._state["mode"] in ("auto", "distance_test")
+                sound_active = self._state["mode"] == "auto"
                 revision = self._revision
             if active:
                 try:
                     status, reading = self._presence_reader()
                     if not isinstance(reading, dict):
                         raise ValueError("Radar returned an invalid reading")
+                    if sound_active and self.sound_reader and reading.get("presence") in ("moving", "stationary", "both"):
+                        sound = self.sound_reader()
+                        with self._lock:
+                            self._sound = sound
                     self.update_distance(status, reading, revision)
                 except Exception as exc:
                     # A bad frame must not silently terminate automatic control.
@@ -411,8 +418,12 @@ class LightingControl:
         level, age, migration_error = migration_from_snapshot(self._migration_snapshot, self.adaptive_config)
         error = error or ("Radar sample stale" if self._radar_age() > 2 else None)
         previous_cap = self._state.get("migration_cap_percent", self.adaptive_config.unknown_migration_cap)
-        result = self.adaptive.step(self._clock(), self._auto_allowed(), not error,
+        sound_blocked = self.sound_reader is not None and self._sound.get("source") != "human"
+        self._state["sound_gate"] = copy.deepcopy(self._sound) if self.sound_reader else None
+        result = self.adaptive.step(self._clock(), self._auto_allowed() and not sound_blocked, not error,
                                     None if distance is None else distance / 100, level)
+        if sound_blocked:
+            result["lighting_state"] = "sound_blocked"
         state_key = (result["lighting_state"], level, bool(error))
         if state_key != self._last_adaptive_state:
             logging.getLogger(__name__).info("Adaptive lighting state=%s migration=%s cap=%s target=%s sensor_error=%s",

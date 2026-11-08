@@ -185,3 +185,22 @@ threshold is relative to digital full scale, not calibrated sound pressure;
 microphone noise may require later tuning. Brief sounds above the threshold
 remain eligible. Previously queued recordings are also checked before the
 worker starts; existing completed predictions are preserved.
+
+Automatic lighting now checks the latest retained recording when radar reports a
+moving or stationary target. Human sound candidates allow the existing ambient,
+distance, motion, and migration brightness rules. Animal sounds, ambiguous/mixed
+sounds, quiet audio, missing recordings, pending analysis, and analysis failures
+keep automatic lighting off. Manual control and calibration remain independent.
+The server checks results every two seconds; it queues older results again when
+they lack sound classification. It does not start microphone recording: use the
+existing recording scheduler to keep the latest recording current. There is no
+age cutoff for the latest recording.
+
+The pinned Perch model's full event output now supplies the sound decision as
+well as the existing animal species candidates. A human or animal event must be
+the highest scoring label, have a positive raw logit, and lead competing source
+categories by at least 1 logit. These are conservative heuristics, not calibrated
+probabilities. Each five-second window must agree for retained ten-second audio.
+Audio cannot establish whether the radar target produced the sound; silent
+people, playback, overlapping sounds, and stale recordings can be misclassified.
+`lighting.sound_gate` in `/v1/latest` reports the selected recording and decision.

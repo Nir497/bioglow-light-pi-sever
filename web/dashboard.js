@@ -584,6 +584,7 @@ function animalResults(item) {
   const busy = ['queued','running'].includes(analysis.state) || analysisRequests.has(item.recording_id);
   const states = {skipped:'Skipped: audio too quiet',not_analyzed:'Not analyzed',queued:'Waiting for identification…',running:'Identifying animals…',completed:'Species candidates',failed:'Identification failed',unavailable:'Identification unavailable'};
   let body = `<h3>${states[analysis.state] || 'Not analyzed'}</h3>`;
+  if (analysis.sound) body += `<p>Sound source: ${escapeHtml(analysis.sound.source || 'unknown')} (unverified)</p>`;
   if (analysis.error) body += `<p class="error-message">${escapeHtml(analysis.error)}</p>`;
   if (analysis.outdated) body += '<p>The recording or model changed. Identify again for current suggestions.</p>';
   if (analysis.state === 'completed') {

@@ -116,6 +116,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_auto_uses_sampled_radar_and_color_handler_preserves_mode(self):
         light = self.service.lighting
+        light._sound = {"source": "human"}
         light.transport = MagicMock()
         light._background = False
         light.set_mode("auto")
@@ -140,6 +141,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_lux_readings_gate_auto_and_status_never_resamples(self):
         light = self.service.lighting
+        light._sound = {"source": "human"}
         light._background = False
         light.transport = MagicMock()
         self.service.light_sensor.response = MagicMock(return_value=(200, {'lux': 9}))
