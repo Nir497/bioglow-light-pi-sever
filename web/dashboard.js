@@ -582,7 +582,7 @@ function updateServicesSection() {
 function animalResults(item) {
   const analysis = item.analysis || {state:'not_analyzed'};
   const busy = ['queued','running'].includes(analysis.state) || analysisRequests.has(item.recording_id);
-  const states = {not_analyzed:'Not analyzed',queued:'Waiting for identification…',running:'Identifying animals…',completed:'Species candidates',failed:'Identification failed',unavailable:'Identification unavailable'};
+  const states = {skipped:'Skipped: audio too quiet',not_analyzed:'Not analyzed',queued:'Waiting for identification…',running:'Identifying animals…',completed:'Species candidates',failed:'Identification failed',unavailable:'Identification unavailable'};
   let body = `<h3>${states[analysis.state] || 'Not analyzed'}</h3>`;
   if (analysis.error) body += `<p class="error-message">${escapeHtml(analysis.error)}</p>`;
   if (analysis.outdated) body += '<p>The recording or model changed. Identify again for current suggestions.</p>';
@@ -592,7 +592,7 @@ function animalResults(item) {
     body += '<p class="timestamp">Unverified suggestions. Scores are not confidence percentages or animal counts. Background noise can also produce candidates.</p>';
     if (analysis.windows) body += details(analysis.windows,'Five-second window scores');
     else body += `<button class="button secondary" data-analysis-details="${escapeHtml(item.recording_id)}">View window scores</button>`;
-  } else if (analysis.state !== 'unavailable') {
+  } else if (!['unavailable', 'skipped'].includes(analysis.state)) {
     body += `<button class="button secondary" data-identify="${escapeHtml(item.recording_id)}" ${busy ? 'disabled aria-busy="true"' : ''}>${busy ? 'Identification pending' : analysis.state === 'failed' ? 'Retry identification' : 'Identify animals'}</button>`;
   }
   return body;

@@ -175,3 +175,13 @@ still require a browser check. Real frog, cricket, owl, overlapping-call and
 background-noise clips need human review, and physical microphone/UART operation
 and LAN access remain host checks. Do not infer physical radar absence from
 unavailable sensor data.
+
+
+Quiet recordings are retained but skipped before animal inference is queued.
+The gate measures DC-corrected RMS in 100 ms blocks of validated PCM audio,
+without importing model dependencies. If every block is below −50 dBFS,
+the dashboard shows “Skipped: audio too quiet”. This conservative initial
+threshold is relative to digital full scale, not calibrated sound pressure;
+microphone noise may require later tuning. Brief sounds above the threshold
+remain eligible. Previously queued recordings are also checked before the
+worker starts; existing completed predictions are preserved.

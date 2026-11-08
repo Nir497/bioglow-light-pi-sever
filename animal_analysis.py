@@ -1,6 +1,8 @@
 """Durable analysis queue and subprocess lifecycle, without importing ML libraries."""
 from __future__ import annotations
 
+import array
+import math
 import copy
 import importlib.util
 import json
@@ -22,6 +24,27 @@ from birdcast_scraper import atomic_write_json
 
 LOG = logging.getLogger(__name__)
 JOB_NAME = re.compile(r"[0-9a-f]{32}\.json")
+
+
+# Maximum DC-corrected 100 ms RMS, relative to full-scale signed PCM.
+QUIET_THRESHOLD_DBFS = -50.0
+
+
+def audio_level(data: bytes) -> dict:
+    """Measure validated 48 kHz PCM without loading the inference dependencies."""
+    samples = array.array("h")
+    samples.frombytes(data[44:])
+    if sys.byteorder != "little":
+        samples.byteswap()
+    maximum = 0.0
+    for start in range(0, len(samples), 4800):
+        block = samples[start:start + 4800]
+        mean = sum(block) / len(block)
+        variance = max(0.0, sum(value * value for value in block) / len(block) - mean * mean)
+        maximum = max(maximum, math.sqrt(variance))
+    level = 20 * math.log10(maximum / 32768) if maximum else None
+    return {"peak_block_rms_dbfs": level, "threshold_dbfs": QUIET_THRESHOLD_DBFS,
+            "quiet": level is None or level < QUIET_THRESHOLD_DBFS}
 
 
 def now() -> str:
@@ -72,7 +95,7 @@ class AnalysisCoordinator:
             state = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(state, dict) or state.get("recording_id") != identifier:
                 raise ValueError("Invalid analysis state.")
-            if state.get("state") not in ("queued", "running", "completed", "failed"):
+            if state.get("state") not in ("queued", "running", "completed", "failed", "skipped"):
                 raise ValueError("Invalid analysis state.")
             return state
         except FileNotFoundError:
@@ -101,7 +124,7 @@ class AnalysisCoordinator:
                 return copy.deepcopy(self._errors[identifier])
             state = self._read(identifier)
             valid = state and state.get("sha256") == metadata["sha256"] and state.get("model") == IDENTITY
-            if valid and state["state"] in ("completed", "failed"):
+            if valid and state["state"] in ("completed", "failed", "skipped"):
                 return copy.deepcopy(state)
             unavailable = self.availability()
             if unavailable:
@@ -132,9 +155,26 @@ class AnalysisCoordinator:
             identifier = metadata["recording_id"]
             self._errors.pop(identifier, None)
             state = self.status(metadata)
+            if state["state"] == "skipped":
+                return state
             if state["state"] in ("queued", "running", "completed"):
                 self.start()
                 return state
+            unavailable = self.availability()
+            if unavailable or self._stop.is_set():
+                raise AnalysisUnavailable(unavailable or "Animal analyzer is stopping.")
+            checked, data = self.store.read(identifier)
+            if checked["sha256"] != metadata["sha256"]:
+                raise ValueError("Recording changed since analysis was queued.")
+            level = audio_level(data)
+            if level["quiet"]:
+                state = {"recording_id": identifier, "sha256": metadata["sha256"],
+                         "model": IDENTITY, "state": "skipped", "completed_at": now(),
+                         "reason": "Audio too quiet for animal identification.", "audio_level": level}
+                self._write(state)
+                if self.on_result:
+                    self.on_result(metadata, state)
+                return copy.deepcopy(state)
             unavailable = self.availability()
             if unavailable or self._stop.is_set():
                 raise AnalysisUnavailable(unavailable or "Animal analyzer is stopping.")
@@ -285,16 +325,21 @@ class AnalysisCoordinator:
                 with self._condition:
                     pause_start = self._pause_total()
                 try:
-                    metadata, _ = self.store.read(state["recording_id"])
+                    metadata, data = self.store.read(state["recording_id"])
                     if metadata["sha256"] != state["sha256"]:
                         raise ValueError("Recording changed since analysis was queued.")
-                    self._boot()
-                    self._process.stdin.write((json.dumps({"recording_id": state["recording_id"],
-                                                          "sha256": state["sha256"]}) + "\n").encode())
-                    result = self._receive()
-                    if not isinstance(result.get("candidates"), list) or not isinstance(result.get("windows"), list):
-                        raise ValueError("Analyzer returned incomplete results.")
-                    state.update(state="completed", candidates=result["candidates"], windows=result["windows"])
+                    level = audio_level(data)
+                    if level["quiet"]:
+                        state.update(state="skipped", reason="Audio too quiet for animal identification.",
+                                     audio_level=level)
+                    else:
+                        self._boot()
+                        self._process.stdin.write((json.dumps({"recording_id": state["recording_id"],
+                                                              "sha256": state["sha256"]}) + "\n").encode())
+                        result = self._receive()
+                        if not isinstance(result.get("candidates"), list) or not isinstance(result.get("windows"), list):
+                            raise ValueError("Analyzer returned incomplete results.")
+                        state.update(state="completed", candidates=result["candidates"], windows=result["windows"])
                 except Exception as exc:
                     self._terminate()
                     if self._stop.is_set():
@@ -312,7 +357,7 @@ class AnalysisCoordinator:
                         LOG.warning("Could not persist animal analysis: %s", exc)
                         # Avoid repeatedly executing an unwritable running job.
                         return
-                    if self.on_result and metadata and state["state"] in ("completed", "failed"):
+                    if self.on_result and metadata and state["state"] in ("completed", "failed", "skipped"):
                         try:
                             self.on_result(metadata, state)
                         except Exception as exc:

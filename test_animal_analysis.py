@@ -12,7 +12,7 @@ import wave
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from animal_analysis import AnalysisCoordinator, AnalysisUnavailable
+from animal_analysis import AnalysisCoordinator, AnalysisUnavailable, audio_level
 from animal_model import IDENTITY, read_labels
 from animal_worker import analyze, audio_windows, ranked_candidates
 from birdcast_scraper import atomic_write_json
@@ -29,6 +29,17 @@ def wav_bytes(pcm=None):
         audio.setframerate(48000)
         audio.writeframes(pcm if pcm is not None else b"\0\0" * 480000)
     return output.getvalue()
+
+
+class QuietAudioTests(unittest.TestCase):
+    def test_dc_offset_and_low_noise_are_quiet(self):
+        for pcm in (b"\x00\x10" * 240000, b"\x01\x00\xff\xff" * 120000):
+            self.assertTrue(audio_level(wav_bytes(pcm))["quiet"])
+
+    def test_brief_sound_is_retained_for_both_recording_lengths(self):
+        for frames in (240000, 480000):
+            pcm = b"\x00\x10\x00\xf0" * 2400 + b"\0\0" * (frames - 4800)
+            self.assertFalse(audio_level(wav_bytes(pcm))["quiet"])
 
 
 @unittest.skipUnless(importlib.util.find_spec("numpy") and importlib.util.find_spec("scipy"),
@@ -123,7 +134,7 @@ class QueueTests(unittest.TestCase):
         self.store = RecordingStore(self.root / "recordings")
         self.store.directory.mkdir()
         self.identifier = "a" * 32
-        self.store.path(self.identifier).write_bytes(wav_bytes())
+        self.store.path(self.identifier).write_bytes(wav_bytes(b"\x00\x10\x00\xf0" * 240000))
         self.metadata, _ = self.store.read(self.identifier)
         self.store.publish_metadata(self.metadata)
         self.coordinator = AnalysisCoordinator(self.root, self.store)
@@ -146,6 +157,19 @@ for line in sys.stdin:
                       "windows": [{"start_seconds": 0, "end_seconds": 5, "candidates": []}]}), flush=True)
 ''')
         self.use_stub()
+
+    def test_quiet_recording_skips_without_starting_worker(self):
+        self.store.path(self.identifier).with_suffix(".json").unlink()
+        self.store.path(self.identifier).write_bytes(wav_bytes())
+        metadata, _ = self.store.read(self.identifier)
+        with patch.object(self.coordinator, "start") as start:
+            result = self.coordinator.request(metadata)
+            self.assertEqual(result["state"], "skipped")
+            start.assert_not_called()
+        self.assertFalse(self.marker.exists())
+        self.assertTrue(self.store.path(self.identifier).exists())
+        restarted = AnalysisCoordinator(self.root, self.store)
+        self.assertEqual(restarted.status(metadata)["state"], "skipped")
 
     def use_stub(self, delay=0, mode="ok"):
         self.coordinator._command = lambda: [sys.executable, str(self.stub), str(delay), mode, str(self.marker)]
