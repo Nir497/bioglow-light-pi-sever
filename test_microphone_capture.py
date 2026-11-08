@@ -6,7 +6,7 @@ import wave
 from pathlib import Path
 from unittest.mock import patch
 
-from microphone_capture import main, pulse_environment
+from microphone_capture import main, pulse_environment, usb_capture_device
 
 
 class MicrophoneCaptureTests(unittest.TestCase):
@@ -20,7 +20,7 @@ class MicrophoneCaptureTests(unittest.TestCase):
                     audio.setframerate(48000)
                     audio.setsampwidth(2)
                     audio.writeframes(b"\0\0"*240000)
-            with patch("microphone_capture.pulse_environment", side_effect=lambda env, source: env), patch("microphone_capture.shutil.which", return_value="arecord"), patch("microphone_capture.subprocess.run", side_effect=capture), contextlib.redirect_stdout(io.StringIO()):
+            with patch("microphone_capture.usb_capture_device", return_value=None), patch("microphone_capture.pulse_environment", side_effect=lambda env, source: env), patch("microphone_capture.shutil.which", return_value="arecord"), patch("microphone_capture.subprocess.run", side_effect=capture), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(main(["--output", str(output)]), 0)
             self.assertEqual(output.stat().st_size, 480044)
             self.assertEqual(list(Path(directory).iterdir()), [output])
@@ -34,7 +34,7 @@ class MicrophoneCaptureTests(unittest.TestCase):
                     audio.setframerate(48000)
                     audio.setsampwidth(2)
                     audio.writeframes(b"\0\0"*100)
-            with patch("microphone_capture.pulse_environment", side_effect=lambda env, source: env), patch("microphone_capture.shutil.which", return_value="arecord"), patch("microphone_capture.subprocess.run", side_effect=capture), contextlib.redirect_stderr(io.StringIO()):
+            with patch("microphone_capture.usb_capture_device", return_value=None), patch("microphone_capture.pulse_environment", side_effect=lambda env, source: env), patch("microphone_capture.shutil.which", return_value="arecord"), patch("microphone_capture.subprocess.run", side_effect=capture), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(main(["--output", str(output)]), 1)
             self.assertEqual(list(Path(directory).iterdir()), [])
 
@@ -68,3 +68,41 @@ class PulseEnvironmentTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Cannot connect"):
                 pulse_environment({"PULSE_SERVER": "unix:/custom/audio"})
         self.assertEqual(run.call_args.kwargs["env"]["PULSE_SERVER"], "unix:/custom/audio")
+
+
+class UsbCaptureTests(unittest.TestCase):
+    def test_usb_capture_uses_stable_id_and_ignores_playback_only_cards(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for number, identifier in ((0, 'HDMI'), (3, 'Device')):
+                card = root / f'card{number}'
+                card.mkdir()
+                (card / 'id').write_text(identifier)
+                (card / 'pcm0p').mkdir()
+            card = root / 'card3'
+            (card / 'usbid').write_text('08bb:2902')
+            self.assertIsNone(usb_capture_device(root))
+            (card / 'pcm0c').mkdir()
+            self.assertEqual(usb_capture_device(root), 'plughw:CARD=Device,DEV=0')
+            card.rename(root / 'card4')
+            self.assertEqual(usb_capture_device(root), 'plughw:CARD=Device,DEV=0')
+
+    def test_usb_auto_capture_bypasses_pulse_and_keeps_wav_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'capture.wav'
+            def capture(command, **kwargs):
+                self.assertEqual(command[command.index('-D') + 1], 'plughw:CARD=Device,DEV=0')
+                with wave.open(command[-1], 'wb') as audio:
+                    audio.setnchannels(1)
+                    audio.setframerate(48000)
+                    audio.setsampwidth(2)
+                    audio.writeframes(b'\0\0' * 240000)
+            with patch('microphone_capture.shutil.which', return_value='arecord'), \
+                    patch('microphone_capture.usb_capture_device', return_value='plughw:CARD=Device,DEV=0'), \
+                    patch('microphone_capture.pulse_environment') as pulse, \
+                    patch.dict('os.environ', {}, clear=True), \
+                    patch('microphone_capture.subprocess.run', side_effect=capture), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(['--output', str(output)]), 0)
+                pulse.assert_not_called()
+            self.assertEqual(output.stat().st_size, 480044)

@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -39,10 +40,26 @@ def pulse_environment(environment, source=None):
     return environment
 
 
+def usb_capture_device(root=Path("/proc/asound")):
+    """Use ALSA's stable card ID rather than a changing USB card number."""
+    for card in sorted(root.glob("card[0-9]*")):
+        if not (card / "usbid").is_file():
+            continue
+        identifier = (card / "id").read_text().strip()
+        if not re.fullmatch(r"[A-Za-z0-9_]+", identifier):
+            continue
+        for capture in sorted(card.glob("pcm*c")):
+            match = re.fullmatch(r"pcm([0-9]+)c", capture.name)
+            if match:
+                return f"plughw:CARD={identifier},DEV={int(match[1])}"
+    return None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--device", default="pulse")
+    parser.add_argument("--device", default="auto",
+                        help="ALSA device; auto prefers a USB capture device, then PulseAudio")
     parser.add_argument("--source")
     args = parser.parse_args(argv)
     if not shutil.which("arecord"):
@@ -53,11 +70,15 @@ def main(argv=None):
     os.close(descriptor)
     environment = os.environ.copy()
     try:
-        if args.device == "pulse":
+        device = args.device
+        if device == "auto":
+            device = None if args.source or environment.get("PULSE_SOURCE") else usb_capture_device()
+            device = device or "pulse"
+        if device == "pulse":
             environment = pulse_environment(environment, args.source)
         elif args.source:
             environment["PULSE_SOURCE"] = args.source
-        subprocess.run(["arecord", "-q", "-D", args.device, "-t", "wav", "-f", "S16_LE",
+        subprocess.run(["arecord", "-q", "-D", device, "-t", "wav", "-f", "S16_LE",
                         "-r", "48000", "-c", "1", "-d", "5", temporary],
                        check=True, timeout=15, env=environment)
         with wave.open(temporary, "rb") as recording:

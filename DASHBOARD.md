@@ -48,13 +48,16 @@ See `presence/README.md` before UART testing. Light may be unavailable while the
 VEML7700 is disconnected. API errors are shown alongside previous successful light
 or BirdCast results explicitly labeled as historical data.
 
-Microphone capture uses `arecord` (`alsa-utils`) and verifies PulseAudio inputs with
-`pactl` (`pulseaudio-utils`). The recorder discovers the service user's socket at
-`/run/user/<uid>/pulse/native` when `PULSE_SERVER` is unset, so it can connect from
-the system dashboard service. Only microphone inputs are accepted; speaker output
-monitors are rejected. If no input is listed, connect/reconnect the microphone and
-check `arecord -l` and `pactl list short sources`. An explicit `--device` other than
-`pulse` uses ALSA directly and bypasses PulseAudio discovery.
+Microphone capture uses `arecord` (`alsa-utils`). The default `--device auto`
+selects a USB ALSA capture device using its stable card ID, such as
+`plughw:CARD=Device,DEV=0`, so a USB microphone works even when PulseAudio has not
+exposed it. ALSA converts the input to the required mono 48 kHz PCM format.
+If no USB capture device exists, the recorder uses PulseAudio and verifies inputs
+with `pactl` (`pulseaudio-utils`). It discovers the service user's socket at
+`/run/user/<uid>/pulse/native` when `PULSE_SERVER` is unset. Speaker output monitors
+are rejected. Explicit `--device` values override discovery; `--source` or
+`PULSE_SOURCE` selects PulseAudio when the device is auto. Microphone failures
+leave automatic lighting on its existing brightness rules.
 
 New WAVs and their integrity metadata are stored in `recordings/`
 under the selected server root. New captures are five seconds, mono, 48 kHz,
