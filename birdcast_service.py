@@ -14,7 +14,7 @@ import sys
 import time
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -160,7 +160,8 @@ class Service:
         self._cache_file = self.root / ".runtime" / "latest.json"
         self._latest: dict[str, Any] = {}
         self.collection_schedule = CollectionSchedule(self.presence_reading, self.start_recording,
-                                                      collect_light=self.light_reading)
+                                                      collect_light=self.light_reading,
+                                                      cleanup_recordings=self.expire_recordings)
         try:
             cached = json.loads(self._cache_file.read_text(encoding="utf-8"))
             if isinstance(cached, dict):
@@ -509,6 +510,26 @@ class Service:
         # Retained for callers using the original transfer lifecycle.
         pass
 
+    def expire_recordings(self, now=None):
+        """Remove recordings older than five days using the normal safe deletion path."""
+        cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=5)
+        deleted = 0
+        for metadata in self.recording_store.list_recordings():
+            try:
+                created = datetime.fromisoformat(metadata["created_at"].replace("Z", "+00:00"))
+                if created.tzinfo is None:
+                    raise ValueError("Recording timestamp has no timezone")
+                if created >= cutoff:
+                    continue
+                self.delete_recording(metadata["recording_id"])
+                deleted += 1
+            except BusyError:
+                # Retry on the next sweep after capture or inference finishes.
+                continue
+            except (OSError, ValueError, RecordingError):
+                logging.getLogger(__name__).exception("Could not expire recording %s", metadata["recording_id"])
+        return deleted
+
     def delete_recording(self, recording_id: str) -> None:
         self.recording_store.path(recording_id)  # Validate before accessing analysis paths.
         if not self._recording_lock.acquire(blocking=False):
@@ -518,6 +539,7 @@ class Service:
                 self.recording_store.delete(recording_id)
                 self.reading_history.delete_recording(recording_id)
             self.animal_analysis.delete(recording_id, remove)
+            self._sound_checked_at = float("-inf")
             with self._latest_lock:
                 entry = self._latest.get("microphone", {})
                 if any((entry.get(key) or {}).get("recording_id") == recording_id for key in ("result", "last_success")):

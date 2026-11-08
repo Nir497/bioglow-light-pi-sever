@@ -18,7 +18,7 @@ Text files contain one timestamped JSON record per line: `readings/presence.txt`
 
 Graphs appear only on individual sensor pages and Recordings. Preserve metric/animal and time-range selectors, region filtering for migration, and gaps for unavailable values. Query the full log for time ranges; disclose sampling when limiting graph points. Automatic refreshes must preserve audio elements, open selectors, and focus.
 
-Recordings persist until explicitly deleted. Dashboard deletion requires confirmation and removes the WAV, metadata, analysis state, corresponding animal-history entries, and cached recording references. Reject deletion during capture or active identification; prevent workers from recreating deleted data. Downloads and `finish_transfer()` do not delete recordings.
+Recordings are retained for five days, then automatically deleted by a startup and once-per-minute cleanup using the normal deletion path; busy captures and identification jobs are retried on the next sweep. Dashboard deletion requires confirmation and removes the WAV, metadata, analysis state, corresponding animal-history entries, and cached recording references. Reject deletion during capture or active identification; prevent workers from recreating deleted data. Downloads and `finish_transfer()` do not delete recordings.
 
 Animal predictions are unverified candidates. Show common names alongside scientific names where available, retaining scientific names as a fallback. Raw model scores have no fixed minimum or maximum, may be negative, and are not percentages or animal counts. New five-second recordings use one model window; retained ten-second recordings use two.
 

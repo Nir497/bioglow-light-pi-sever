@@ -51,10 +51,12 @@ or BirdCast results explicitly labeled as historical data.
 New WAVs and their integrity metadata are stored in `recordings/`
 under the selected server root. New captures are five seconds, mono, 48 kHz,
 16-bit PCM. Recordings remain accessible after download, application cleanup,
-and server restart until explicitly deleted. Each recording has a Delete recording
+and server restart, with automatic deletion after five days. Each recording has a Delete recording
 button with confirmation. Deletion removes audio, metadata, analysis, and its animal
 history entries. Capture or active analysis returns a busy error; retry when it
-finishes. There is no automatic retention timer. Existing captures
+finishes. Automatic cleanup runs at startup and every minute, even with microphone
+recording stopped. Busy recordings are retried on the next sweep; expiration uses
+the original capture timestamp and applies to existing recordings too. Existing captures
 in `/home/nir/recordings/` are not imported. Invalid/incomplete files and symlinks
 are omitted from the library. Avoid modifying retained WAVs or their sidecar JSON:
 changed captures fail their SHA-256 integrity check.

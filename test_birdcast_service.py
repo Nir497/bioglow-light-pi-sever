@@ -310,6 +310,34 @@ class ServiceTests(unittest.TestCase):
         finally:
             server.shutdown(); thread.join(); server.server_close()
 
+    def test_recording_retention_boundary_and_busy_retry(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 11, 8, tzinfo=timezone.utc)
+        entries = [{"recording_id": name, "created_at": (now - timedelta(days=days)).isoformat()}
+                   for name, days in (("old", 6), ("busy", 7), ("boundary", 5), ("new", 1))]
+        with patch.object(self.service.recording_store, "list_recordings", return_value=entries), \
+                patch.object(self.service, "delete_recording", side_effect=[None, BusyError("active")]) as delete:
+            self.assertEqual(self.service.expire_recordings(now), 1)
+            self.assertEqual([call.args[0] for call in delete.call_args_list], ["old", "busy"])
+        with patch.object(self.service.recording_store, "list_recordings", return_value=entries[1:2]), \
+                patch.object(self.service, "delete_recording") as delete:
+            self.assertEqual(self.service.expire_recordings(now), 1)
+            delete.assert_called_once_with("busy")
+
+    def test_expiration_removes_recording_analysis_history_and_cache(self):
+        from datetime import datetime, timedelta, timezone
+        self.service.recorder = self.recorder_script(self.root)
+        metadata = self.service.start_recording()
+        identifier = metadata["recording_id"]
+        self.assertTrue(self.service.recording_store.path(identifier).exists())
+        future = datetime.fromisoformat(metadata["created_at"].replace("Z", "+00:00")) + timedelta(days=6)
+        self.assertEqual(self.service.expire_recordings(future), 1)
+        self.assertFalse(self.service.recording_store.path(identifier).exists())
+        self.assertFalse(self.service.recording_store.path(identifier).with_suffix(".json").exists())
+        self.assertFalse((self.service.animal_analysis.directory / (identifier + ".json")).exists())
+        self.assertEqual(self.service.reading_history.recent("microphone"), [])
+        self.assertNotIn("microphone", self.service._latest)
+
     def recorder_script(self, directory, mode="valid"):
         script = Path(directory) / "recorder.py"
         script.write_text(textwrap.dedent(f"""

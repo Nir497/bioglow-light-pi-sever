@@ -7,6 +7,18 @@ from collection_schedule import CollectionSchedule
 
 
 class ScheduleTests(unittest.TestCase):
+    def test_retention_runs_without_microphone_and_stops(self):
+        cleaned = threading.Event()
+        captured = []
+        scheduler = CollectionSchedule(lambda: None, lambda: captured.append(1),
+                                       cleanup_recordings=cleaned.set, cleanup_interval=.02)
+        self.addCleanup(scheduler.stop)
+        scheduler.start()
+        self.assertTrue(cleaned.wait(1))
+        scheduler.stop()
+        self.assertEqual(captured, [])
+        self.assertTrue(all(not thread.is_alive() for thread in scheduler.threads))
+
     def test_sensors_repeat_without_starting_microphone(self):
         collected, captured = [], []
         enough = threading.Event()

@@ -7,10 +7,11 @@ from datetime import datetime, timedelta, timezone
 
 class CollectionSchedule:
     def __init__(self, collect_sensors, record, sensor_interval=10, recording_interval=120,
-                 *, collect_light=None, light_interval=1):
+                 *, collect_light=None, light_interval=1, cleanup_recordings=None, cleanup_interval=60):
         self.collect_sensors, self.record = collect_sensors, record
         self.sensor_interval, self.recording_interval = sensor_interval, recording_interval
         self.collect_light, self.light_interval = collect_light, light_interval
+        self.cleanup_recordings, self.cleanup_interval = cleanup_recordings, cleanup_interval
         self.condition = threading.Condition()
         self.stopped = False
         self.enabled = False
@@ -26,6 +27,8 @@ class CollectionSchedule:
             workers = [(self._sensors, "sensor-sampling"), (self._microphone, "microphone-schedule")]
             if self.collect_light is not None:
                 workers.append((self._light, "lux-sampling"))
+            if self.cleanup_recordings is not None:
+                workers.append((self._cleanup, "recording-retention"))
             self.threads = [threading.Thread(target=target, daemon=True, name=name)
                             for target, name in workers]
             for thread in self.threads:
@@ -84,6 +87,9 @@ class CollectionSchedule:
             deadline += interval
             if deadline <= time.monotonic():
                 deadline = time.monotonic()+interval
+
+    def _cleanup(self):
+        self._sample(self.cleanup_recordings, self.cleanup_interval, "recording retention")
 
     def _microphone(self):
         while True:
