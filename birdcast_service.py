@@ -153,7 +153,7 @@ class Service:
         self.animal_analysis = AnalysisCoordinator(self.root, self.recording_store, enabled=animal_analysis,
                                                   on_result=self.log_recording)
         self._sound_checked_at = float("-inf")
-        self._sound_decision = {"source": "unknown", "reason": "No recording checked."}
+        self._sound_decision = {"source": "unavailable", "reason": "No recording checked."}
         self.lighting.sound_reader = self.latest_sound
         self._recording_lock = threading.Lock()
         self._latest_lock = threading.Lock()
@@ -177,6 +177,8 @@ class Service:
     def remember(self, source: str, status: int, result: dict[str, Any]) -> None:
         if source == "birdcast":
             self.lighting.update_migration(result if status == 200 else None)
+        if source == "microphone":
+            self._sound_checked_at = float("-inf")
         with self._latest_lock:
             previous = self._latest.get(source, {})
             self._latest[source] = {
@@ -457,11 +459,14 @@ class Service:
 
     def latest_sound(self):
         """Poll the newest retained recording without capturing or blocking for inference."""
+        microphone = getattr(self, "_latest", {}).get("microphone", {})
+        if microphone.get("http_status", 200) != 200:
+            return {"source": "unavailable", "reason": "Latest microphone recording failed; using brightness rules."}
         current = time.monotonic()
         if current - self._sound_checked_at < 2:
             return dict(self._sound_decision)
         self._sound_checked_at = current
-        decision = {"source": "unknown", "reason": "No recordings available."}
+        decision = {"source": "unavailable", "reason": "No recordings available; using brightness rules."}
         try:
             try:
                 stamp = self.recording_store.directory.stat().st_mtime_ns
@@ -473,12 +478,14 @@ class Service:
             recordings = self._sound_recordings
             if recordings:
                 metadata = recordings[0]
-                analysis = self.animal_analysis.request(metadata, sound=True)
-                decision = {"source": analysis.get("sound", {}).get("source", "unknown"),
+                analysis = self.animal_analysis.status(metadata)
+                if analysis.get("state") not in ("failed", "unavailable"):
+                    analysis = self.animal_analysis.request(metadata, sound=True)
+                decision = {"source": "unavailable" if analysis["state"] in ("failed", "unavailable") else analysis.get("sound", {}).get("source", "unknown"),
                             "recording_id": metadata["recording_id"],
                             "analysis_state": analysis["state"]}
         except Exception as exc:
-            decision = {"source": "unknown", "reason": str(exc)}
+            decision = {"source": "unavailable", "reason": str(exc)}
         self._sound_decision = decision
         return dict(decision)
 

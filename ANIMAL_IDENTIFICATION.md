@@ -189,8 +189,11 @@ worker starts; existing completed predictions are preserved.
 Automatic lighting now checks the latest retained recording when radar reports a
 moving or stationary target. Human sound candidates allow the existing ambient,
 distance, motion, and migration brightness rules. Animal sounds, ambiguous/mixed
-sounds, quiet audio, missing recordings, pending analysis, and analysis failures
-keep automatic lighting off. Manual control and calibration remain independent.
+sounds, quiet audio, and pending analysis keep automatic lighting off. If the
+latest microphone capture fails, no recording exists, or analysis is unavailable
+or failed, sound gating is bypassed and the existing brightness rules continue.
+A successful new capture restores sound gating; an older animal result does not
+override a newer microphone failure. Manual control and calibration remain independent.
 The server checks results every two seconds; it queues older results again when
 they lack sound classification. It does not start microphone recording: use the
 existing recording scheduler to keep the latest recording current. There is no

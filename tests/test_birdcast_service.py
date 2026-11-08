@@ -310,6 +310,17 @@ class ServiceTests(unittest.TestCase):
         finally:
             server.shutdown(); thread.join(); server.server_close()
 
+    def test_microphone_failure_bypasses_cached_animal_gate(self):
+        self.service._sound_decision = {"source": "animal"}
+        self.service._sound_checked_at = float("inf")
+        self.service.remember("microphone", 502, {"error": "Disconnected microphone"})
+        self.assertEqual(self.service.latest_sound()["source"], "unavailable")
+        self.service.remember("microphone", 200, {"recording_id": "new"})
+        with patch.object(self.service.recording_store, "list_recordings", return_value=[{"recording_id": "new"}]), \
+                patch.object(self.service.animal_analysis, "status", return_value={"state": "completed"}), \
+                patch.object(self.service.animal_analysis, "request", return_value={"state": "completed", "sound": {"source": "human"}}):
+            self.assertEqual(self.service.latest_sound()["source"], "human")
+
     def test_recording_retention_boundary_and_busy_retry(self):
         from datetime import datetime, timedelta, timezone
         now = datetime(2026, 11, 8, tzinfo=timezone.utc)

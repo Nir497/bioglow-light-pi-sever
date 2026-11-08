@@ -49,7 +49,7 @@ class LightingControl:
         self._radar_stop = threading.Event()
         self._presence_reader = None
         self.sound_reader = None
-        self._sound = {"source": "unknown"}
+        self._sound = {"source": "unavailable", "reason": "No recording checked."}
         self._revision = 0
         self._radar_snapshot = None
         self._radar_sampled_at = None
@@ -418,7 +418,7 @@ class LightingControl:
         level, age, migration_error = migration_from_snapshot(self._migration_snapshot, self.adaptive_config)
         error = error or ("Radar sample stale" if self._radar_age() > 2 else None)
         previous_cap = self._state.get("migration_cap_percent", self.adaptive_config.unknown_migration_cap)
-        sound_blocked = self.sound_reader is not None and self._sound.get("source") != "human"
+        sound_blocked = self.sound_reader is not None and self._sound.get("source") not in ("human", "unavailable")
         self._state["sound_gate"] = copy.deepcopy(self._sound) if self.sound_reader else None
         result = self.adaptive.step(self._clock(), self._auto_allowed() and not sound_blocked, not error,
                                     None if distance is None else distance / 100, level)

@@ -30,6 +30,33 @@ class SoundTests(unittest.TestCase):
         service.animal_analysis.request.return_value = {'state': 'completed', 'sound': {'source': 'human'}}
         self.assertEqual(service.latest_sound()['source'], 'human')
 
+    def test_failed_microphone_bypasses_old_animal_recording_and_recovers(self):
+        service = Service.__new__(Service)
+        service._latest = {"microphone": {"http_status": 502}}
+        service._sound_checked_at = float('-inf')
+        service.recording_store = Mock()
+        service.animal_analysis = Mock()
+        service.recording_store.list_recordings.return_value = [{'recording_id': 'old'}]
+        service.animal_analysis.status.return_value = {'state': 'completed'}
+        service.animal_analysis.request.return_value = {'state': 'completed', 'sound': {'source': 'animal'}}
+        self.assertEqual(service.latest_sound()['source'], 'unavailable')
+        service.animal_analysis.request.assert_not_called()
+        service._latest['microphone'] = {'http_status': 200}
+        self.assertEqual(service.latest_sound()['source'], 'animal')
+
+    def test_missing_recordings_and_analysis_failure_allow_fallback(self):
+        service = Service.__new__(Service)
+        service._sound_checked_at = float('-inf')
+        service.recording_store = Mock()
+        service.animal_analysis = Mock()
+        service.recording_store.list_recordings.return_value = []
+        self.assertEqual(service.latest_sound()['source'], 'unavailable')
+        service._sound_checked_at = float('-inf')
+        service._sound_recordings = [{'recording_id': 'new'}]
+        service.animal_analysis.status.return_value = {'state': 'failed'}
+        self.assertEqual(service.latest_sound()['source'], 'unavailable')
+        service.animal_analysis.request.assert_not_called()
+
     def test_sound_gate_immediately_extinguishes_auto_but_preserves_manual(self):
         transport = Mock()
         transport.send.return_value = {}
@@ -37,12 +64,16 @@ class SoundTests(unittest.TestCase):
         self.addCleanup(light.stop)
         light.sound_reader = Mock()
         with patch.object(light, '_auto_allowed', return_value=True), patch.object(light, '_radar_age', return_value=0):
-            light._sound = {'source': 'human'}
-            light._evaluate_adaptive(None, 100)
-            self.assertGreater(light.status()['target_brightness'], 0)
+            for source in ('human', 'unavailable'):
+                light._sound = {'source': source}
+                light._evaluate_adaptive(None, 100)
+                self.assertGreater(light.status()['target_brightness'], 0)
             for source in ('animal', 'unknown'):
                 light._sound = {'source': source}
                 light._evaluate_adaptive(None, 100)
                 self.assertEqual(light.status()['target_brightness'], 0)
+            light._sound = {'source': 'unavailable'}
+            light._evaluate_adaptive('Radar unavailable', 100)
+            self.assertEqual(light.status()['target_brightness'], 0)
             light.set_mode('on')
             self.assertEqual(light.status()['target_brightness'], 255)
