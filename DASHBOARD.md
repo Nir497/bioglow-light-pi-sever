@@ -35,7 +35,7 @@ The sidebar provides Overview, Radar, Lux sensor, WLED light, BirdCast, and Reco
 page or refreshing the view loads saved results and the recording library, without
 starting a microphone capture, light measurement, or BirdCast fetch. Choose
 **Read now**, **Fetch BirdCast**, or **Record 5 seconds** to request new data.
-The server automatically collects lux every second and presence every ten seconds, even
+The server automatically collects lux every 250 ms and presence every ten seconds, even
 with the dashboard closed. BirdCast remains manual. On Overview or Recordings,
 choose **Start recording every two minutes** to capture immediately and repeat
 five-second microphone captures every 120 seconds. **Stop automatic recording**
@@ -192,9 +192,9 @@ invalid, missing, or more than 30-second-old lux keeps Auto off; a fresh thresho
 reading and new radar sample are required to recover. The latest lux controls
 this gate, independently of the rolling average. The WLED page shows lux, age,
 ambient state, fixed thresholds, and the gate reason. Manual On and Distance test
-bypass the gate. Lux is collected and logged every second on its own scheduler thread; slow presence reads do not delay it.
-The Lux sensor page refreshes cached readings every second. Collection status
-reports `light_interval_seconds: 1` and `sensor_interval_seconds: 10` (presence).
+bypass the gate. Lux is collected and logged every 250 ms on its own scheduler thread; slow presence reads do not delay it.
+The Lux sensor page refreshes cached readings every 250 ms. Collection status
+reports `light_interval_seconds: 0.25` and `sensor_interval_seconds: 10` (presence).
 Color changes preserve Auto; manual brightness is disabled in Auto. On restores
 saved manual brightness. Shutdown requests off for both radar-controlled modes.
 USB acknowledgments verify full-strip coverage, color, and brightness, clear

@@ -10,7 +10,7 @@ Work only in `/home/nir/bioglow-birdcast`, the repository root. `birdcast_servic
 
 ## Collection, History & Dashboard Behavior
 
-The repository server samples and logs presence every ten seconds and light every second, independently of dashboard clients. BirdCast stays manual. Radar still receives UART frames continuously; freshness requires valid frames within two seconds and an open connection. `/v1/latest` reads passive/cached state without adding log entries or measuring light. Explicit sensor reads may add measurements outside the scheduled cadence.
+The repository server samples and logs presence every ten seconds and light every 250 ms, independently of dashboard clients. BirdCast stays manual. Radar still receives UART frames continuously; freshness requires valid frames within two seconds and an open connection. `/v1/latest` reads passive/cached state without adding log entries or measuring light. Explicit sensor reads may add measurements outside the scheduled cadence.
 
 Automatic microphone recording starts stopped after each server restart. Start records immediately, then every 120 seconds; Stop prevents future captures while an active capture finishes. Scheduling is server-owned and shared by clients. Preserve capture locking, analysis pause/resume behavior, error reporting, and shutdown cleanup.
 

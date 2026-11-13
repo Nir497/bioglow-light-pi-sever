@@ -179,7 +179,7 @@ function sourceCard(source, expanded = false) {
     ['Integration time',data.integration_time_ms == null ? '—' : `${number(data.integration_time_ms)} ms`],
     ['Resolution',data.resolution_lux_per_count == null ? '—' : `${escapeHtml(data.resolution_lux_per_count)} lux/count`]
   ]) + '<p class="timestamp">Lux is calculated from the ambient channel. Ambient and white channels report raw 16-bit counts (0–65,535). A maximum count may indicate saturation. Channel reads are sequential.</p>';
-  if (expanded && source === 'light') body += '<p class="timestamp">The server collects light every second. If the sensor is disconnected, reconnect it and choose Read now.</p>';
+  if (expanded && source === 'light') body += '<p class="timestamp">The server collects light every 250 ms. If the sensor is disconnected, reconnect it and choose Read now.</p>';
   if (expanded && entry?.http_status !== 200 && entry?.last_success && source !== 'radar') body += `<div class="history"><p>Previous successful result · historical data</p>${details(entry.last_success,'View previous successful result')}</div>`;
   const topGraphic = expanded && source === 'radar' ? renderRadarLocatorGraphic(entry, success, data) : '';
   const control = source === 'birdcast' ? action('birdcast','Fetch BirdCast') : action(source,'Read now');
@@ -758,7 +758,7 @@ function scheduleCollectionPoll() {
       }
     } catch(error) { if(generation===collectionGeneration)notice(error.message,true); }
     if(generation===collectionGeneration)scheduleCollectionPoll();
-  },view()==='lighting' ? 500 : view()==='light' ? 1000 : 10000);
+  },view()==='lighting' ? 500 : view()==='light' ? 250 : 10000);
 }
 let wledLogTimer, wledLogGeneration = 0;
 function wledLogEvent(event) {

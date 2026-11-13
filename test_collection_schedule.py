@@ -34,7 +34,7 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(captured, [])
         self.assertTrue(all(second-first >= .02 for first, second in zip(collected, collected[1:])))
 
-    def test_lux_uses_one_second_deadlines_and_recovers_after_exception(self):
+    def test_lux_uses_quarter_second_deadlines_and_recovers_after_exception(self):
         now = [0]
         deadlines, collected = [], []
         def collect():
@@ -50,9 +50,9 @@ class ScheduleTests(unittest.TestCase):
         with patch('collection_schedule.time.monotonic', side_effect=lambda: now[0]):
             with self.assertLogs('collection_schedule', level='ERROR'):
                 scheduler._light()
-        self.assertEqual(collected, [0, 1, 2, 3])
-        self.assertEqual(deadlines, [0, 1, 2, 3, 4])
-        self.assertEqual(scheduler.status()['light_interval_seconds'], 1)
+        self.assertEqual(collected, [0, .25, .5, .75])
+        self.assertEqual(deadlines, [0, .25, .5, .75, 1])
+        self.assertEqual(scheduler.status()['light_interval_seconds'], .25)
         self.assertEqual(scheduler.status()['sensor_interval_seconds'], 10)
         self.assertEqual(scheduler.status()['interval_seconds'], 120)
         self.assertFalse(scheduler.status()['enabled'])
@@ -70,7 +70,7 @@ class ScheduleTests(unittest.TestCase):
         scheduler._wait_until = wait
         with patch('collection_schedule.time.monotonic', side_effect=lambda: now[0]):
             scheduler._light()
-        self.assertEqual(collected, [0, 3, 6])
+        self.assertEqual(collected, [0, 2.25, 4.5])
 
     def test_lux_sampling_is_independent_of_blocked_presence_and_stops_cleanly(self):
         entered, release, enough = threading.Event(), threading.Event(), threading.Event()

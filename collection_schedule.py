@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 class CollectionSchedule:
     def __init__(self, collect_sensors, record, sensor_interval=10, recording_interval=120,
-                 *, collect_light=None, light_interval=1, cleanup_recordings=None, cleanup_interval=60):
+                 *, collect_light=None, light_interval=0.25, cleanup_recordings=None, cleanup_interval=60):
         self.collect_sensors, self.record = collect_sensors, record
         self.sensor_interval, self.recording_interval = sensor_interval, recording_interval
         self.collect_light, self.light_interval = collect_light, light_interval

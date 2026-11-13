@@ -206,8 +206,8 @@ async function main(){
   assert.ok(!page.innerHTML.includes('data-action="light"'),'Controller page contains no lux read action');
   assert.ok(!vm.runInContext("sourceCard('light',true)",context).includes('data-lighting-settings'),'Lux page contains no fixture controls');
   context.location.hash='#light';windowEvents.hashchange();
-  assert.ok(timers.findLast(timer=>timer.delay===1000),'Lux page refreshes cached readings every second');
-  assert.match(vm.runInContext("sourceCard('light',true)",context),/collects light every second/);
+  assert.ok(timers.findLast(timer=>timer.delay===250),'Lux page refreshes cached readings every 250 ms');
+  assert.match(vm.runInContext("sourceCard('light',true)",context),/collects light every 250 ms/);
   context.location.hash='#lighting';windowEvents.hashchange();
   const wledPoll=timers.findLast(timer=>timer.delay===500);
   assert.ok(wledPoll,'Controller page polls cached acknowledgements every half second');
