@@ -1,12 +1,31 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from birdcast_service import Service
+from birdcast_service import DEFAULT_RECORDER, Service
 from lighting_control import LightingControl
 from sound_classification import classify_sound
 
 
 class SoundTests(unittest.TestCase):
+    def test_disconnected_microphone_bypasses_old_audio_and_reconnects(self):
+        service = Service.__new__(Service)
+        service.recorder = DEFAULT_RECORDER
+        service._sound_checked_at = float('-inf')
+        service.recording_store = Mock()
+        service.animal_analysis = Mock()
+        service.recording_store.list_recordings.return_value = [{'recording_id': 'old'}]
+        service.animal_analysis.status.return_value = {'state': 'completed'}
+        service.animal_analysis.request.return_value = {'state': 'completed', 'sound': {'source': 'human'}}
+        with patch('birdcast_service.usb_capture_device', return_value=None) as usb, \
+                patch('birdcast_service.pulse_environment', side_effect=RuntimeError('No microphone input')):
+            self.assertEqual(service.latest_sound()['source'], 'unavailable')
+            self.assertEqual(service.latest_sound()['source'], 'unavailable')
+            self.assertEqual(usb.call_count, 1)
+            service.recording_store.list_recordings.assert_not_called()
+        service._microphone_checked_at = float('-inf')
+        with patch('birdcast_service.usb_capture_device', return_value='plughw:CARD=Device,DEV=0'):
+            self.assertEqual(service.latest_sound()['source'], 'human')
+
     def test_human_animal_environment_and_ambiguous_audio(self):
         labels = ['Speech', 'Bubo virginianus', 'Wind']
         for scores, expected in (([5, 1, 0], 'human'), ([0, 5, 1], 'animal'),

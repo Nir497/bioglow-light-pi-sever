@@ -58,6 +58,11 @@ with `pactl` (`pulseaudio-utils`). It discovers the service user's socket at
 are rejected. Explicit `--device` values override discovery; `--source` or
 `PULSE_SOURCE` selects PulseAudio when the device is auto. Microphone failures
 leave automatic lighting on its existing brightness rules.
+The microphone is optional. Automatic lighting checks input availability every
+ten seconds and bypasses retained sound classifications while no input is
+available. Reconnecting the microphone is detected without restarting the server.
+Recording attempts still report an error when no input is available; they never
+create substitute silent recordings. Sensor sampling continues independently.
 
 New WAVs and their integrity metadata are stored in `recordings/`
 under the selected server root. New captures are five seconds, mono, 48 kHz,

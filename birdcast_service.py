@@ -27,6 +27,7 @@ from animal_model import is_species_label
 from animal_names import AnimalNames
 from collection_schedule import CollectionSchedule
 from light_sensor import LightSensor
+from microphone_capture import pulse_environment, usb_capture_device
 from lighting_control import LightingControl
 from adaptive_lighting import AdaptiveConfig
 from wled_serial import WLEDSerial
@@ -459,6 +460,19 @@ class Service:
 
     def latest_sound(self):
         """Poll the newest retained recording without capturing or blocking for inference."""
+        if getattr(self, "recorder", None) == DEFAULT_RECORDER:
+            current = time.monotonic()
+            if current - getattr(self, "_microphone_checked_at", float("-inf")) >= 10:
+                try:
+                    if not usb_capture_device():
+                        pulse_environment(os.environ)
+                    self._microphone_error = None
+                except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
+                    self._microphone_error = str(exc)
+                self._microphone_checked_at = current
+                self._sound_checked_at = float("-inf")
+            if self._microphone_error:
+                return {"source": "unavailable", "reason": self._microphone_error + " Using brightness rules."}
         microphone = getattr(self, "_latest", {}).get("microphone", {})
         if microphone.get("http_status", 200) != 200:
             return {"source": "unavailable", "reason": "Latest microphone recording failed; using brightness rules."}

@@ -310,7 +310,8 @@ class ServiceTests(unittest.TestCase):
         finally:
             server.shutdown(); thread.join(); server.server_close()
 
-    def test_microphone_failure_bypasses_cached_animal_gate(self):
+    @patch("birdcast_service.usb_capture_device", return_value="plughw:CARD=Device,DEV=0")
+    def test_microphone_failure_bypasses_cached_animal_gate(self, _usb):
         self.service._sound_decision = {"source": "animal"}
         self.service._sound_checked_at = float("inf")
         self.service.remember("microphone", 502, {"error": "Disconnected microphone"})
