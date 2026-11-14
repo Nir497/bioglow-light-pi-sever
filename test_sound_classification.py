@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import Mock, patch
 
@@ -7,13 +8,28 @@ from sound_classification import classify_sound
 
 
 class SoundTests(unittest.TestCase):
+    def test_expired_or_invalid_audio_cannot_hold_normal_mode_off(self):
+        service = Service.__new__(Service)
+        service.recording_store = Mock()
+        service.animal_analysis = Mock()
+        for timestamp in ((datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+                          (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+                          'invalid', None, datetime.now().isoformat()):
+            with self.subTest(timestamp=timestamp):
+                service._sound_checked_at = float('-inf')
+                service._sound_recordings_stamp = None
+                service.recording_store.directory.stat.return_value.st_mtime_ns = None
+                service._sound_recordings = [{'recording_id': 'old', 'created_at': timestamp}]
+                self.assertEqual(service.latest_sound()['source'], 'unavailable')
+                service.animal_analysis.request.assert_not_called()
+
     def test_disconnected_microphone_bypasses_old_audio_and_reconnects(self):
         service = Service.__new__(Service)
         service.recorder = DEFAULT_RECORDER
         service._sound_checked_at = float('-inf')
         service.recording_store = Mock()
         service.animal_analysis = Mock()
-        service.recording_store.list_recordings.return_value = [{'recording_id': 'old'}]
+        service.recording_store.list_recordings.return_value = [{'recording_id': 'old', "created_at": datetime.now(timezone.utc).isoformat()}]
         service.animal_analysis.status.return_value = {'state': 'completed'}
         service.animal_analysis.request.return_value = {'state': 'completed', 'sound': {'source': 'human'}}
         with patch('birdcast_service.usb_capture_device', return_value=None) as usb, \
@@ -39,10 +55,10 @@ class SoundTests(unittest.TestCase):
         service.recording_store = Mock()
         service.animal_analysis = Mock()
         service.recording_store.list_recordings.return_value = [
-            {'recording_id': 'new'}, {'recording_id': 'old'}]
+            {'recording_id': 'new', "created_at": datetime.now(timezone.utc).isoformat()}, {'recording_id': 'old', "created_at": datetime.now(timezone.utc).isoformat()}]
         service.animal_analysis.request.return_value = {'state': 'queued'}
         self.assertEqual(service.latest_sound()['source'], 'unknown')
-        service.animal_analysis.request.assert_called_once_with({'recording_id': 'new'}, sound=True)
+        service.animal_analysis.request.assert_called_once_with(service.recording_store.list_recordings.return_value[0], sound=True)
         service.latest_sound()
         self.assertEqual(service.animal_analysis.request.call_count, 1)
         service._sound_checked_at = float('-inf')
@@ -55,7 +71,7 @@ class SoundTests(unittest.TestCase):
         service._sound_checked_at = float('-inf')
         service.recording_store = Mock()
         service.animal_analysis = Mock()
-        service.recording_store.list_recordings.return_value = [{'recording_id': 'old'}]
+        service.recording_store.list_recordings.return_value = [{'recording_id': 'old', "created_at": datetime.now(timezone.utc).isoformat()}]
         service.animal_analysis.status.return_value = {'state': 'completed'}
         service.animal_analysis.request.return_value = {'state': 'completed', 'sound': {'source': 'animal'}}
         self.assertEqual(service.latest_sound()['source'], 'unavailable')
@@ -71,7 +87,7 @@ class SoundTests(unittest.TestCase):
         service.recording_store.list_recordings.return_value = []
         self.assertEqual(service.latest_sound()['source'], 'unavailable')
         service._sound_checked_at = float('-inf')
-        service._sound_recordings = [{'recording_id': 'new'}]
+        service._sound_recordings = [{'recording_id': 'new', "created_at": datetime.now(timezone.utc).isoformat()}]
         service.animal_analysis.status.return_value = {'state': 'failed'}
         self.assertEqual(service.latest_sound()['source'], 'unavailable')
         service.animal_analysis.request.assert_not_called()

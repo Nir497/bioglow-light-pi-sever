@@ -196,8 +196,9 @@ A successful new capture restores sound gating; an older animal result does not
 override a newer microphone failure. Manual control and calibration remain independent.
 The server checks results every two seconds; it queues older results again when
 they lack sound classification. It does not start microphone recording: use the
-existing recording scheduler to keep the latest recording current. There is no
-age cutoff for the latest recording.
+existing recording scheduler to keep the latest recording current. Audio expires from lighting decisions after 120 seconds from capture. Stale,
+missing, invalid, or future capture timestamps bypass sound gating and restore
+the sensor brightness rules; expired audio is not queued for sound analysis.
 
 The pinned Perch model's full event output now supplies the sound decision as
 well as the existing animal species candidates. A human or animal event must be

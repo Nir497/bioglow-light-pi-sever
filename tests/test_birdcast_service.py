@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import json
 import io
 import hashlib
@@ -316,8 +317,8 @@ class ServiceTests(unittest.TestCase):
         self.service._sound_checked_at = float("inf")
         self.service.remember("microphone", 502, {"error": "Disconnected microphone"})
         self.assertEqual(self.service.latest_sound()["source"], "unavailable")
-        self.service.remember("microphone", 200, {"recording_id": "new"})
-        with patch.object(self.service.recording_store, "list_recordings", return_value=[{"recording_id": "new"}]), \
+        self.service.remember("microphone", 200, {"recording_id": "new", "created_at": datetime.now(timezone.utc).isoformat()})
+        with patch.object(self.service.recording_store, "list_recordings", return_value=[{"recording_id": "new", "created_at": datetime.now(timezone.utc).isoformat()}]), \
                 patch.object(self.service.animal_analysis, "status", return_value={"state": "completed"}), \
                 patch.object(self.service.animal_analysis, "request", return_value={"state": "completed", "sound": {"source": "human"}}):
             self.assertEqual(self.service.latest_sound()["source"], "human")

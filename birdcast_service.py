@@ -39,6 +39,7 @@ from recording_store import RecordingError, RecordingNotFound, RecordingStore
 DEFAULT_PORT = 8000
 DEFAULT_RECORDER = str(Path(__file__).with_name("microphone_capture.py"))
 RECORDING_SECONDS = 5
+SOUND_MAX_AGE_SECONDS = 120
 RECORDING_RATE = 48_000
 RECORDING_CHANNELS = 1
 RECORDING_SAMPLE_WIDTH = 2
@@ -492,6 +493,20 @@ class Service:
             recordings = self._sound_recordings
             if recordings:
                 metadata = recordings[0]
+                try:
+                    timestamp = metadata.get("created_at")
+                    if not isinstance(timestamp, str):
+                        raise ValueError("Missing capture timestamp")
+                    captured_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    age = (datetime.now(timezone.utc) - captured_at).total_seconds()
+                except (KeyError, TypeError, ValueError):
+                    age = None
+                if age is None or not 0 <= age <= SOUND_MAX_AGE_SECONDS:
+                    decision = {"source": "unavailable", "recording_id": metadata["recording_id"],
+                                "age_seconds": age,
+                                "reason": "Latest audio is stale or has no valid capture time; using brightness rules."}
+                    self._sound_decision = decision
+                    return dict(decision)
                 analysis = self.animal_analysis.status(metadata)
                 if analysis.get("state") not in ("failed", "unavailable"):
                     analysis = self.animal_analysis.request(metadata, sound=True)
